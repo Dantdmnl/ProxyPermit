@@ -80,7 +80,7 @@ jobs:
           python -m coverage run scripts/dev/test.py
           python -m coverage xml -o artifacts/coverage.xml
           python -m coverage report >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         with:
           name: coverage
@@ -163,7 +163,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python scripts/release.py check --tag "$RELEASE_TAG"
       - run: python scripts/release.py archive
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: source-release
           path: dist/*
