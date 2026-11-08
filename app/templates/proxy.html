@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <title>{{ _('Proxyconfiguratie · ProxyPermit') }}</title>
+    {% include "_favicon.html" %}
+    <script src="{{ url_for('static', filename='js/theme.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/proxy.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/proxy.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/version.js', v=app_version) }}"></script>
+    <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
+</head>
+<body>
+{% include "_shell.html" %}
+
+<main id="workspace" class="proxy-workspace">
+    <header class="page-heading"><div><p class="eyebrow">TINYPROXY</p><h1>{{ _('Proxyconfiguratie') }}</h1>
+        <p>{{ _('Beheer toegang, verbindingen en het gedrag van Tinyproxy vanuit één plek.') }}</p></div>
+        <span class="badge">{{ _('Twee nodes · HA') if ha_enabled else _('Zelfstandige node') }}</span></header>
+    <section class="change-bar" id="changes" aria-label="{{ _('Wijzigingen') }}">
+        <div class="change-bar-row">
+            <div class="change-state"><strong>{{ _('Wijzigingen') }}</strong><span id="dirty" class="badge">{{ _('Configuratie laden…') }}</span></div>
+            <div class="actions">
+                <button id="validate" class="secondary" type="button">{{ _('Controleer concept') }}</button>
+                <button id="save" class="secondary" type="button">{{ _('Concept opslaan') }}</button>
+                <button id="activate" type="button">{{ _('Publiceren en activeren') }}</button>
+            </div>
+        </div>
+        <p id="message" class="notice" role="status">{{ _('Configuratie laden…') }}</p>
+        <p class="hint" id="publish-hint" hidden>{{ _('Sla eerst het filterconcept op om te kunnen publiceren.') }}</p>
+        <p class="hint" id="activation-hint" hidden>{{ _('Publiceren is beschikbaar op een Linux-installatie die lokaal proxybeleid beheert.') }}</p>
+        <div id="validation" aria-live="polite"></div>
+    </section>
+    <nav class="section-links" aria-label="{{ _('Op deze pagina') }}">
+        <a href="#settings">{{ _('Instellingen') }}</a>
+        <a href="#filter-panel">{{ _('Filterbestand') }}</a>
+        <a href="#native-config" id="native-link">{{ _('Native configuratie') }}</a>
+    </nav>
+    <div class="summary" id="summary" aria-label="{{ _('Instellingen in de editor') }}"></div>
+    <div class="settings-layout" id="settings">
+    <section class="card task-list" aria-labelledby="quick-title">
+        <h2 id="quick-title">{{ _('Wat wil je aanpassen?') }}</h2>
+        <button type="button" data-directive="Allow"><span><strong>{{ _('Clientnetwerk toestaan') }}</strong><small>{{ _('Bepaal wie de proxy mag gebruiken.') }}</small></span><span aria-hidden="true">→</span></button>
+        <button type="button" data-directive="ConnectPort"><span><strong>{{ _('HTTPS-poorten instellen') }}</strong><small>{{ _('Bepaal welke poorten clients via CONNECT bereiken.') }}</small></span><span aria-hidden="true">→</span></button>
+        <button type="button" data-directive="Upstream"><span><strong>{{ _('Via een upstream-proxy routeren') }}</strong><small>{{ _('Kies een tussenproxy of een directe route.') }}</small></span><span aria-hidden="true">→</span></button>
+        <button type="button" data-directive="FilterDefaultDeny"><span><strong>{{ _('Allowlist of blocklist kiezen') }}</strong><small>{{ _('Kies hoe de proxy bestemmingen filtert.') }}</small></span><span aria-hidden="true">→</span></button>
+    </section>
+        <section class="card setting-form" aria-labelledby="setting-title">
+            <h2 id="setting-title">{{ _('Instellingen toevoegen') }}</h2>
+            <p>{{ _('Kies een onderdeel. De volgorde van toegang en upstreamregels blijft behouden.') }}</p>
+            <label for="section">{{ _('Onderdeel') }}</label><select id="section"></select>
+            <label for="directive">{{ _('Instelling') }}</label><select id="directive"></select>
+            <p id="hint" class="hint"></p>
+            <label for="value">{{ _('Waarde / argumenten') }}</label><input id="value" autocomplete="off" spellcheck="false" aria-describedby="hint">
+            <label for="choice" hidden>{{ _('Kies een waarde') }}</label><select id="choice" aria-describedby="hint" hidden></select>
+            <div id="upstream-fields" hidden>
+                <label for="upstream-target">{{ _('Upstream-adres en poort') }}</label>
+                <input id="upstream-target" placeholder="proxy.example.com:8080" autocomplete="off" spellcheck="false">
+                <label for="upstream-site">{{ _('Bestemming') }}</label>
+                <input id="upstream-site" placeholder=".example.com" autocomplete="off" spellcheck="false" aria-describedby="upstream-help">
+                <p class="hint" id="upstream-help">{{ _('Laat leeg voor alle bestemmingen. De laatste passende regel wint.') }}</p>
+            </div>
+            <button id="insert" type="button">{{ _('Invoegen in concept') }}</button>
+            <p class="notice" id="setting-feedback" role="status" hidden></p>
+            <p class="hint">{{ _('Aanhalingstekens gebruiken bij waarden met spaties. Een bestaande enkele instelling wordt vervangen; herhaalbare regels worden achteraan toegevoegd.') }}</p>
+            <details><summary>{{ _('Over filtering en HTTPS') }}</summary><p>{{ _('Een filterbestand werkt als allowlist of blocklist. De standaardactie geldt voor de hele lijst. HTTPS gebruikt CONNECT; paden en HTTP-headers in die tunnel zijn niet zichtbaar.') }}</p></details>
+            <details><summary>{{ _('Over beschikbaarheid') }}</summary><p>{{ _('Opties kunnen afhankelijk zijn van de Tinyproxy-build op de server. De controle hier toetst de configuratiestructuur. Bij mislukte activatie wordt het vorige bestand teruggezet.') }}</p>
+                {% if managed_ha %}<p>{{ _('Publiceren geldt alleen voor deze node. Pas hetzelfde beleid ook toe op de andere node.') }}</p>
+                {% elif ha_enabled %}<p>{{ _('HA synchroniseert momenteel alleen de bestaande filterlijst. Proxyconfiguratie beheer je per node.') }}</p>{% endif %}
+            </details>
+        </section>
+    </div>
+    <section class="card native-filter" id="filter-panel" aria-labelledby="filter-title">
+        <div class="editor-heading"><div><h2 id="filter-title">{{ _('Native filterregels') }}</h2><p>{{ _('Voor ERE, BRE, fnmatch en HTTP-URL-patronen. Eén patroon per regel; commentaar begint met #.') }}</p></div><span class="badge" id="filter-mode">{{ _('Niet geladen') }}</span></div>
+        <label for="filter">{{ _('Filterbestand') }}</label><textarea id="filter" spellcheck="false" wrap="off"></textarea>
+        <div class="actions"><button type="button" id="filter-load" class="secondary">{{ _('Laad filterbestand') }}</button><button type="button" id="filter-save">{{ _('Filterconcept opslaan') }}</button>
+            <button type="button" id="filter-discard" class="danger" hidden>{{ _('Opgeslagen concept verwerpen') }}</button>
+            <a href="#changes">{{ _('Naar wijzigingen') }}</a></div>
+        <p class="hint">{{ _('Sla eerst de proxy-instellingen op als je het filtertype wijzigt. Publiceer daarna beide concepten via de wijzigingsbalk.') }}</p>
+    </section>
+    <details class="card editor-card" id="native-config">
+        <summary>{{ _('Native configuratie') }}</summary>
+        <p>{{ _('Het oorspronkelijke bestand, met commentaar en regelvolgorde.') }}</p>
+        <label for="config">{{ _('Configuratiebestand') }}</label>
+        <textarea id="config" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        <div class="actions">
+            <button id="reload" class="secondary" type="button">{{ _('Herlaad bestand') }}</button>
+            <button id="discard" class="danger" type="button" hidden>{{ _('Opgeslagen concept verwerpen') }}</button>
+        </div>
+    </details>
+</main>
+</body>
+</html>

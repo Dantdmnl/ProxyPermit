@@ -1,0 +1,65 @@
+# Local instructions
+instructions.md
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Testing / caches / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.demo/
+.cache/
+artifacts/
+
+# Editors and IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+*.log.*
+
+# Runtime state, secrets and generated configuration
+accounts.json
+totp-steps.json
+login-attempts.json
+enroll-*.json
+*.key
+*.pem
+*.crt
+*.pid
+*.sock
+*.tmp
+*.bak
+backups/
+manual_backups/
+nginx/*.generated.conf
+

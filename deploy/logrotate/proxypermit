@@ -1,0 +1,25 @@
+/var/log/tinyproxy/tinyproxy.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 tinyproxy adm
+    sharedscripts
+    postrotate
+        if systemctl is-active --quiet tinyproxy; then
+            systemctl reload tinyproxy >/dev/null 2>&1 || true
+        fi
+    endscript
+}
+
+/var/log/tinyproxy-sync.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+}

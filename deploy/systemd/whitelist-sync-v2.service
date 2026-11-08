@@ -1,0 +1,23 @@
+[Unit]
+Description=Bidirectionele Whitelist Sync (API-based)
+After=network.target proxypermit.service keepalived.service
+Wants=proxypermit.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/proxypermit
+EnvironmentFile=-/etc/proxypermit/.env
+EnvironmentFile=-/opt/proxypermit/.env
+ExecStart=/usr/bin/python3 /usr/local/bin/sync_whitelist_v2.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=whitelist-sync-v2
+
+# Security
+PrivateTmp=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/tinyproxy /var/lib/proxypermit /var/lock
+
+[Install]
+WantedBy=multi-user.target

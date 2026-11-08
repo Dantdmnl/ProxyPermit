@@ -1,0 +1,16 @@
+# Keep deployable Linux files usable from Windows and WSL checkouts.
+*.sh text eol=lf
+*.py text eol=lf
+*.service text eol=lf
+*.timer text eol=lf
+*.conf text eol=lf
+Makefile text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.js text eol=lf
+*.cjs text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf

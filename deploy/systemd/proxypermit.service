@@ -1,0 +1,18 @@
+[Unit]
+Description=ProxyPermit (Gunicorn)
+After=network.target tinyproxy.service
+Wants=tinyproxy.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/proxypermit
+EnvironmentFile=-/opt/proxypermit/.env
+RuntimeDirectory=proxypermit
+RuntimeDirectoryMode=0755
+ExecStart=/opt/proxypermit/.venv/bin/gunicorn --chdir /opt/proxypermit --pythonpath /opt/proxypermit --config /opt/proxypermit/gunicorn.conf.py wsgi:app
+Restart=on-failure
+RestartSec=3
+TimeoutStartSec=30
+
+[Install]
+WantedBy=multi-user.target

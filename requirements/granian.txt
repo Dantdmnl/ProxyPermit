@@ -1,0 +1,3 @@
+# Optional Rust HTTP server. Python application and WSGI interface stay intact.
+-r base.txt
+granian==2.8.7

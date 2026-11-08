@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf | default('') }}">
+    <title>{{ _('Instellingen') }} · ProxyPermit</title>
+    {% include "_favicon.html" %}
+    <script src="{{ url_for('static', filename='js/theme.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/dialog-dismiss.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/settings.js', v=app_version) }}" defer></script>
+</head>
+<body>
+{% include "_shell.html" %}
+<main id="workspace" class="settings-workspace">
+    <header class="page-heading">
+        <p class="eyebrow">{{ _('BEHEER') }}</p>
+        <h1>{{ _('Instellingen') }}</h1>
+        <p>{{ _('Beheer de toegang tot deze ProxyPermit-node.') }}</p>
+    </header>
+    <section class="card settings-panel appearance-panel" aria-labelledby="appearance-title">
+        <header><div><h2 id="appearance-title">{{ _('Weergave') }}</h2>
+            <p id="themeHelp">{{ _('Je themakeuze wordt in deze browser onthouden.') }}</p></div>
+            <div class="theme-setting">
+                <label for="themePreference">{{ _('Thema') }}</label>
+                <select id="themePreference" aria-describedby="themeHelp">
+                    <option value="system">{{ _('Systeeminstelling') }}</option>
+                    <option value="light">{{ _('Licht') }}</option>
+                    <option value="dark">{{ _('Donker') }}</option>
+                </select>
+            </div>
+        </header>
+    </section>
+    {% if sign_in %}
+    <section class="card"><h2>{{ _('Inloggen') }}</h2><p>{{ _('Log in om instellingen te beheren.') }}</p>
+        <a href="/">{{ _('Naar overzicht') }}</a>
+    </section>
+    {% else %}
+    {% set own = accounts.get(actor, {}) %}
+    {% set mfa = 'totp_secret' in own %}
+    {% if not editable %}<p class="settings-notice">{{ _('Accountbeheer via de browser is hier niet beschikbaar.') }}</p>{% endif %}
+    <section class="card settings-panel" aria-labelledby="profile-title">
+        <header><div><h2 id="profile-title">{{ _('Mijn account') }}</h2><p>{{ actor }}</p></div>
+            {% if own %}<span class="settings-badge" data-enabled="{{ 'true' if mfa else 'false' }}">{{ _('2FA aan') if mfa else _('2FA uit') }}</span>{% endif %}
+        </header>
+        {% if editable %}
+        <div class="settings-actions">
+            <button type="button" class="button-secondary" data-action="password">{{ _('Wachtwoord wijzigen') }}</button>
+            <button type="button" class="button-secondary" data-action="{{ 'totp-disable' if mfa else 'totp-start' }}">
+                {{ _('2FA uitschakelen') if mfa else _('2FA instellen') }}
+            </button>
+        </div>
+        {% endif %}
+    </section>
+    <section class="card settings-panel" aria-labelledby="accounts-title">
+        <header><div><h2 id="accounts-title">{{ _('Beheerders') }}</h2>
+            <p>{{ _('Alle accounts in deze lijst mogen deze node beheren.') }}</p></div>
+            {% if editable %}<button type="button" class="button-primary" data-action="create">{{ _('Account toevoegen') }}</button>{% endif %}
+        </header>
+        {% if accounts %}
+        <ul class="settings-accounts">
+            {% for username, account in accounts | dictsort %}
+            <li><strong>{{ username }}{% if username == actor %}<small>{{ _('Jij') }}</small>{% endif %}</strong>
+                <span class="settings-badge" data-enabled="{{ 'true' if 'totp_secret' in account else 'false' }}">
+                    {{ _('2FA aan') if 'totp_secret' in account else _('2FA uit') }}
+                </span>
+                {% if editable and username != actor %}
+                    <button type="button" class="button-danger" data-action="remove" data-username="{{ username }}"
+                            aria-label="{{ _('Account verwijderen') }} {{ username }}">{{ _('Verwijderen') }}</button>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </section>
+    {% if editable %}
+    <dialog class="rule-dialog" id="accountDialog" aria-labelledby="accountDialogTitle" data-mfa="{{ 'true' if mfa else 'false' }}">
+        <form method="post" id="accountForm">
+            <header class="rule-dialog-header"><h2 id="accountDialogTitle"></h2>
+                <button type="button" class="dialog-close" data-close-account aria-label="{{ _('Sluiten') }}">×</button>
+            </header>
+            <div class="rule-dialog-body">
+                <p id="accountTarget" hidden></p>
+                <div class="form-group" id="accountNameGroup" hidden>
+                    <label for="accountName">{{ _('Gebruikersnaam') }}</label>
+                    <input id="accountName" type="text" maxlength="64" autocomplete="off">
+                </div>
+                <div class="form-group" id="newPasswordGroup" hidden>
+                    <label for="newAccountPassword">{{ _('Nieuw wachtwoord') }}</label>
+                    <input id="newAccountPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password">
+                </div>
+                <div class="form-group" id="currentPasswordGroup">
+                    <label for="currentAccountPassword">{{ _('Je huidige wachtwoord') }}</label>
+                    <input id="currentAccountPassword" type="password" maxlength="256" autocomplete="current-password">
+                </div>
+                <div id="enrollGroup" hidden>
+                    <p>{{ _('Scan de QR-code met je authenticator-app.') }}</p>
+                    <img id="enrollmentQr" class="enrollment-qr" alt="{{ _('QR-code voor je authenticator') }}">
+                    <p>{{ _('Voeg deze sleutel handmatig toe in je authenticator-app als tijdgebonden account.') }}</p>
+                    <label for="enrollmentSecret">{{ _('Authenticatiesleutel') }}</label>
+                    <input id="enrollmentSecret" type="text" readonly autocomplete="off" spellcheck="false">
+                </div>
+                <div class="form-group" id="accountOtpGroup" hidden>
+                    <label for="accountOtp">{{ _('Authenticatorcode') }}</label>
+                    <input id="accountOtp" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
+                    <p class="help-text">{{ _('Gebruik een nieuwe code als je de vorige al hebt gebruikt.') }}</p>
+                </div>
+            </div>
+            <footer class="rule-dialog-footer">
+                <div id="accountError" role="alert"></div>
+                <div class="rule-dialog-actions">
+                    <button type="button" class="button-secondary" data-close-account>{{ _('Annuleren') }}</button>
+                    <button type="submit" class="button-primary" id="accountSubmit">{{ _('Bevestigen') }}</button>
+                </div>
+            </footer>
+        </form>
+    </dialog>
+    {% endif %}
+    {% endif %}
+</main>
+</body>
+</html>

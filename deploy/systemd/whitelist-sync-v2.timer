@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodic bidirectionele whitelist sync
+Requires=whitelist-sync-v2.service
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+RandomizedDelaySec=10s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

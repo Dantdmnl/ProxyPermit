@@ -1,0 +1,5 @@
+-r granian.txt
+pylint==4.1.3
+pyright==1.1.414
+coverage==7.17.2
+pip-audit==2.10.1

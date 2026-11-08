@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ _('ProxyPermit') }}</title>
+    {% include "_favicon.html" %}
+    <script src="{{ url_for('static', filename='js/theme.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/manager.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/workspace-dialogs.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/version.js', v=app_version) }}"></script>
+    <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
+</head>
+<body>
+{% include "_shell.html" %}
+    <!-- Toast notifications container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <div class="container" id="workspace">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-top">
+                <div class="header-brand">
+                    <div class="header-title">
+                        <p class="eyebrow">{{ _('WERKRUIMTE') }}</p>
+                        <h1>{{ _('Overzicht') }}</h1>
+                        <p>{{ _('Tinyproxy beheren: toegang, filtering en configuratie') }}</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <a href="/proxy" class="button button-secondary">{{ _('Proxyconfiguratie') }}</a>
+                    <button type="button" class="button button-primary new-rule-button auth-required" id="openRuleDialog">
+                        <span aria-hidden="true">+</span> {{ _('Nieuwe regel') }}
+                    </button>
+                    <button id="logoutButton" class="button button-secondary" onclick="logout()" hidden>{{ _('Uitloggen') }}</button>
+                    {% if app_config.logoUrl %}
+                        <a href="/" class="logo-link">
+                            <img src="{{ app_config.logoUrl }}" alt="{{ app_config.logoAlt or 'Logo' }}" class="header-logo">
+                        </a>
+                    {% endif %}
+                </div>
+            </div>
+            <div id="demoBanner" class="demo-banner">
+                <span class="demo-pill">{{ _('DEMO MODE') }}</span>
+                <span>{{ _('Lokale UI demo zonder echte tinyproxy/systemd runtime.') }}</span>
+            </div>
+            <div class="status-bar">
+                <div class="status-row status-info auth-required">
+                    <div class="status-indicator" id="connectionStatus" style="display: none;">
+                        <div class="status-dot" id="connectionDot" style="background: #dc3545;"></div>
+                        <span id="connectionText" style="color: #dc3545; font-weight: 500;">{{ _('Offline') }}</span>
+                    </div>
+                    <div class="status-indicator">
+                        <span id="nodeRoleBadge" class="node-badge unknown">{{ _('Laden...') }}</span>
+                        <span id="nodeHostname" style="font-size: 12px; color: var(--muted);"></span>
+                    </div>
+                    <div class="status-indicator">
+                        <div class="status-dot" id="vipStatusDot"></div>
+                        <span id="vipStatusText">{{ _('VIP-status: laden...') }}</span>
+                    </div>
+                    <div class="status-indicator">
+                        <div class="status-dot" id="tinyproxyStatusDot"></div>
+                        <span id="tinyproxyStatusText">{{ _('Tinyproxy: laden...') }}</span>
+                    </div>
+                    <div class="status-indicator">
+                        <div class="status-dot" id="peerStatusDot"></div>
+                        <span id="peerStatusText">{{ _('Peer node: laden...') }}</span>
+                    </div>
+                </div>
+                <div class="status-row status-actions auth-required">
+                    <button class="button button-secondary" onclick="refreshStatus()">
+                        {{ _('Ververs Status') }}
+                    </button>
+                    <button id="manualSyncButton" class="button button-secondary" onclick="triggerManualSync()" {% if app_config.managedHa %}hidden{% endif %}>
+                        <span id="manualSyncSpinner" class="loading" style="display: none;"></span>
+                        <span id="manualSyncLabel">{{ _('🔄 Handmatige sync') }}</span>
+                    </button>
+                    <button class="button button-success" onclick="restartService()">
+                        {{ _('Herstart Service') }}
+                    </button>
+                    <button class="button button-primary" onclick="openExportModal()" title="{{ _('Exporteer whitelist naar bestand') }}">
+                        {{ _('📥 Exporteren') }}
+                    </button>
+                    <button class="button button-primary" onclick="openImportModal()" title="{{ _('Importeer whitelist vanaf bestand') }}">
+                        {{ _('📤 Importeren') }}
+                    </button>
+
+                    <button class="button button-secondary" onclick="openLoggingModal()" title="{{ _('Live logging weergeven') }}">
+                        {{ _('📋 Logs') }}
+                    </button>
+                </div>
+            </div>
+
+            <div class="stats auth-required" id="stats">
+                <div class="stat-card">
+                    <div class="value" id="totalEntries">0</div>
+                    <div class="label">{{ _('Totale Entries') }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="regexEntries">0</div>
+                    <div class="label">{{ _('Regex Patterns') }}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="commentEntries">0</div>
+                    <div class="label">{{ _('Comment(s)') }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content rules-workspace auth-required">
+            <!-- Whitelist Entries -->
+            <div class="card entries-card" id="filter-rules" tabindex="-1">
+                <div class="rules-heading">
+                    <div>
+                        <h2>{{ _('Filterregels') }}</h2>
+                        <p>{{ _('Doorzoek en beheer de regels voor bestemmingen.') }}</p>
+                    </div>
+                </div>
+
+                <div class="search-box">
+                    <input
+                        type="text"
+                        id="searchInput"
+                        placeholder="{{ _('🔍 Zoek entries (domain, pattern, beschrijving...)') }}"
+                        oninput="filterEntries()"
+                        autocomplete="off"
+                    >
+                    <span class="clear-search" id="clearSearch" onclick="clearSearch()">✕</span>
+                    <span class="search-icon">🔍</span>
+                </div>
+
+                <div class="search-results-info" id="searchInfo" style="display: none;"></div>
+
+                <div id="alertContainer"></div>
+
+                <div class="entries-list" id="entriesList">
+                    <p style="text-align: center; color: var(--muted, #666);">
+                        <span class="loading"></span> {{ _('Laden...') }}
+                    </p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <dialog class="rule-dialog" id="ruleDialog" aria-labelledby="ruleDialogTitle">
+        <form id="addEntryForm" method="post">
+            <header class="rule-dialog-header">
+                <div>
+                    <p class="eyebrow">{{ _('Filterregels') }}</p>
+                    <h2 id="ruleDialogTitle">{{ _('Nieuwe regel') }}</h2>
+                </div>
+                <button type="button" class="dialog-close" data-close-rule aria-label="{{ _('Sluiten') }}">×</button>
+            </header>
+            <div class="rule-dialog-body">
+                <fieldset id="ruleFields">
+                    <div class="form-group">
+                        <label for="entryType">{{ _('Regeltype') }}</label>
+                        <select id="entryType">
+                            <option value="domain">{{ _('Domeinnaam (aanbevolen)') }}</option>
+                            <option value="comment">{{ _('Commentaar') }}</option>
+                            <option value="regex">{{ _('Geavanceerd patroon (regex)') }}</option>
+                        </select>
+                    </div>
+                    <div class="form-group" id="domainGroup">
+                        <label for="domainInput">{{ _('Domeinnaam') }}</label>
+                        <input type="text" id="domainInput" placeholder="example.com" autocomplete="off"
+                               spellcheck="false" aria-describedby="domainHelp regexPreview" autofocus>
+                        <p class="help-text" id="domainHelp">
+                            <code>example.com</code> {{ _('voor één domein') }} ·
+                            <code>*.example.com</code> {{ _('voor het domein en zijn subdomeinen') }}
+                        </p>
+                    </div>
+                    <div class="form-group" id="regexGroup" hidden>
+                        <label for="regexInput">{{ _('Reguliere expressie') }}</label>
+                        <input type="text" id="regexInput" placeholder="^example[.]com$" spellcheck="false"
+                               autocomplete="off" aria-describedby="regexHelp regexPreview">
+                        <p class="help-text" id="regexHelp">{{ _('Gebruik een POSIX ERE-patroon voor geavanceerde regels.') }}</p>
+                    </div>
+                    <div class="form-group" id="commentGroup" hidden>
+                        <label for="commentInput">{{ _('Commentaar') }}</label>
+                        <input type="text" id="commentInput" maxlength="200" autocomplete="off" aria-describedby="commentHelp regexPreview">
+                        <p class="help-text" id="commentHelp">{{ _('Een opmerking groepeert regels en verandert het proxybeleid niet.') }}</p>
+                    </div>
+                    <div id="regexPreview" class="rule-validation" role="status" aria-atomic="true"></div>
+                    <button type="button" class="button button-secondary rule-retry" id="retryRuleValidation" hidden>{{ _('Opnieuw controleren') }}</button>
+                    <div class="form-group" id="descriptionGroup">
+                        <label for="descriptionInput">{{ _('Beschrijving (optioneel)') }}</label>
+                        <input type="text" id="descriptionInput" maxlength="100" autocomplete="off">
+                    </div>
+                    <div class="checkbox-group" id="restartGroup">
+                        <input type="checkbox" id="autoRestart" checked>
+                        <label for="autoRestart">{{ _('Tinyproxy na het opslaan herstarten') }}</label>
+                    </div>
+                </fieldset>
+            </div>
+            <footer class="rule-dialog-footer">
+                <div id="ruleSaveError" role="alert"></div>
+                <div class="rule-dialog-actions">
+                    <button type="button" class="button button-secondary" data-close-rule>{{ _('Annuleren') }}</button>
+                    <button type="submit" class="button button-primary" id="submitButton" disabled>{{ _('Regel opslaan') }}</button>
+                </div>
+            </footer>
+        </form>
+    </dialog>
+
+    <!-- Edit Modal -->
+    <div class="modal" id="editModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>{{ _('Entry Bewerken') }}</h3>
+                <button class="modal-close-btn" onclick="closeEditModal()" title="{{ _('Sluiten') }}">×</button>
+            </div>
+            <div class="form-row" style="display: flex; gap: 16px;">
+                <div class="form-group" style="flex: 1;">
+                    <label for="editDomain">{{ _('Domeinnaam') }}</label>
+                    <input type="text" id="editDomain" placeholder="{{ _('Bijv: github.com of *.microsoft.com') }}" oninput="onEditDomainInput()" autocomplete="off">
+                    <div class="help-text">{{ _('Voer een domeinnaam in, bijvoorbeeld') }} <code>{{ _('github.com') }}</code> {{ _('of') }} <code>{{ _('*.microsoft.com') }}</code>{{ _('. Wordt automatisch omgezet naar regex.') }}</div>
+                </div>
+                <div class="form-group" id="editRegexGroup" style="flex: 1;">
+                    <label for="editRegex">{{ _('Regex Pattern') }}</label>
+                    <input type="text" id="editRegex" placeholder="{{ _('Bijv: (^|\\\\.)example\\\\.com(:[0-9]+)?$') }}" oninput="onEditRegexInput()" autocomplete="off">
+                    <div class="help-text" style="color: #dc3545;">{{ _('Alleen voor gevorderden! Wijzig dit alleen als je weet wat je doet.') }}</div>
+                </div>
+            </div>
+            <div id="editPreview" class="domain-hint" style="margin-top: 8px;"></div>
+            <div class="form-group" id="editDescriptionGroup">
+                <label for="editDescription">{{ _('Beschrijving (optioneel)') }}</label>
+                <input
+                    type="text"
+                    id="editDescription"
+                    placeholder="{{ _('Bijv: Microsoft Teams voor videobellen') }}"
+                    maxlength="100"
+                >
+                <div class="help-text">
+                    {{ _('📝 Documenteer waarvoor deze entry is') }}
+                </div>
+            </div>
+            <div class="form-group">
+                <div class="checkbox-group">
+                    <input type="checkbox" id="editAutoRestart" checked>
+                    <label for="editAutoRestart">{{ _('Automatisch service herstarten') }}</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="button button-secondary" onclick="closeEditModal()">
+                    {{ _('Annuleren') }}
+                </button>
+                <button class="button button-primary" id="saveEditButton" onclick="saveEdit()">
+                    {{ _('Opslaan') }}
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <dialog id="importModal" class="workspace-dialog import-dialog" aria-labelledby="importTitle">
+        <form id="importForm" class="modal-content workspace-panel">
+            <header class="modal-header workspace-dialog-header">
+                <div>
+                    <h3 id="importTitle">{{ _('Whitelist Importeren') }}</h3>
+                    <p>{{ _('Plak filterregels of open een tekstbestand. Zet elke filterregel op een eigen regel.') }}</p>
+                </div>
+                <button type="button" class="modal-close-btn" data-close-import aria-label="{{ _('Sluiten') }}">×</button>
+            </header>
+            <div class="workspace-dialog-body import-body">
+                <fieldset id="importFields">
+                    <div class="import-field-heading">
+                        <label for="importContent">{{ _('Whitelist Content') }}</label>
+                        <button type="button" class="button button-secondary" id="openImportFile">{{ _('Tekstbestand openen') }}</button>
+                        <input type="file" id="importFile" accept=".txt,.conf,.list,text/plain" hidden>
+                    </div>
+                    <textarea id="importContent" rows="7" spellcheck="false" autocapitalize="off"
+                              placeholder="{{ _('import.placeholder') }}" autofocus></textarea>
+                    <label for="importMode">{{ _('Import Mode') }}</label>
+                    <select id="importMode">
+                        <option value="append">{{ _('Toevoegen - Voeg toe aan bestaande lijst') }}</option>
+                        <option value="replace">{{ _('Vervangen - Overschrijf huidige whitelist') }}</option>
+                    </select>
+                    <div id="importReplaceNotice" class="import-warning" hidden>
+                        <p>{{ _('⚠️ "Vervangen" verwijdert alle huidige entries. Er wordt automatisch een backup gemaakt.') }}</p>
+                        <label class="workspace-check"><input type="checkbox" id="importConfirmReplace"> {{ _('Ik wil de huidige filterregels vervangen.') }}</label>
+                    </div>
+                    <label class="workspace-check"><input type="checkbox" id="importAutoRestart" checked> {{ _('Automatisch service herstarten na import') }}</label>
+                </fieldset>
+                <div id="importPreview" class="import-preview" hidden></div>
+                <p id="importFeedback" class="import-feedback" role="status" aria-atomic="true"></p>
+                <details id="importErrors" class="import-errors" hidden>
+                    <summary>{{ _('Importfouten bekijken') }}</summary>
+                    <pre id="importErrorText"></pre>
+                    <button type="button" class="button button-secondary" id="copyImportErrorsButton">{{ _('Kopieer fouten') }}</button>
+                </details>
+            </div>
+            <footer class="modal-footer workspace-dialog-footer">
+                <button type="button" class="button button-secondary" data-close-import>{{ _('Sluiten') }}</button>
+                <button type="submit" class="button button-primary" id="importButton" disabled>{{ _('Importeren') }}</button>
+            </footer>
+        </form>
+    </dialog>
+
+    <script id="appConfig" type="application/json">{{ app_config | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/rules.js', v=app_version) }}"></script>
+    <script src="{{ url_for('static', filename='js/dialog-dismiss.js', v=app_version) }}"></script>
+    <script defer src="{{ url_for('static', filename='js/manager.js', v=app_version) }}"></script>
+    <script defer src="{{ url_for('static', filename='js/rule-dialog.js', v=app_version) }}"></script>
+
+    <!-- Offline/Emergency Mode Screen -->
+    <div id="offlineScreen" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(132deg, var(--brand-pink) 0%, var(--brand-pink) 34%, var(--brand-secondary) 100%); z-index: 9999; align-items: center; justify-content: center;">
+        <div style="background: var(--surface, white); padding: 40px; border-radius: 10px; text-align: center; max-width: 500px; box-shadow: 0 10px 40px rgba(0,0,0,0.3);">
+            <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+            <h2 style="color: #dc3545; margin-bottom: 10px;">{{ _('Manager niet bereikbaar') }}</h2>
+            <p style="color: var(--muted, #666); margin-bottom: 20px; font-size: 14px;">{{ _('De ProxyPermit kan niet bereikt worden:') }}</p>
+            <ul style="text-align: left; color: var(--muted, #666); font-size: 13px; margin-bottom: 20px; line-height: 1.8;">
+                <li>{{ _('🔴 Service is gestopt of gecrasht') }}</li>
+                <li>{{ _('🔴 Netwerkverbindingsprobleem') }}</li>
+                <li>{{ _('🔴 Server is down') }}</li>
+                <li>{{ _('✅ Tinyproxy draait waarschijnlijk nog') }}</li>
+            </ul>
+            <button onclick="retryConnection()" style="background: var(--brand-pink); color: white; border: none; padding: 12px 24px; border-radius: 5px; cursor: pointer; font-weight: 500; margin-bottom: 10px;">{{ _('🔄 Opnieuw proberen') }}</button>
+            <p style="font-size: 12px; color: var(--muted, #999); margin-top: 15px;">{{ _('Automatisch opnieuw proberen elke 5 seconden...') }}</p>
+        </div>
+    </div>
+
+
+
+
+    <dialog id="loggingModal" class="workspace-dialog logs-dialog" aria-labelledby="loggingTitle">
+        <div class="modal-content workspace-panel">
+            <header class="modal-header workspace-dialog-header">
+                <div>
+                    <h3 id="loggingTitle">{{ _('📋 Realtime Logging - Live Monitor') }}</h3>
+                    <p>{{ _('Filter op bron of niveau en doorzoek de logregels.') }}</p>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeLoggingModal()" aria-label="{{ _('Sluiten') }}">×</button>
+            </header>
+            <div class="log-toolbar log-controls">
+                <div class="log-filter-fields">
+                    <label>{{ _('Bron') }}
+                        <select id="logService" onchange="handleLogServiceChange()">
+                            <option value="all">{{ _('📋 Alle Services') }}</option>
+                            <option value="manager">{{ _('🟦 Manager (Gunicorn)') }}</option>
+                            <option value="tinyproxy">{{ _('🟥 Tinyproxy') }}</option>
+                            <option value="proxy_traffic">{{ _('🟪 Proxy Verkeer') }}</option>
+                            <option value="keepalived">{{ _('🟩 Keepalived') }}</option>
+                            <option value="audit">{{ _('🛡️ Audit/Auth logs') }}</option>
+                        </select>
+                    </label>
+                    <label>{{ _('Niveau') }}
+                        <select id="logLevel" onchange="handleLogLevelChange()">
+                            <option value="">{{ _('Alle niveaus') }}</option>
+                            <option value="DEBUG">{{ _('🔍 Debug') }}</option>
+                            <option value="INFO">{{ _('ℹ️ Info') }}</option>
+                            <option value="WARNING">{{ _('⚠️ Waarschuwing') }}</option>
+                            <option value="ERROR">{{ _('❌ Fout') }}</option>
+                        </select>
+                    </label>
+                    <div class="log-search">
+                        <label for="logFilter">{{ _('Zoeken') }}</label>
+                        <div class="log-search-input">
+                            <input type="search" id="logFilter" placeholder="{{ _('IP-adres, hostnaam of tekst') }}"
+                                   oninput="handleLogFilterInput()" onkeydown="handleLogFilterKeydown(event)">
+                            <button type="button" class="button button-secondary" onclick="jumpToFirstLogMatch()">{{ _('Zoek op server') }}</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="log-actions">
+                    <button type="button" class="button button-secondary" id="autoRefreshBtn" onclick="toggleAutoRefresh()">{{ _('⏹️ Pauzeer') }}</button>
+                    <button type="button" class="button button-secondary" onclick="refreshLogs('page')">{{ _('Nu verversen') }}</button>
+                    <button type="button" class="button button-secondary" id="logLiveBanner" onclick="goToLiveLogs()" hidden>{{ _('↩ Terug naar live') }}</button>
+                    <details class="log-options">
+                        <summary>{{ _('Weergave en export') }}</summary>
+                        <div class="log-actions">
+                            <label>{{ _('Refresh interval') }}
+                                <select id="logRefreshInterval" onchange="handleRefreshIntervalChange()">
+                                    <option value="2000">{{ _('2s') }}</option>
+                                    <option value="5000">{{ _('5s') }}</option>
+                                    <option value="10000">{{ _('10s') }}</option>
+                                    <option value="30000">{{ _('30s') }}</option>
+                                </select>
+                            </label>
+                            <button type="button" class="button button-secondary" id="autoScrollBtn" onclick="toggleAutoScroll()">{{ _('🔒 Scroll vergrendeld') }}</button>
+                            <button type="button" class="button button-secondary" id="logViewToggle" onclick="toggleLogCompactMode()">{{ _('🧭 Compact') }}</button>
+                            <button type="button" class="button button-secondary" onclick="downloadLogs()">{{ _('💾 Download pagina') }}</button>
+                        </div>
+                        <div id="logSummary" class="log-summary"></div>
+                    </details>
+                </div>
+                <p id="logSearchFeedback" role="status" hidden></p>
+            </div>
+            <div id="logContainer" class="log-container" tabindex="0" role="region" aria-labelledby="loggingTitle"></div>
+            <footer class="log-toolbar workspace-dialog-footer log-footer">
+                <div class="log-footer-status">
+                    <span id="logLoadingStatus"><span id="logLoadingSpinner" hidden></span><span id="logLoadingStatusText" role="status">{{ _('Klaar') }}</span></span>
+                    <span id="logTimeZoneBadge"></span>
+                </div>
+                <div class="log-pagination">
+                    <span id="logPageInfo"></span>
+                    <button type="button" id="logPrevPageBtn" class="button button-secondary" onclick="goToPreviousLogPage()">{{ _('← Vorige') }}</button>
+                    <button type="button" id="logNextPageBtn" class="button button-secondary" onclick="goToNextLogPage()">{{ _('Volgende →') }}</button>
+                </div>
+            </footer>
+        </div>
+    </dialog>
+
+    <!-- Merge Modal -->
+    <div class="modal" id="mergeModal">
+           <div class="modal-content modal-modern" style="max-width: 1200px; width: 96vw; max-height: 85vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <h3>{{ _('🔄 Whitelist Merge') }}</h3>
+                <button class="modal-close-btn" onclick="closeMergeModal()" title="{{ _('Sluiten') }}">×</button>
+            </div>
+
+            <div class="modal-body" style="overflow-y: auto; flex: 1; padding: 10px 0 20px;">
+                <div id="mergeStatus" class="domain-hint" style="margin-top: 0;">{{ _('Merge data laden...') }}</div>
+
+                <div id="mergeSummary" style="font-size: 12px; color: var(--muted, #4b5563); margin-top: 10px;"></div>
+
+                <div class="merge-legend">
+                    <span><span class="merge-dot local"></span> {{ _('Alleen lokaal') }}</span>
+                    <span><span class="merge-dot remote"></span> {{ _('Alleen remote') }}</span>
+                    <span><span class="merge-dot shared"></span> {{ _('Beide') }}</span>
+                </div>
+
+                <div class="merge-toolbar" aria-label="{{ _('Merge selectie opties') }}">
+                    <button id="btnSelectAll" type="button" title="{{ _('Selecteer alle regels') }}" onclick="setMergeSelection('all')">{{ _('Alles selecteren') }} <span class="count-badge" id="countAll">0</span></button>
+                    <button id="btnSelectNone" type="button" title="{{ _('Deselecteer alles') }}" onclick="setMergeSelection('none')">{{ _('Alles deselecteren') }}</button>
+                    <button id="btnSelectLocal" type="button" title="{{ _('Selecteer items die lokaal bestaan (incl. gedeelde)') }}" onclick="setMergeSelection('local')">{{ _('Selecteer lokaal') }} <span class="count-badge" id="countLocal">0</span></button>
+                    <button id="btnSelectRemote" type="button" title="{{ _('Selecteer items die op de peer bestaan (incl. gedeelde)') }}" onclick="setMergeSelection('remote')">{{ _('Selecteer remote') }} <span class="count-badge" id="countRemote">0</span></button>
+                    <button id="btnSelectShared" type="button" title="{{ _('Selecteer alleen gedeelde items') }}" onclick="setMergeSelection('shared')">{{ _('Selecteer gedeeld') }} <span class="count-badge" id="countShared">0</span></button>
+
+                </div>
+                <div style="margin-top:8px; font-size:12px; color:var(--muted, #374151);">
+                    {{ _('Tip: gebruik "Selecteer lokaal" of "Selecteer remote" om items te kiezen zonder gedeelde regels te verliezen.') }}
+                </div>
+
+                <div class="merge-body" style="margin-top: 16px;">
+                    <div id="mergeList" class="merge-list" style="flex:1;"></div>
+                    <div style="flex: 0 0 50%; min-width: 360px;">
+                        <div class="merge-section-title">{{ _('Preview') }}</div>
+                        <div id="mergePreview" class="merge-preview"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px;">
+                <label style="font-size: 12px; color: var(--muted, #4b5563); display: flex; align-items: center; gap: 6px;">
+                    <input type="checkbox" id="mergePushPeer" checked>
+                    {{ _('Wijzigingen naar peer pushen') }}
+                </label>
+                <div style="display: flex; gap: 10px;">
+                    <button class="button button-secondary" onclick="closeMergeModal()">{{ _('Annuleren') }}</button>
+                    <button class="button button-primary" id="mergeApplyButton" onclick="applyMerge()">{{ _('Merge toepassen') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal" id="exportModal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>{{ _('Whitelist Exporteren') }}</h3>
+                <button class="modal-close-btn" onclick="closeExportModal()" title="{{ _('Sluiten') }}">×</button>
+            </div>
+            <div class="form-group">
+                <label for="exportFormat">{{ _('Exportformaat') }}</label>
+                <select id="exportFormat">
+                    <option value="domain">{{ _('Domein/wildcard notatie (zoals *.adobe.com)') }}</option>
+                    <option value="regex">{{ _('Regex (Tinyproxy ERE)') }}</option>
+                </select>
+                <div class="help-text">{{ _('Kies hoe je de whitelist wilt exporteren. Domein/wildcard is het meest gebruiksvriendelijk, regex is exact zoals Tinyproxy gebruikt.') }}</div>
+            </div>
+            <div class="modal-footer">
+                <button class="button button-secondary" onclick="closeExportModal()">{{ _('Annuleren') }}</button>
+                <button class="button button-primary" id="exportDownloadBtn" onclick="exportWhitelistWithFormat()">{{ _('Downloaden') }}</button>
+            </div>
+        </div>
+    </div>
+
+    <script defer src="{{ url_for('static', filename='js/manager-settings.js', v=app_version) }}"></script>
+
+    <!-- Confirm Modal (custom) -->
+    <div class="modal" id="confirmModal">
+        <div class="modal-content" style="max-width:480px;">
+            <div class="modal-header">
+                <h3>{{ _('Bevestiging') }}</h3>
+            </div>
+            <div style="padding-top:6px;">
+                <div id="confirmMessage" style="font-size:14px; color:var(--muted, #374151); margin-bottom:12px;"></div>
+                <div style="display:flex; gap:8px; justify-content:flex-end;">
+                    <button class="button button-secondary" id="confirmCancel">{{ _('Annuleren') }}</button>
+                    <button class="button button-primary" id="confirmOk">{{ _('Bevestig') }}</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ _('Inloggen') }} · ProxyPermit</title>
+    {% include "_favicon.html" %}
+    <script src="{{ url_for('static', filename='js/theme.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/signin.css', v=app_version) }}">
+    <script defer src="{{ url_for('static', filename='js/signin.js', v=app_version) }}"></script>
+</head>
+<body class="signin-page">
+    <main class="signin-card" aria-labelledby="signinTitle">
+        <header class="signin-header">
+            <div class="signin-brand">
+                <img src="{{ url_for('static', filename='logo.svg', v=app_version) }}" width="36" height="36" alt="">
+                <strong>ProxyPermit</strong>
+            </div>
+            <nav class="signin-languages" aria-label="{{ _('Taal') }}">
+                <a href="?lang=nl" lang="nl" aria-label="Nederlands" {% if locale == 'nl' %}aria-current="true"{% endif %}>NL</a>
+                <a href="?lang=en" lang="en" aria-label="English" {% if locale == 'en' %}aria-current="true"{% endif %}>EN</a>
+            </nav>
+        </header>
+        <h1 id="signinTitle">{{ _('Inloggen') }}</h1>
+        <form id="loginForm" method="post" novalidate
+              data-destination="{{ destination }}"
+              data-missing="{{ _('Vul gebruikersnaam en wachtwoord in') }}"
+              data-otp="{{ _('Voer de code uit je authenticator-app in.') }}"
+              data-failure="{{ _('Inloggen mislukt') }}"
+              data-pending="{{ _('Bezig...') }}">
+            <label for="loginUsername">{{ _('Gebruikersnaam') }}</label>
+            <input type="text" id="loginUsername" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+            <label for="loginPassword">{{ _('Wachtwoord') }}</label>
+            <input type="password" id="loginPassword" autocomplete="current-password" required>
+            <div class="signin-factor" id="loginOtpGroup" hidden>
+                <label for="loginOtp">{{ _('Authenticatorcode') }}</label>
+                <input type="text" id="loginOtp" inputmode="numeric" autocomplete="one-time-code" maxlength="6" aria-describedby="loginOtpHint" disabled>
+                <small id="loginOtpHint">{{ _('Voer de code uit je authenticator-app in.') }}</small>
+            </div>
+            <p class="signin-feedback" id="loginFeedback" role="alert"></p>
+            <button type="submit" class="button button-primary" id="loginButton" disabled>{{ _('Inloggen') }}</button>
+            <noscript><p>{{ _('Schakel JavaScript in om in te loggen.') }}</p></noscript>
+        </form>
+    </main>
+</body>
+</html>

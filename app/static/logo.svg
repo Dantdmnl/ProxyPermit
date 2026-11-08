@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>ProxyPermit</title>
+  <rect x="1" y="1" width="62" height="62" rx="15" fill="#173b36" stroke="#629e8a" stroke-width="2"/>
+  <path d="M32 11 49 17v14c0 11-7 18-17 23-10-5-17-12-17-23V17z" fill="#a5e4ca"/>
+  <path d="M24 32h15m-6-6 6 6-6 6" fill="none" stroke="#173b36" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

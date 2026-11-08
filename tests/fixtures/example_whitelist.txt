@@ -1,0 +1,7 @@
+# Example whitelist for validate_ere.py
+^(.+\.)?example\.com(:[0-9]+)?$
+^(.+\.)?subexample\.example\.com(:[0-9]+)?$  # Subdomain example
+^(.+\.)?example\.net(:[0-9]+)?$
+^(.+\.)?adobe\.com(:[0-9]+)?$
+^(.+\.)?azure\.com(:[0-9]+)?$
+^(.+\.)?ansible\.com(:[0-9]+)?$

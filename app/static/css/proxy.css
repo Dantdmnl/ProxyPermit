@@ -1,0 +1,129 @@
+.proxy-workspace {
+    --text-secondary: #516675;
+    --panel-tint: #f6f9f8;
+    --anchor-offset: 200px;
+}
+
+.proxy-workspace .page-heading,
+.proxy-workspace .editor-heading,
+.change-bar-row,
+.change-state {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.proxy-workspace .page-heading h1 { margin: 0; }
+.proxy-workspace .page-heading p { margin: 0 0 6px; }
+.proxy-workspace p, .proxy-workspace .hint { color: var(--text-secondary); }
+.proxy-workspace .card h2 { margin-bottom: 8px; font-size: 16px; }
+.proxy-workspace .badge {
+    display: inline-block;
+    padding: 4px 9px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    color: var(--text-secondary);
+    background: var(--panel-tint);
+    white-space: nowrap;
+}
+
+.change-bar {
+    position: sticky;
+    top: 8px;
+    z-index: 2;
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: 0 3px 12px #172c3a0c;
+    padding: 12px 16px;
+}
+
+.change-state { justify-content: flex-start; flex-wrap: wrap; }
+.change-state .badge[data-state="dirty"] { color: #6c4612; background: #fff3d8; border-color: #f3ddb0; }
+.change-state .badge[data-state="staged"] { color: #165341; background: #e9f5ee; border-color: #d2e8dc; }
+.proxy-workspace .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.proxy-workspace .actions a { color: var(--accent); padding: 8px; text-underline-offset: 3px; }
+.proxy-workspace button {
+    min-height: 36px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+}
+.proxy-workspace button.secondary { background: white; border-color: #cbd8dd; color: var(--ink); }
+.proxy-workspace button.danger { background: white; border-color: #eccbc7; color: #95382d; }
+.proxy-workspace button:hover:not(:disabled) { filter: brightness(.95); }
+.proxy-workspace button:disabled { opacity: .52; cursor: default; }
+.proxy-workspace .notice {
+    margin: 9px 0 0;
+    padding: 0;
+    overflow-wrap: anywhere;
+}
+.proxy-workspace .notice.error, #validation .errors { color: #95382d; }
+#validation .warnings { color: #745116; }
+#validation:not(:empty) { max-height: 92px; overflow: auto; margin-top: 8px; font-size: 12px; }
+#validation ul { margin: 4px 0; padding-inline-start: 20px; }
+
+.section-links { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 16px 0; }
+.section-links a { color: var(--accent); font-weight: 600; text-underline-offset: 3px; padding: 4px 0; }
+.proxy-workspace :is(#settings, #filter-panel, #native-config) { scroll-margin-top: var(--anchor-offset); }
+.proxy-workspace .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; }
+.proxy-workspace .summary small { display: block; text-transform: uppercase; letter-spacing: .06em; }
+.proxy-workspace .summary strong { margin-top: 2px; }
+.settings-layout { display: grid; grid-template-columns: minmax(235px, .85fr) minmax(0, 1.3fr); gap: 18px; align-items: start; }
+.proxy-workspace .task-list { padding-bottom: 12px; }
+.proxy-workspace .task-list button {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    min-height: 58px;
+    padding: 10px 8px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    background: white;
+    color: var(--ink);
+    text-align: start;
+}
+.proxy-workspace .task-list button:last-child { border-bottom: 0; }
+.proxy-workspace .task-list button:hover:not(:disabled),
+.proxy-workspace .task-list button[data-selected] { background: var(--panel-tint); }
+.task-list small { display: block; margin-top: 3px; font-weight: 400; color: var(--text-secondary); }
+.task-list button > span:last-child { color: var(--accent); font-size: 16px; }
+.proxy-workspace label { display: block; margin: 12px 0 4px; }
+.proxy-workspace input, .proxy-workspace select, .proxy-workspace textarea { width: 100%; min-height: 38px; }
+.proxy-workspace textarea { display: block; resize: vertical; margin-bottom: 12px; }
+.proxy-workspace #config { min-height: 300px; }
+.proxy-workspace #filter { min-height: 160px; }
+.proxy-workspace #insert { margin-top: 12px; }
+.setting-form #setting-feedback:not(.error) { color: var(--accent); }
+.proxy-workspace .editor-card, .proxy-workspace .native-filter { margin-top: 18px; }
+.proxy-workspace summary { cursor: pointer; font-weight: 650; }
+.setting-form details { margin-top: 12px; }
+
+@media (max-width: 1050px) {
+    .proxy-workspace { --anchor-offset: 16px; }
+    .change-bar { position: static; }
+    .change-bar-row { align-items: flex-start; flex-direction: column; }
+}
+
+@media (max-width: 780px) {
+    .settings-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 500px) {
+    .proxy-workspace .summary { gap: 6px; }
+    .proxy-workspace .summary div { min-width: 0; padding: 9px; }
+    .proxy-workspace .summary small { font-size: 9px; overflow-wrap: anywhere; }
+    .proxy-workspace .summary strong { font-size: 13px; }
+    .proxy-workspace .page-heading { align-items: flex-start; }
+    .change-bar .actions button { flex-grow: 1; }
+}
+
+@media (max-height: 620px) {
+    .change-bar { position: static; }
+    .proxy-workspace { --anchor-offset: 16px; }
+}
