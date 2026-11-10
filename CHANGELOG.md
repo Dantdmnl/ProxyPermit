@@ -4,6 +4,10 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+### Fixed
+
+- Supply the RADIUS attribute dictionary needed for PAP sign-in and verify accepted and rejected requests over UDP.
+
 ## [1.0.0] - 2026-11-08
 
 ### Added

@@ -9,6 +9,7 @@ import re
 import subprocess
 import logging
 import importlib.util
+from io import StringIO
 import hmac
 import hashlib
 import stat
@@ -755,13 +756,19 @@ def _check_auth_radius(username: str, password: str) -> Tuple[bool, str]:
     
     try:
         pyrad_client = importlib.import_module('pyrad.client')
+        pyrad_dictionary = importlib.import_module('pyrad.dictionary')
         pyrad_packet = importlib.import_module('pyrad.packet')
 
         # Send a PAP (Password Authentication Protocol) request.
+        dictionary = pyrad_dictionary.Dictionary(StringIO(
+            'ATTRIBUTE User-Name 1 string\n'
+            'ATTRIBUTE User-Password 2 octets\n'
+        ))
         client = pyrad_client.Client(
             server=RADIUS_SERVER,
             authport=RADIUS_PORT,
             secret=RADIUS_SECRET.encode('utf-8'),
+            dict=dictionary,
             timeout=RADIUS_TIMEOUT
         )
         
