@@ -2,9 +2,9 @@
 
 [Nederlands](../releases.md) · [Documentation](README.md)
 
-Edit `VERSION` to set the source version. The Python and browser version files
-are generated. Run `show` to inspect the version, `sync` to update generated
-files, and `check` to detect drift.
+`VERSION` is the version source. The Python and browser version files are
+generated from it. Run `show` to inspect the version, `sync` to update
+generated files, and `check` to detect drift.
 
 ```bash
 python scripts/release.py show

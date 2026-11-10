@@ -1,9 +1,9 @@
 # ProxyPermit
 
-ProxyPermit is a web console for managing Tinyproxy on Linux. It covers client
-access, destination filtering, upstream and reverse-proxy settings, configuration
-drafts, and live logs. Administrators can use individual accounts with optional
-two-factor authentication.
+ProxyPermit is a web console for managing Tinyproxy on Linux. Use it to control
+client access and destination filtering, stage and publish proxy configuration,
+and investigate traffic through live logs. Each administrator can use a personal
+account with optional two-factor authentication.
 
 Run it on a single node or use two nodes with a shared virtual IP managed by
 Keepalived. In a new HA deployment, each node has its own console and proxy
@@ -12,22 +12,23 @@ policy. See the installation guide for migration from an existing HA deployment.
 | Documentation | English | Nederlands |
 | --- | --- | --- |
 | Start here / Begin hier | [Documentation](docs/en/README.md) | [Documentatie](docs/README.md) |
-| Install and upgrade / Installatie en upgrades | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/installatie.md) |
+| Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/installatie.md) |
 | Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/beheer.md) |
 
 ## Quick start
 
-On Debian or Ubuntu with systemd and Python 3.10 or later, run the installer
-from the repository root.
+For a new standalone installation, run these commands from the repository root
+on Debian or Ubuntu with systemd and Python 3.10 or later. Review the plan before
+applying it.
 
 ```bash
 bash install.sh --plan
-sudo bash install.sh
+sudo bash install.sh --apply
 ```
 
-The wizard lets you choose a standalone node or a two-node HA deployment.
-The management console listens on loopback by default. See the installation
-guide for an SSH tunnel, HTTPS access, and HA prerequisites.
+For an interactive setup, use `sudo bash install.sh`. On a fresh installation,
+open the console through an [SSH tunnel](docs/en/installation.md#open-the-console).
+For two nodes, follow the [HA prerequisites](docs/en/installation.md#new-two-node-ha-cluster).
 
 ## Development
 

@@ -9,6 +9,7 @@ import pyotp
 from werkzeug.security import generate_password_hash
 
 from app.web import manager
+from app.web import settings
 
 
 class LocalAccountTests(unittest.TestCase):
@@ -77,6 +78,36 @@ class LocalAccountTests(unittest.TestCase):
             csrf = current['settings_csrf']
         return self.client.post('/api/settings/accounts', headers={'X-CSRF-Token': csrf},
                                 json=dict(action=action, **fields))
+
+    def test_ha_preview_requires_login_and_csrf_and_validates_topology(self):
+        route = '/api/settings/ha/preview'
+        values = dict(node='b', interface='ens18', nodeA='192.0.2.11', nodeB='192.0.2.12',
+                      vip='192.0.2.10/24', clients='192.0.2.0/24', vrid='51')
+        self.assertEqual(self.client.post(route, json=values).status_code, 401)
+        self.assertEqual(self.login('bob').status_code, 200)
+        self.client.get('/settings')
+        self.assertEqual(self.client.post(route, json=values).status_code, 403)
+        with self.client.session_transaction() as current:
+            headers = {'X-CSRF-Token': current['settings_csrf']}
+        response = self.client.post(route, json=values, headers=headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['topology']['peer'], '192.0.2.11')
+        self.assertEqual(self.client.post(route, json={**values, 'vip': '192.0.2.12/24'}, headers=headers).status_code, 400)
+
+    def test_ha_retirement_requires_confirmation_and_reauthentication(self):
+        route = '/api/settings/ha/retire'
+        self.assertEqual(self.login('bob').status_code, 200)
+        self.client.get('/settings')
+        with self.client.session_transaction() as current:
+            headers = {'X-CSRF-Token': current['settings_csrf']}
+        with patch.object(settings, 'ha_retirement_available', return_value=True), patch.object(settings.subprocess, 'run') as command:
+            self.assertEqual(self.client.post(route, json={'confirmed': True}).status_code, 403)
+            self.assertEqual(self.client.post(route, json={'confirmed': False}, headers=headers).status_code, 400)
+            self.assertEqual(self.client.post(route, json={'confirmed': True, 'password': 'wrong'}, headers=headers).status_code, 401)
+            command.assert_not_called()
+            valid = {'confirmed': True, 'password': 'test passphrase'}
+            self.assertEqual(self.client.post(route, json=valid, headers=headers).status_code, 200)
+            command.assert_called_once_with(settings.HA_RETIRE_COMMAND, check=True, capture_output=True, timeout=90)
 
     def test_settings_requires_authentication_csrf_and_password(self):
         self.assertEqual(self.client.get('/settings').status_code, 403)

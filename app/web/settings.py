@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import time
 from pathlib import Path
 
@@ -17,7 +18,16 @@ from werkzeug.security import generate_password_hash
 
 from ..core.accounts import consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
+from ..core.ha import ha_firewall_rules, ha_topology
 from ..core.tinyproxy import atomic_write
+from .proxy import ha_enabled, managed_ha
+
+HA_RETIRE_COMMAND = ('/usr/bin/sudo', '-n', '/usr/bin/systemctl', 'start', 'proxypermit-ha-retire.service')
+
+
+def ha_retirement_available():
+    return (managed_ha() and Path('/etc/proxypermit/ha-firewall.json').is_file()
+            and Path('/etc/systemd/system/proxypermit-ha-retire.service').is_file())
 
 
 def secure_access():
@@ -48,7 +58,65 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         accounts = load_accounts(path) if path else {}
         return render_template('settings.html', actor=actor, accounts=accounts,
                                editable=bool(path and secure_access() and os.access(path.parent, os.W_OK)),
+                               ha_enabled=ha_enabled(), managed_ha=managed_ha(),
+                               ha_retire_available=bool(path and secure_access() and ha_retirement_available()),
                                csrf=session.setdefault('settings_csrf', secrets.token_urlsafe(32)))
+
+    @settings.post('/api/settings/ha/preview')
+    @requires_auth
+    def preview_ha():
+        if not session.get('user'):
+            return jsonify(error='Authentication required'), 403
+        csrf = session.get('settings_csrf', '')
+        supplied = request.headers.get('X-CSRF-Token', '')
+        if not csrf or not supplied.isascii() or not secrets.compare_digest(csrf, supplied):
+            return jsonify(error='Session expired. Reload the page.'), 403
+        data = request.get_json(silent=True)
+        keys = ('node', 'interface', 'nodeA', 'nodeB', 'vip', 'clients', 'vrid')
+        if not isinstance(data, dict) or any(not isinstance(data.get(key), str) or len(data[key]) > 64 for key in keys):
+            return jsonify(error='Invalid input.'), 400
+        try:
+            vrid = data['vrid']
+            if not vrid.isascii() or not vrid.isdecimal() or not 1 <= int(vrid) <= 255:
+                raise ValueError('Choose a restricted client network and a VRRP ID between 1 and 255.')
+            topology = ha_topology(*(data[key].strip() for key in keys[:-1]), int(vrid))
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError):
+            return jsonify(error='Enter valid IPv4 addresses and network prefixes.'), 400
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        return jsonify(topology=topology, firewallRules=ha_firewall_rules(topology))
+
+    @settings.post('/api/settings/ha/retire')
+    @requires_auth
+    def retire_ha():
+        path, _ = paths()
+        actor = session.get('user')
+        if not path or not actor or not secure_access() or not ha_retirement_available():
+            return jsonify(error='HA retirement is unavailable on this node.'), 403
+        csrf = session.get('settings_csrf', '')
+        supplied = request.headers.get('X-CSRF-Token', '')
+        if not csrf or not supplied.isascii() or not secrets.compare_digest(csrf, supplied):
+            return jsonify(error='Session expired. Reload the page.'), 403
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or data.get('confirmed') is not True:
+            return jsonify(error='Confirm that the peer is serving the virtual IP.'), 400
+        password, otp = data.get('password'), data.get('otp', '')
+        if not isinstance(password, str) or len(password) > 256 or not isinstance(otp, str) or len(otp) > 6:
+            return jsonify(error='Invalid input.'), 400
+        with file_lock(str(path) + '.lock'):
+            account = load_accounts(path).get(actor)
+            if not account or not authenticated():
+                return jsonify(error='Authentication required'), 403
+            error, _ = reauthenticate(actor, account, password, otp)
+        if error is not None:
+            return error
+        try:
+            subprocess.run(HA_RETIRE_COMMAND, check=True, capture_output=True, timeout=90)
+        except (OSError, subprocess.SubprocessError):
+            audit('ha_retire_failed', level='warning')
+            return jsonify(error='HA retirement failed. Check the retirement service log on the host.'), 409
+        audit('ha_node_retired')
+        return jsonify(success=True)
 
     @settings.post('/api/settings/accounts')
     @requires_auth

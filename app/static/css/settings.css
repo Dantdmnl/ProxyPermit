@@ -19,3 +19,12 @@
 .enrollment-qr { display:block; width:min(210px,100%); height:auto; margin:12px auto; background:white; }
 .settings-workspace .rule-dialog input[type=password] { width:100%; min-height:40px; }
 .theme-setting { display:grid; gap:4px; min-width:144px; }
+.ha-settings { margin-top:12px; }
+.ha-settings summary { cursor:pointer; }
+.ha-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); align-items:end; gap:10px; margin:12px 0; }
+.ha-fields label { display:grid; gap:4px; min-width:0; }
+.ha-fields > div { display:grid; gap:4px; min-width:0; }
+.ha-fields :is(input,select) { min-width:0; width:100%; min-height:36px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--field,#fff); color:var(--ink); }
+.ha-settings pre { margin:8px 0 0; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field,#f4f6f8); color:var(--ink); }
+.ha-fields .ha-confirm { display:flex; align-items:center; }
+.ha-fields .ha-confirm input { width:auto; min-height:0; }

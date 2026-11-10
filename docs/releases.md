@@ -2,10 +2,9 @@
 
 [English](en/releases.md) · [Documentatie](README.md)
 
-`VERSION` is de enige handmatig beheerde versiebron. De huidige versie blijft
-1.0.0 totdat je bewust een release voorbereidt. `app/_version.py` en
-`app/static/js/version.js` zijn gegenereerd; de interface en asset-queryversies
-gebruiken dezelfde versie. Dit volgt dezelfde werkwijze als Website/V2.
+`VERSION` is de versiebron. De Python-module `app/_version.py` en het
+browserbestand `app/static/js/version.js` worden daaruit gegenereerd.
+Gebruik `show` om de huidige versie te bekijken.
 
 ```bash
 python scripts/release.py show

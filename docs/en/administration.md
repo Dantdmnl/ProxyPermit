@@ -46,14 +46,25 @@ With an allowlist, expect the normal response from the first destination and
 HTTP 403 from the second. Test HTTPS through CONNECT if clients use it.
 Verify actual proxy traffic in addition to checking systemd and console health.
 
-## Daily changes and troubleshooting
+## Change proxy policy
 
-Under **Proxy configuration**, choose **Validate draft**, **Save draft**, and
-**Publish and activate**. Record which destinations must work after the change.
-Publishing can interrupt active connections. For a new HA cluster, apply the
-same policy to both nodes. Start with the node that does not hold the virtual
-IP and verify it before changing the active node. New clusters require local
-publication on each node.
+1. Record which destinations must be reachable after the change.
+2. Open **Proxy configuration**. Select **Validate draft**, review errors and
+   warnings, then select **Save draft**.
+3. Select **Publish and activate** during the maintenance window. Tinyproxy
+   restarts and may interrupt existing connections.
+4. Retest client traffic and verify the change in **Live logs**.
+
+On a new HA cluster, publish the same policy on both nodes. Start with the node
+that does not hold the virtual IP and verify it before changing the active node.
+
+## Troubleshoot a deployment
+
+Open **Live logs** and filter by source and level. Type to filter loaded
+entries or select **Search server** to include older entries. Expand an audit
+entry to see details about the change.
+
+Check the services and journal on the host.
 
 ```bash
 sudo systemctl status proxypermit.service tinyproxy.service --no-pager
@@ -80,10 +91,11 @@ file, keys, and relevant service state. Verify the paths in
 Restrict access to the backups because they can contain password hashes, 2FA
 secrets, and sync secrets. Keep a copy off the node and practice recovery in a lab.
 
-Review the upgrade plan and record the current policy. The installer reports
-the recovery manifest name. Review the files a rollback restores and save any
-newer policy before reverting to an earlier release. Verify sign-in and proxy
-traffic again after recovery.
+Review the [upgrade plan](installation.md#upgrade-a-managed-installation) and
+record the current policy. The installer prints the backup name. Before
+[restoring a backup](installation.md#restore-from-a-backup), review the affected
+files and save any newer policy. Verify sign-in and proxy traffic again after
+recovery.
 
 ## Current limits
 

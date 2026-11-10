@@ -14,6 +14,7 @@
     <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
     <script src="{{ url_for('static', filename='js/dialog-dismiss.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/settings.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/ha-settings.js', v=app_version) }}" defer></script>
 </head>
 <body>
 {% include "_shell.html" %}
@@ -43,6 +44,57 @@
     {% else %}
     {% set own = accounts.get(actor, {}) %}
     {% set mfa = 'totp_secret' in own %}
+    <section class="card settings-panel" aria-labelledby="ha-title">
+        <header>
+            <div><h2 id="ha-title">{{ _('Hoge beschikbaarheid (HA)') }}</h2>
+                <p>{{ _('Controleer het netwerkplan voor twee nodes voordat je de installatie uitvoert.') }}</p></div>
+            <span class="settings-badge">{{ _('Beheerde HA') if managed_ha else _('Bestaande HA') if ha_enabled else _('Zelfstandige node') }}</span>
+        </header>
+        <details class="ha-settings">
+            <summary>{{ _('HA-instellingen controleren') }}</summary>
+            <form id="haPreviewForm" class="ha-fields">
+                <div><label for="haNode">{{ _('Node') }}</label>
+                    <select id="haNode" name="node"><option value="a">A</option><option value="b">B</option></select></div>
+                <label>{{ _('Netwerkinterface') }}<input name="interface" placeholder="ens18" maxlength="15" required></label>
+                <label>{{ _('IPv4-adres van node A') }}<input name="nodeA" placeholder="192.0.2.11" maxlength="15" required></label>
+                <label>{{ _('IPv4-adres van node B') }}<input name="nodeB" placeholder="192.0.2.12" maxlength="15" required></label>
+                <label>{{ _('Virtueel IPv4-adres met prefix') }}<input name="vip" placeholder="192.0.2.10/24" maxlength="18" required></label>
+                <label>{{ _('Toegestaan clientnetwerk met prefix') }}<input name="clients" placeholder="192.0.2.0/24" maxlength="18" required></label>
+                <label>{{ _('VRRP-ID') }}<input name="vrid" type="number" min="1" max="255" value="51" required></label>
+                <button type="submit" class="button button-secondary">{{ _('HA-plan controleren') }}</button>
+            </form>
+            <p id="haPreviewFeedback" role="status"></p>
+            <pre id="haPreviewResult" hidden></pre>
+            <details id="haFirewallPreview" class="ha-settings" hidden>
+                <summary>{{ _('UFW-regels voor deze node') }}</summary>
+                <pre id="haFirewallRules"></pre>
+            </details>
+        </details>
+        {% if ha_enabled %}
+        <details class="ha-settings">
+            <summary>{{ _('HA verwijderen voorbereiden') }}</summary>
+            <ol>
+                <li>{{ _('Kies welke node het proxyverkeer blijft verwerken.') }}</li>
+                <li>{{ _('Plan hoe clients van het virtuele adres naar het nieuwe proxyadres overstappen.') }}</li>
+                <li>{{ _('Leg het actieve beleid en de Keepalived-configuratie per node vast.') }}</li>
+            </ol>
+            {% if ha_retire_available %}
+            <p>{{ _('Deze actie stopt Keepalived en Tinyproxy op deze node. De beheerconsole blijft beschikbaar.') }}</p>
+            <form id="haRetireForm" class="ha-fields">
+                <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+                {% if mfa %}
+                <label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required></label>
+                {% endif %}
+                <label class="ha-confirm"><input name="confirmed" type="checkbox" required> {{ _('De peer verwerkt het verkeer via het virtuele IP.') }}</label>
+                <button type="submit" class="button button-danger">{{ _('Deze HA-node uit bedrijf nemen') }}</button>
+            </form>
+            <p id="haRetireFeedback" role="status"></p>
+            {% else %}
+            <p>{{ _('Voor het verwijderen van HA is een afzonderlijke migratie op de hosts nodig.') }}</p>
+            {% endif %}
+        </details>
+        {% endif %}
+    </section>
     {% if not editable %}<p class="settings-notice">{{ _('Accountbeheer via de browser is hier niet beschikbaar.') }}</p>{% endif %}
     <section class="card settings-panel" aria-labelledby="profile-title">
         <header><div><h2 id="profile-title">{{ _('Mijn account') }}</h2><p>{{ actor }}</p></div>

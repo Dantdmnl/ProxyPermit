@@ -2,7 +2,7 @@
 """Install ProxyPermit on Debian or Ubuntu. Run without options to open the wizard."""
 import argparse
 import getpass
-import ipaddress
+import hashlib
 import json
 import os
 import re
@@ -10,48 +10,37 @@ import secrets
 import shlex
 import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE))
 from app.core.tinyproxy import atomic_write
+from app.core.files import file_lock
+from app.core.ha import ha_firewall_rules, ha_topology
 from scripts.deploy.install_terminal import InstallTerminal
 
 KEEPALIVED_CONFIG = Path('/etc/keepalived/keepalived.conf')
 KEEPALIVED_HEALTH = Path('/etc/keepalived/proxypermit-health')
+UFW_RULE_FILES = (Path('/etc/ufw/user.rules'), Path('/etc/ufw/user6.rules'))
+HA_FIREWALL_STATE = Path('/etc/proxypermit/ha-firewall.json')
+HA_RETIRE_UNIT = Path('/etc/systemd/system/proxypermit-ha-retire.service')
+HA_RETIRE_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-retire')
+HA_RETIRE_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start proxypermit-ha-retire.service\n'
+MAINTENANCE_DIRECTORY = Path('/run/proxypermit-maintenance')
 LEGACY_SYNC_SCRIPT = Path('/usr/local/bin/sync_whitelist_v2.py')
 KEEPALIVED_HEALTH_TEXT = (
     '#!/usr/bin/python3\nimport socket\n'
     'with socket.create_connection(("127.0.0.1", 3128), timeout=0.5):\n    pass\n'
 )
-
-
-def ha_topology(node, interface, node_a, node_b, vip, clients, vrid):
-    if node not in ('a', 'b') or not interface or not re.fullmatch(r'[A-Za-z0-9_.][A-Za-z0-9_.-]{0,14}', interface):
-        raise ValueError('Choose HA node a or b and provide a valid network interface.')
-    if not all((node_a, node_b, vip, clients)) or '/' not in vip or '/' not in clients:
-        raise ValueError('Provide both node IP addresses, the virtual IP with its prefix, and the allowed client network.')
-    a, b = ipaddress.IPv4Address(node_a), ipaddress.IPv4Address(node_b)
-    virtual = ipaddress.IPv4Interface(vip)
-    allowed = ipaddress.IPv4Network(clients)
-    network = virtual.network
-    addresses = (a, b, virtual.ip)
-    if len(set(addresses)) != 3 or any(
-        addr not in network or addr in (network.network_address, network.broadcast_address)
-        or addr.is_loopback or addr.is_multicast or addr.is_unspecified or addr.is_link_local
-        for addr in addresses
-    ):
-        raise ValueError('Both nodes and the virtual IP must have distinct usable IPv4 addresses in the same subnet.')
-    if allowed.prefixlen == 0 or not 1 <= vrid <= 255:
-        raise ValueError('Choose a restricted client network and a VRRP ID between 1 and 255.')
-    return dict(node=node, interface=interface, nodeA=str(a), nodeB=str(b), vip=str(virtual),
-                clients=str(allowed), vrid=vrid, local=str(a if node == 'a' else b), peer=str(b if node == 'a' else a))
 
 
 def keepalived_text(ha):
@@ -180,13 +169,15 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
         'Upgrades preserve the existing HA services and configuration.',
         'Rollback leaves installed packages in place.',
     ]
-    plan = dict(schemaVersion=1, mode=mode, server=server, action='upgrade' if existing_env else 'install',
+    plan: dict[str, Any] = dict(schemaVersion=1, mode=mode, server=server, action='upgrade' if existing_env else 'install',
                 installDir=install_dir, existingEnv=str(existing_env) if existing_env else None,
                 configPath=config, whitelistPath=whitelist, steps=steps, notes=notes)
     if mode == 'standalone':
         notes.append('Standalone mode omits Keepalived and the sync timer.')
     if ha:
         plan['ha'] = ha
+        plan['firewallRules'] = ha_firewall_rules(ha)
+        steps.append('Configure UFW rules for the proxy VIP and bidirectional VRRP. Keep the existing UFW activation state.')
         steps.append('Install and configure Keepalived, check the local Tinyproxy port, and start VRRP.')
         notes.append('Repeat on the other host with the same cluster settings. Publish policy on each node.')
     if mode == 'ha' and values.get('PROXYPERMIT_MANAGED_HA') == 'true':
@@ -251,6 +242,30 @@ def run(*args, **kwargs):
     return subprocess.run(list(args), check=True, **kwargs)
 
 
+def require_trusted_path(path, *, directory):
+    info = path.lstat()
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise ValueError(f'Expected a root-owned path without group or public write access: {path}')
+
+
+@contextmanager
+def maintenance_lock():
+    require_trusted_path(MAINTENANCE_DIRECTORY.parent, directory=True)
+    MAINTENANCE_DIRECTORY.mkdir(mode=0o700, exist_ok=True)
+    require_trusted_path(MAINTENANCE_DIRECTORY, directory=True)
+    lock = MAINTENANCE_DIRECTORY / 'install.lock'
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        os.close(fd)
+    require_trusted_path(lock, directory=False)
+    with file_lock(lock, timeout=1):
+        yield
+
+
 def service_state(unit):
     return {key: subprocess.run(['systemctl', f'is-{key}', '--quiet', unit], check=False).returncode == 0
             for key in ('active', 'enabled')}
@@ -290,6 +305,74 @@ def start_ha():
     run('systemctl', 'enable', 'keepalived.service')
     run('systemctl', 'restart', 'keepalived.service')
     run('systemctl', 'is-active', '--quiet', 'keepalived.service')
+
+
+def ufw_added_rules():
+    output = run('ufw', 'show', 'added', capture_output=True, text=True).stdout
+    return {line for line in output.splitlines() if line.startswith('ufw ')}
+
+
+def apply_ha_firewall(rules):
+    existing = ufw_added_rules()
+    for rule in rules:
+        run('ufw', '--dry-run', *rule, capture_output=True)
+    for rule in rules:
+        run('ufw', *rule)
+    updated = ufw_added_rules()
+    if existing - updated:
+        raise ValueError('An existing UFW rule conflicts with the HA rules. Restoring the original firewall rules.')
+    owned = sorted(updated - existing)
+    comments = {rule[-1] for rule in rules}
+    if any(shlex.split(line)[-1] not in comments for line in owned):
+        raise ValueError('UFW added an unexpected rule. Restoring the original firewall rules.')
+    return owned
+
+
+def ha_retire_unit_text(install_dir):
+    return (
+        '[Unit]\nDescription=Retire the local ProxyPermit HA node\n\n'
+        '[Service]\nType=oneshot\nWorkingDirectory=/\nTimeoutStartSec=75\nKillSignal=SIGINT\n'
+        f'ExecStart=/usr/bin/python3 -I {install_dir}/current/scripts/deploy/install.py '
+        f'--install-dir {install_dir} --retire-ha --apply\n'
+    )
+
+
+def secure_ha_helper_source(base, release):
+    for directory in (base, *base.parents, release.parent, release):
+        require_trusted_path(directory, directory=True)
+    for directory in (release / 'app', release / 'scripts'):
+        for path in (directory, *directory.rglob('*')):
+            if path.is_symlink() or path.stat().st_uid != 0:
+                raise ValueError(f'The HA helper requires root-owned release files: {path}')
+            path.chmod(path.stat().st_mode & ~0o022)
+
+
+def remove_owned_ha_firewall(owned):
+    existing = ufw_added_rules()
+    present = set(owned) & existing
+    missing = set(owned) - existing
+    existing_comments = {shlex.split(line)[-1] for line in existing}
+    if any(shlex.split(line)[-1] in existing_comments for line in missing):
+        raise ValueError('A managed HA firewall rule was edited. Review it before retiring this node.')
+    for line in sorted(present):
+        argv = shlex.split(line)
+        if argv[:2] != ['ufw', 'allow'] or argv[-2] != 'comment' or not argv[-1].startswith('ProxyPermit HA '):
+            raise ValueError('The managed HA firewall rule record is invalid.')
+        run('ufw', '--force', 'delete', *argv[1:])
+    if ufw_added_rules() != existing - present:
+        raise ValueError('The firewall changed unexpectedly while removing the HA rules.')
+
+
+def reload_ufw():
+    config = Path('/etc/ufw/ufw.conf')
+    if config.is_file() and re.search(r'^ENABLED=yes\s*$', config.read_text(encoding='utf-8'), re.M):
+        run('ufw', 'reload')
+
+
+def ufw_rule_fingerprints():
+    if any(path.is_symlink() or not path.is_file() for path in UFW_RULE_FILES):
+        raise ValueError('UFW rule files are missing or have changed location.')
+    return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in UFW_RULE_FILES}
 
 
 def probe_manager(values):
@@ -401,8 +484,10 @@ def apply(plan, args):
         for unit in ('keepalived.service', 'whitelist-sync-v2.timer'):
             if subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=False).returncode == 0:
                 raise ValueError('An HA service is active in standalone mode. Check the topology first.')
-    from app.core.files import file_lock
-    with file_lock('/var/lock/proxypermit-install.lock', timeout=1):
+    with maintenance_lock():
+        if args.upgrade:
+            installed_deployment('/', plan['installDir'])
+            verify_live_manager(plan['installDir'])
         _apply_locked(plan, args)
 
 
@@ -436,6 +521,13 @@ def _apply_locked(plan, args):
     if ha:
         transaction.track(KEEPALIVED_CONFIG)
         transaction.track(KEEPALIVED_HEALTH)
+        if HA_FIREWALL_STATE.exists() or HA_FIREWALL_STATE.is_symlink():
+            raise ValueError('An existing HA firewall record must be reviewed before a fresh HA installation.')
+        transaction.track(HA_FIREWALL_STATE)
+        for path in (HA_RETIRE_UNIT, HA_RETIRE_SUDOERS):
+            if path.exists() or path.is_symlink():
+                raise ValueError('An existing HA retirement helper must be reviewed before installation.')
+            transaction.track(path)
     if plan['action'] == 'install':
         transaction.track(accounts_path)
     update_legacy_sync = not managed and LEGACY_SYNC_SCRIPT.is_file() and not LEGACY_SYNC_SCRIPT.is_symlink()
@@ -452,8 +544,10 @@ def _apply_locked(plan, args):
                 transaction.track(path)
     previous = service_state('proxypermit.service')
     auxiliary = {unit: service_state(unit) for unit in ('tinyproxy.service', 'keepalived.service')} if ha else {}
-    atomic_write(transaction.directory / 'service-state.json', json.dumps(dict(**previous, auxiliary=auxiliary)))
+    service_snapshot: dict[str, Any] = dict(**previous, auxiliary=auxiliary, ufw=False)
+    atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
     touched_service = False
+    touched_ufw = False
     password = None
     if plan['action'] == 'install':
         if args.admin_password_file:
@@ -468,13 +562,31 @@ def _apply_locked(plan, args):
         run('apt-get', 'update')
         packages = ['python3-venv', 'tinyproxy', 'sudo', 'logrotate']
         if ha:
-            packages.append('keepalived')
+            packages.extend(('keepalived', 'ufw'))
         run('apt-get', 'install', '-y', *packages)
+        if ha:
+            for path in UFW_RULE_FILES:
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError(f'Expected a regular UFW rule file: {path}')
+                transaction.track(path)
+            service_snapshot['ufw'] = True
+            atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
         release.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(SOURCE, release, ignore=shutil.ignore_patterns(
+        ignore = shutil.ignore_patterns(
             '.git', '.venv', 'venv', '__pycache__', '.demo', '.env', '.env.*', '.test-data',
             'accounts.json', 'totp-steps.json', 'login-attempts.json', 'enroll-*.json',
-            '*.key', '*.pem', '*.crt', '*.log', '*.log.*', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex'))
+            '*.key', '*.pem', '*.crt', '*.log', '*.log.*', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex')
+        if ha or HA_RETIRE_UNIT.is_file():
+            for directory in (base, *base.parents, release.parent):
+                require_trusted_path(directory, directory=True)
+            with tempfile.TemporaryDirectory(prefix='.release-', dir=release.parent) as directory:
+                staged = Path(directory) / release.name
+                shutil.copytree(SOURCE, staged, ignore=ignore)
+                staged.chmod(staged.stat().st_mode & ~0o022)
+                secure_ha_helper_source(base, staged)
+                staged.rename(release)
+        else:
+            shutil.copytree(SOURCE, release, ignore=ignore)
         run(sys.executable, '-m', 'venv', str(release / '.venv'))
         python = str(release / '.venv/bin/python')
         requirements = 'requirements/granian.txt' if plan['server'] == 'granian' else 'requirements/base.txt'
@@ -592,6 +704,9 @@ def _apply_locked(plan, args):
             atomic_write(KEEPALIVED_HEALTH, KEEPALIVED_HEALTH_TEXT, 0o755)
             atomic_write(KEEPALIVED_CONFIG, keepalived_text(ha), 0o640)
             run('keepalived', '--config-test', '-f', str(KEEPALIVED_CONFIG))
+            atomic_write(HA_RETIRE_UNIT, ha_retire_unit_text(str(base)), 0o644)
+            atomic_write(HA_RETIRE_SUDOERS, HA_RETIRE_RULE, 0o440)
+            run('visudo', '-cf', str(HA_RETIRE_SUDOERS))
         # Load all migrated values via the same dotenv parser as the application,
         # and import as the service user before changing the running service.
         smoke = 'from dotenv import load_dotenv; load_dotenv("/etc/proxypermit/.env", override=True); import wsgi; import os; from app.runtime.server import build_command; build_command(os.getenv("APP_SERVER", "gunicorn"), os.environ)'
@@ -621,6 +736,12 @@ def _apply_locked(plan, args):
             time.sleep(0.5)
         if not ready:
             raise RuntimeError('The web service did not become available. Restoring the previous configuration.')
+        if ha:
+            touched_ufw = True
+            owned_rules = apply_ha_firewall(plan['firewallRules'])
+            atomic_write(HA_FIREWALL_STATE, json.dumps({'topology': ha, 'rules': owned_rules}))
+            service_snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
+            atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
         # Existing Tinyproxy is deliberately not restarted during an upgrade.
         if plan['action'] == 'install':
             run('systemctl', 'enable', 'tinyproxy.service')
@@ -641,6 +762,8 @@ def _apply_locked(plan, args):
         if auxiliary:
             subprocess.run(['systemctl', 'stop', 'keepalived.service', 'tinyproxy.service'], check=False)
         transaction.restore()
+        if touched_ufw:
+            reload_ufw()
         if touched_service:
             run('systemctl', 'daemon-reload')
             subprocess.run(['systemctl', 'restart' if previous['active'] else 'stop', 'proxypermit.service'], check=False)
@@ -648,6 +771,149 @@ def _apply_locked(plan, args):
                 subprocess.run(['systemctl', 'disable', 'proxypermit.service'], check=False)
         restore_auxiliary_services(auxiliary)
         raise
+
+
+def installed_deployment(root, install_dir):
+    root = Path(root).resolve()
+    base = root / install_dir.lstrip('/')
+    marker = base / 'installed.json'
+    current = base / 'current'
+    unit = root / 'etc/systemd/system/proxypermit.service'
+    if base.resolve() != base or (base / 'backups').is_symlink():
+        raise ValueError('The installation and backup paths must not pass through symlinks.')
+    if marker.is_symlink() or unit.is_symlink() or not marker.is_file() or not unit.is_file() or not current.is_symlink():
+        raise ValueError('No installer-managed ProxyPermit service found at the selected installation path.')
+    installed = json.loads(marker.read_text(encoding='utf-8'))
+    release = installed.get('release') if isinstance(installed, dict) else None
+    release_root = Path(install_dir) / 'releases'
+    if (not isinstance(release, str) or Path(release).parent != release_root
+            or os.readlink(current) != release
+            or f'WorkingDirectory={Path(install_dir).as_posix()}/current' not in unit.read_text(encoding='utf-8').splitlines()):
+        raise ValueError('The installed release, current link, and systemd unit do not match.')
+    return installed, unit, current, marker
+
+
+def build_uninstall_plan(root, install_dir):
+    installed, unit, current, marker = installed_deployment(root, install_dir)
+    paths = [unit, current, marker]
+    sudoers = Path(root).resolve() / 'etc/sudoers.d/proxypermit'
+    if not sudoers.is_symlink() and sudoers.is_file() and sudoers.read_text(encoding='utf-8') == (
+        'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl restart tinyproxy.service\n'
+    ):
+        paths.append(sudoers)
+    for path, content in ((HA_RETIRE_UNIT, ha_retire_unit_text(install_dir)), (HA_RETIRE_SUDOERS, HA_RETIRE_RULE)):
+        target = Path(root).resolve() / path.as_posix().lstrip('/')
+        if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
+            paths.append(target)
+    return {
+        'action': 'uninstall', 'mode': installed.get('mode'), 'installDir': install_dir,
+        'service': 'proxypermit.service', 'paths': [str(path) for path in paths],
+        'preserved': ['/etc/proxypermit', '/var/lib/proxypermit', '/var/log/proxypermit',
+                      f'{install_dir}/releases', f'{install_dir}/backups',
+                      'Tinyproxy, Keepalived, legacy sync, system packages, and the service account'],
+    }
+
+
+def verify_live_manager(install_dir):
+    properties = run('systemctl', 'show', '--property=FragmentPath', '--property=WorkingDirectory',
+                     'proxypermit.service', capture_output=True, text=True).stdout.splitlines()
+    if ('FragmentPath=/etc/systemd/system/proxypermit.service' not in properties
+            or f'WorkingDirectory={Path(install_dir).as_posix()}/current' not in properties):
+        raise ValueError('systemd is using a different unit file or working directory for ProxyPermit.')
+
+
+def uninstall(install_dir):
+    require_linux_root('Uninstall')
+    with maintenance_lock():
+        plan = build_uninstall_plan('/', install_dir)
+        unit = plan['service']
+        verify_live_manager(install_dir)
+        previous = service_state(unit)
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        transaction = Transaction(Path(install_dir) / 'backups' / stamp)
+        for path in plan['paths']:
+            transaction.track(path)
+        atomic_write(transaction.directory / 'service-state.json', json.dumps(previous))
+        print(f'Recovery backup: {stamp}', flush=True)
+        try:
+            run('systemctl', 'disable', '--now', unit)
+            for path in plan['paths']:
+                Path(path).unlink()
+            run('systemctl', 'daemon-reload')
+        except (Exception, KeyboardInterrupt):
+            transaction.restore()
+            run('systemctl', 'daemon-reload')
+            restore_auxiliary_services({unit: previous})
+            raise
+        print('ProxyPermit manager removed.')
+
+
+def build_ha_retirement_plan(install_dir):
+    installed, _, _, _ = installed_deployment('/', install_dir)
+    if installed.get('mode') != 'ha' or HA_FIREWALL_STATE.is_symlink() or not HA_FIREWALL_STATE.is_file():
+        raise ValueError('Retirement requires a managed HA node with a recorded firewall configuration.')
+    require_trusted_path(HA_FIREWALL_STATE.parent, directory=True)
+    require_trusted_path(HA_FIREWALL_STATE, directory=False)
+    state = json.loads(HA_FIREWALL_STATE.read_text(encoding='utf-8'))
+    ha = state['topology']
+    topology = ha_topology(ha['node'], ha['interface'], ha['nodeA'], ha['nodeB'], ha['vip'], ha['clients'], ha['vrid'])
+    if (KEEPALIVED_CONFIG.is_symlink() or not KEEPALIVED_CONFIG.is_file()
+            or KEEPALIVED_CONFIG.read_text(encoding='utf-8') != keepalived_text(topology)):
+        raise ValueError('Keepalived configuration differs from the managed HA configuration.')
+    rules = state['rules']
+    if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
+        raise ValueError('The managed HA firewall rule record is invalid.')
+    return {'action': 'retire-ha-node', 'vip': topology['vip'].split('/', 1)[0], 'peer': topology['peer'],
+            'services': ['keepalived.service', 'tinyproxy.service'], 'ownedFirewallRules': rules}
+
+
+def verify_remote_proxy(vip, peer):
+    interfaces = json.loads(run('ip', '-j', '-4', 'address', 'show', capture_output=True, text=True).stdout)
+    local_addresses = {address['local'] for interface in interfaces for address in interface.get('addr_info', [])}
+    if vip in local_addresses or peer in local_addresses:
+        raise ValueError('Move the virtual IP to the peer before retiring this node.')
+    try:
+        with socket.create_connection((vip, 3128), timeout=3):
+            pass
+    except OSError as exc:
+        raise ValueError(f'The proxy listener on {vip}:3128 is unreachable. Retirement was stopped.') from exc
+
+
+def retire_ha_node(install_dir):
+    require_linux_root('HA retirement')
+    with maintenance_lock():
+        plan = build_ha_retirement_plan(install_dir)
+        verify_live_manager(install_dir)
+        verify_remote_proxy(plan['vip'], plan['peer'])
+        base = Path(install_dir)
+        for directory in (base, *base.parents, base / 'backups', UFW_RULE_FILES[0].parent):
+            require_trusted_path(directory, directory=True)
+        for path in UFW_RULE_FILES:
+            require_trusted_path(path, directory=False)
+        ufw_rule_fingerprints()
+        previous = {unit: service_state(unit) for unit in plan['services']}
+        snapshot: dict[str, Any] = dict(**service_state('proxypermit.service'), auxiliary=previous, ufw=True)
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        transaction = Transaction(base / 'backups' / stamp)
+        for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE):
+            transaction.track(path)
+        atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
+        print(f'Recovery backup: {stamp}', flush=True)
+        try:
+            for unit in plan['services']:
+                run('systemctl', 'disable', '--now', unit)
+            verify_remote_proxy(plan['vip'], plan['peer'])
+            remove_owned_ha_firewall(plan['ownedFirewallRules'])
+            verify_remote_proxy(plan['vip'], plan['peer'])
+            HA_FIREWALL_STATE.unlink()
+            snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
+            atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
+        except (Exception, KeyboardInterrupt):
+            transaction.restore()
+            reload_ufw()
+            restore_auxiliary_services(previous)
+            raise
+        print('HA node retired. The management console remains available.')
 
 
 def rollback_install(base, stamp, execute=False):
@@ -660,8 +926,9 @@ def rollback_install(base, stamp, execute=False):
     if not execute:
         return
     require_linux_root('Recovery')
-    from app.core.files import file_lock
-    with file_lock('/var/lock/proxypermit-install.lock', timeout=1):
+    with maintenance_lock():
+        if state.get('ufw') and state.get('ufwRuleHashes') != ufw_rule_fingerprints():
+            raise ValueError('UFW rules changed since installation. Review the firewall backup before restoring.')
         subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
         auxiliary = state.get('auxiliary', {})
         if auxiliary:
@@ -670,6 +937,8 @@ def rollback_install(base, stamp, execute=False):
         transaction.directory, transaction.entries = directory, entries
         transaction.restore()
         run('systemctl', 'daemon-reload')
+        if state.get('ufw'):
+            reload_ufw()
         restore_auxiliary_services(auxiliary)
         if state['active']:
             run('systemctl', 'start', 'proxypermit.service')
@@ -771,7 +1040,11 @@ def main(argv=None):
     execution.add_argument('--plan', action='store_true', help='Print the plan as JSON without interactive prompts.')
     parser.add_argument('--mode', choices=['standalone', 'ha'], default=None)
     parser.add_argument('--server', choices=['gunicorn', 'granian'], help='Choose a web server. Upgrades preserve APP_SERVER by default.')
-    parser.add_argument('--rollback', metavar='BACKUP', help='Show the recovery plan for a backup. Add --apply to restore it.')
+    operation = parser.add_mutually_exclusive_group()
+    operation.add_argument('--rollback', metavar='BACKUP', help='Show the recovery plan for a backup. Add --apply to restore it.')
+    operation.add_argument('--upgrade', action='store_true', help='Plan an upgrade of an installer-managed deployment from this source tree.')
+    operation.add_argument('--uninstall', action='store_true', help='Plan removal of the ProxyPermit manager. Add --apply to remove it.')
+    operation.add_argument('--retire-ha', action='store_true', help='Plan retirement of a standby HA node and its managed firewall rules.')
     parser.add_argument('--root', default='/', help='Plan only: inspect an alternative system root.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
     parser.add_argument('--admin-user', default='admin')
@@ -801,6 +1074,22 @@ def main(argv=None):
         manager_port(str(args.manager_port))
         ha_args = (args.ha_node, args.ha_interface, args.ha_node_a, args.ha_node_b,
                    args.ha_vip, args.ha_client_cidr, args.ha_vrid)
+        if args.apply and args.root != '/':
+            raise ValueError('--root is available only when planning.')
+        if args.uninstall or args.retire_ha:
+            if args.mode or args.server or any(value is not None for value in ha_args):
+                raise ValueError('Removal does not take deployment or server options.')
+            if args.retire_ha:
+                if args.root != '/':
+                    raise ValueError('--root cannot be used with --retire-ha.')
+                print(json.dumps(build_ha_retirement_plan(args.install_dir), indent=2))
+                if args.apply:
+                    retire_ha_node(args.install_dir)
+            else:
+                print(json.dumps(build_uninstall_plan(args.root, args.install_dir), indent=2))
+                if args.apply:
+                    uninstall(args.install_dir)
+            return 0
         ha = None
         if any(value is not None for value in ha_args):
             if args.mode != 'ha' or args.rollback or any(value is None for value in ha_args):
@@ -811,11 +1100,13 @@ def main(argv=None):
                 raise ValueError('--root cannot be used with --rollback.')
             rollback_install(args.install_dir, args.rollback, args.apply)
             return 0
+        if args.upgrade:
+            installed_deployment(args.root, args.install_dir)
         plan = build_plan(args.root, args.install_dir, args.mode, args.server, ha)
+        if args.upgrade and plan['action'] != 'upgrade':
+            raise ValueError('Existing ProxyPermit configuration is required for an upgrade.')
         print(json.dumps(plan, indent=2, ensure_ascii=False))
         if args.apply:
-            if args.root != '/':
-                raise ValueError('--root is available only when planning.')
             apply(plan, args)
         return 0
     except (ValueError, OSError, RuntimeError, subprocess.CalledProcessError) as exc:

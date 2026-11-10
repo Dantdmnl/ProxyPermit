@@ -53,14 +53,26 @@ testbestemming en HTTP 403 voor de tweede. Test ook HTTPS via CONNECT als je
 clients dat gebruiken. Een actieve systemd-service of HTTP 200 van de
 beheerconsole is op zichzelf onvoldoende om clientverkeer te verifiëren.
 
-## Dagelijks wijzigen en storingen onderzoeken
+## Proxybeleid wijzigen
 
-Gebruik **Proxyconfiguratie → Controleer concept → Concept opslaan → Publiceren
-en activeren**. Noteer welke testbestemmingen na de wijziging moeten werken.
-Publiceren kan verbindingen onderbreken. Bij een nieuwe HA-opstelling pas je
-hetzelfde beleid op beide nodes toe. Begin met de node die het virtuele IP
-momenteel niet bezit. Controleer die node vóór je de actieve node wijzigt.
-Nieuwe clusters synchroniseren het beleid voorlopig niet automatisch.
+1. Noteer welke bestemmingen na de wijziging bereikbaar moeten zijn.
+2. Open **Proxyconfiguratie**. Kies **Controleer concept** en verwerk de fouten
+   of aandachtspunten. Kies daarna **Concept opslaan**.
+3. Kies **Publiceren en activeren** tijdens het onderhoudsvenster. Tinyproxy
+   herstart en bestaande verbindingen kunnen worden onderbroken.
+4. Test het clientverkeer opnieuw en controleer de wijziging in **Live logs**.
+
+Publiceer bij een nieuw HA-cluster hetzelfde beleid op beide nodes. Begin met
+de node die het virtuele IP op dat moment niet heeft. Controleer die node vóór
+je de actieve node wijzigt.
+
+## Een storing onderzoeken
+
+Open **Live logs** en filter op bron en niveau. Typ om de geladen regels te
+filteren of kies **Zoek op server** om ook oudere regels te doorzoeken. Klap
+een auditregel uit voor details over de wijziging.
+
+Controleer op de host de service en het journal.
 
 ```bash
 sudo systemctl status proxypermit.service tinyproxy.service --no-pager
@@ -88,12 +100,12 @@ Keepalived-configuratie en de gegevens per node erbij. Beperk toegang tot deze
 bestanden, want ze kunnen wachtwoordhashes, 2FA-sleutels en sync-secrets bevatten.
 Bewaar een kopie buiten de node en oefen herstel op de testomgeving.
 
-Bekijk vóór een upgrade het plan en leg het huidige beleid vast. De installer
-toont na uitvoering de naam van het herstelmanifest. Bekijk bij rollback eerst
-welke bestanden worden teruggezet. Een herstelmanifest kan ook de
-Tinyproxy-configuratie en filterregels van dat moment bevatten. Bewaar dus
-latere beleidswijzigingen voordat je een oude release terugzet. Herhaal na
-herstel het inloggen- en verkeersproeven.
+Bekijk vóór een [upgrade](installatie.md#beheerde-installatie-bijwerken) het plan
+en leg het huidige beleid vast. De installer toont na afloop de back-upnaam.
+Bekijk bij [herstel](installatie.md#terugzetten-vanuit-een-back-up) welke
+bestanden worden teruggezet. Bewaar latere beleidswijzigingen als het plan
+oudere configuratie en filterregels terugzet. Test na herstel opnieuw of je
+kunt inloggen en of het proxyverkeer werkt.
 
 ## Grenzen van de huidige versie
 

@@ -4,8 +4,18 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-10
+
+### Added
+
+- Add explicit upgrade and uninstall plans for installer-managed deployments, with a recovery snapshot for console removal.
+- Preview and validate a two-node HA network plan from the settings page.
+- Preview direction-labeled UFW rules and configure them during a fresh HA installation.
+- Retire a managed standby HA node from Settings or the installer, with recovery and removal of its recorded UFW rules.
+
 ### Fixed
 
+- Keep privileged installer locks and HA recovery state on root-owned paths, and stage HA helper source privately before publishing it.
 - Supply the RADIUS attribute dictionary needed for PAP sign-in and verify accepted and rejected requests over UDP.
 
 ## [1.0.0] - 2026-11-08
