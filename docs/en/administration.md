@@ -1,6 +1,6 @@
 # Administrator guide
 
-[Nederlands](../beheer.md) · [Documentation](README.md)
+[Nederlands](../nl/beheer.md) · [Documentation](README.md)
 
 Use this guide to commission ProxyPermit and hand it over to operations. The
 management console and the Tinyproxy listener have separate network and access

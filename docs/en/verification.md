@@ -1,6 +1,6 @@
 # Verification report
 
-[Nederlands](../verification.md) · [Documentation](README.md)
+[Nederlands](../nl/verification.md) · [Documentation](README.md)
 
 ## 6 November 2026
 

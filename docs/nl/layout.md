@@ -1,6 +1,6 @@
 # Projectstructuur
 
-[English](en/layout.md) · [Documentatie](README.md)
+[English](../en/layout.md) · [Documentatie](README.md)
 
 ```text
 app/
@@ -29,7 +29,10 @@ tests/
   browser/           Playwright-tests voor de webinterface
   fixtures/          Testgegevens
 legacy/              Synchronisatie en herstelhulpmiddelen voor bestaande HA-clusters
-docs/                Huidige documentatie; historische handleidingen in legacy/
+docs/                Ingang voor beide talen
+  nl/                Nederlandse documentatie
+  en/                Engelse documentatie
+  legacy/            Historische documentatie
 ```
 
 De root bevat alleen documentatie/metadata, versie/changelog, de Makefile en de

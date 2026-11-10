@@ -11,9 +11,9 @@ policy. See the installation guide for migration from an existing HA deployment.
 
 | Documentation | English | Nederlands |
 | --- | --- | --- |
-| Start here / Begin hier | [Documentation](docs/en/README.md) | [Documentatie](docs/README.md) |
-| Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/installatie.md) |
-| Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/beheer.md) |
+| Start here / Begin hier | [Documentation](docs/en/README.md) | [Documentatie](docs/nl/README.md) |
+| Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/nl/installatie.md) |
+| Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/nl/beheer.md) |
 
 ## Quick start
 

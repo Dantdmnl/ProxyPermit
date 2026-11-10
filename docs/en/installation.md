@@ -1,6 +1,6 @@
 # Install ProxyPermit
 
-[Nederlands](../installatie.md) · [Documentation](README.md)
+[Nederlands](../nl/installatie.md) · [Documentation](README.md)
 
 ## Choose a path
 

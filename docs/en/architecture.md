@@ -1,6 +1,6 @@
 # Architecture and HA
 
-[Nederlands](../architecture.md) · [Documentation](README.md)
+[Nederlands](../nl/architecture.md) · [Documentation](README.md)
 
 ## Current design
 

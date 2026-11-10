@@ -1,6 +1,6 @@
 # Versies en releases
 
-[English](en/releases.md) · [Documentatie](README.md)
+[English](../en/releases.md) · [Documentatie](README.md)
 
 `VERSION` is de versiebron. De Python-module `app/_version.py` en het
 browserbestand `app/static/js/version.js` worden daaruit gegenereerd.

@@ -1,6 +1,6 @@
 # Verificatie op 6 november 2026
 
-[English](en/verification.md) · [Documentatie](README.md)
+[English](../en/verification.md) · [Documentatie](README.md)
 
 Omgeving: Ubuntu 26.04.1 LTS onder WSL 2, systemd als PID 1, Python 3.14.4,
 Tinyproxy 1.11.3. De Python-dependencies staan in een aparte Linux-virtualenv

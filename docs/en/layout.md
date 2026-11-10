@@ -1,6 +1,6 @@
 # Project layout
 
-[Nederlands](../layout.md) · [Documentation](README.md)
+[Nederlands](../nl/layout.md) · [Documentation](README.md)
 
 | Path | Contents |
 | --- | --- |
@@ -15,6 +15,7 @@
 | `scripts/check.py`, `scripts/release.py` | Local and CI checks, versioning, and release preparation |
 | `requirements/` | Runtime, Granian, and development dependencies |
 | `tests/` | Python, JavaScript, Playwright, and fixtures |
+| `docs/nl/`, `docs/en/` | Dutch and English operator documentation |
 | `legacy/`, `docs/legacy/` | Existing HA synchronization tools and historical documentation |
 
 Run commands from the repository root. `bash install.sh` starts the installer.

@@ -1,6 +1,6 @@
 # Beheerdershandleiding
 
-[English](en/administration.md) · [Documentatie](README.md)
+[English](../en/administration.md) · [Documentatie](README.md)
 
 Gebruik deze handleiding voor een proefinstallatie en de overdracht naar dagelijks
 beheer. ProxyPermit beheert Tinyproxy. Het beheeradres en het proxyadres hebben

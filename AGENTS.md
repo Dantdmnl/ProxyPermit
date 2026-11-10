@@ -8,7 +8,7 @@ These instructions apply to the entire repository.
 - `app/web/` owns Flask routes, authentication, audit logging, and integration with Tinyproxy and systemd. `app/runtime/` selects the WSGI server.
 - `app/templates/` contains the HTML. Put styles and browser behavior in `app/static/css/` and `app/static/js/`. Keep Python source, operator logs, and CLI messages in English. Maintain both web catalogs in `app/i18n/catalogs/` and preserve placeholders across languages.
 - `install.sh` is the supported installer entry point. `scripts/deploy/` implements installation and upgrades. `deploy/` contains deployment assets. `legacy/` supports synchronization in existing HA deployments.
-- `docs/` contains current Dutch documentation, `docs/en/` contains the English equivalents, and `docs/legacy/` contains historical material. Update both current languages when changing operator workflows.
+- `docs/nl/` contains current Dutch documentation, `docs/en/` contains the English equivalents, and `docs/legacy/` contains historical material. Update both current languages when changing operator workflows.
 
 ## Operational constraints
 

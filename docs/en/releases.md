@@ -1,6 +1,6 @@
 # Versions and releases
 
-[Nederlands](../releases.md) · [Documentation](README.md)
+[Nederlands](../nl/releases.md) · [Documentation](README.md)
 
 `VERSION` is the version source. The Python and browser version files are
 generated from it. Run `show` to inspect the version, `sync` to update

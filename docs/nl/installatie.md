@@ -1,6 +1,6 @@
 # ProxyPermit installeren
 
-[English](en/installation.md) · [Documentatie](README.md)
+[English](../en/installation.md) · [Documentatie](README.md)
 
 ## Kies je route
 

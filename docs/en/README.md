@@ -1,6 +1,6 @@
 # Documentation
 
-[Nederlands](../README.md) · [ProxyPermit](../../README.md)
+[Nederlands](../nl/README.md) · [ProxyPermit](../../README.md)
 
 ProxyPermit is a web console for managing Tinyproxy. It covers client access,
 destination filtering, routing, configuration, and logs. Administrators can each

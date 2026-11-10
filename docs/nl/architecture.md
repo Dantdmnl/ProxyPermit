@@ -1,6 +1,6 @@
 # Architectuur en keuzes
 
-[English](en/architecture.md) · [Documentatie](README.md)
+[English](../en/architecture.md) · [Documentatie](README.md)
 
 ## Huidige opzet
 
