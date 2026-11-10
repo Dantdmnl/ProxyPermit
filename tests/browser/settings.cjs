@@ -200,7 +200,8 @@ async function main() {
         const logRequests = [];
         let logFailure = false;
         let routineLogs = false;
-        await page.route('**/api/logs?**', async route => {
+        const logEndpoint = /\/api\/logs(?:\?|$)/;
+        await page.route(logEndpoint, async route => {
             const url = new URL(route.request().url());
             logRequests.push(url);
             if (logFailure) {
@@ -226,7 +227,7 @@ async function main() {
         });
         await logsLink.click();
         const logs = page.locator('#loggingModal');
-        await logs.locator('.log-row').waitFor();
+        await logs.getByText('literal <img src=x> [proxy.example]', { exact: true }).waitFor();
         await page.setViewportSize({ width: 1178, height: 856 });
         await page.locator('html').evaluate(html => { html.dataset.theme = 'light'; });
         assert.equal(await logs.locator('#logContainer').evaluate(pane => getComputedStyle(pane).backgroundColor), 'rgb(243, 246, 248)');
@@ -264,7 +265,7 @@ async function main() {
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.keyboard.press('Escape');
         await logs.waitFor({ state: 'hidden' });
-        await page.unroute('**/api/logs?**');
+        await page.unroute(logEndpoint);
         const auditResponse = await page.request.get(base + '/api/logs?service=audit&q=whitelist_add');
         assert.equal(auditResponse.status(), 200);
         const auditLogs = (await auditResponse.json()).logs;
