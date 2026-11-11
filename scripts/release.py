@@ -101,7 +101,7 @@ def archive(root=ROOT, output=None):
     target = output / (name + '.tar.gz')
     roots = ('app', 'deploy', 'docs', 'legacy', 'scripts', 'tests', 'requirements')
     files = [root / item for item in ('VERSION', 'CHANGELOG.md', 'README.md', 'LICENSE', 'Makefile',
-                                     'install.sh', 'wsgi.py', '.env.example', 'pyproject.toml')]
+                                     'install.sh', 'wsgi.py', '.env.example', 'pyproject.toml', 'AGENTS.md')]
     for directory in roots:
         files.extend((root / directory).rglob('*'))
     records = {}
@@ -109,6 +109,14 @@ def archive(root=ROOT, output=None):
         for path in sorted(files):
             relative = path.relative_to(root)
             if not path.is_file() or path.is_symlink() or '__pycache__' in relative.parts or path.suffix in ('.pyc', '.log', '.key', '.pem', '.crt'):
+                continue
+            if any(part in ('.test-data', '.demo', '.venv', '.cache', 'node_modules', 'backups',
+                            'manual_backups', '.backups', '.proxypermit-config-backups') for part in relative.parts):
+                continue
+            if '.log.' in path.name or path.suffix in ('.jsonl', '.journal') or path.name.endswith('.journal~'):
+                continue
+            if path.match('ha-*.json') or path.name in ('session-state.json', 'nonce-store.json', 'nonces.json',
+                    'sync-state.json', 'manual-sync.json', 'whitelist_entry_log.json'):
                 continue
             if path.name.startswith('.env') and path.name != '.env.example':
                 continue

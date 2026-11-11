@@ -12,9 +12,10 @@ These instructions apply to the entire repository.
 
 ## Operational constraints
 
-- Check standalone behavior and any affected HA paths. New HA installations use Keepalived for the virtual IP and publish proxy policy per node. Existing legacy synchronization has its own compatibility path.
+- Check standalone behavior and any affected HA paths. New HA installations use Keepalived for the virtual IP. Paired clusters publish shared policy on A and reconcile on B; accounts and host-specific configuration remain local. Existing legacy synchronization has its own compatibility path.
 - Keep validation, draft saves, activation, and rollback separate. Preserve existing configuration, file permissions, and revision checks when changing installation or write paths.
 - Keep 2FA optional. Preserve authentication, CSRF checks, session revocation, rate limiting, and audit attribution. Use isolated test state for account, proxy, and synchronization changes.
+- Logging uses private journal namespaces and locked audit rotation. Preserve the configured 30-day audit/management and 7-day Tinyproxy defaults; never vacuum the default host journal. Check quiet-file expiry, archives, date filters, redaction, and read authorization when changing logging.
 - Keep secrets, account files, runtime logs, and local environments out of Git and release archives. Use example values in fixtures.
 
 ## Verify and release

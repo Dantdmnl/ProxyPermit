@@ -28,3 +28,37 @@
 .ha-settings pre { margin:8px 0 0; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field,#f4f6f8); color:var(--ink); }
 .ha-fields .ha-confirm { display:flex; align-items:center; }
 .ha-fields .ha-confirm input { width:auto; min-height:0; }
+.ha-fields [hidden] { display:none; }
+.ha-network-picker { grid-column:1 / -1; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--field,#f7f9fa); }
+#haPreviewForm { grid-template-columns:repeat(2,minmax(0,1fr)); align-items:start; gap:16px 20px; }
+#haPreviewForm > label { align-self:start; }
+#haPreviewForm .ha-network-picker { gap:8px; padding:16px; }
+#haRefreshNetworks { justify-self:start; min-height:32px; }
+:root #haNetworkHelp[data-warning=true] { color:var(--warning,#8a5a16); }
+#haPreviewForm button:disabled { opacity:.5; cursor:not-allowed; }
+.ha-setup-intent { display:grid; gap:6px; max-width:360px; margin:16px 0 0; }
+.ha-setup-intent select { width:100%; }
+.ha-plan-actions { grid-column:1 / -1; display:flex !important; justify-content:flex-end; padding-top:12px; border-top:1px solid var(--line); }
+@media (max-width:640px) {
+    #haPreviewForm { grid-template-columns:minmax(0,1fr); }
+    .ha-plan-actions button { width:100%; }
+}
+.ha-fields small { font-size:12px; line-height:1.5; }
+.ha-fields datalist { display:none; }
+#haJoinCodeLabel { grid-column:1 / -1; }
+#haJoinCode { min-height:110px; width:100%; }
+#haSetupMode { margin-top:4px; max-width:100%; }
+#haSetupApplyForm input[type=password], #haSetupApplyForm input[inputmode=numeric] { width:100%; margin:4px 0 12px; }
+#haSetupError { color:var(--danger,#923428); }
+
+#ha-policy textarea { display:block; width:100%; min-height:5rem; margin-block:6px 12px; }
+#ha-policy-result { margin-top:12px; }
+.ha-status-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr)); gap:8px; margin:12px 0; }
+.ha-status-grid > div { padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--field,#f7f9fa); }
+.ha-status-grid dt { font-size:12px; color:var(--muted); }
+.ha-status-grid dd { margin:4px 0 0; color:var(--ink); font-weight:600; overflow-wrap:anywhere; }
+.ha-status-grid dd[data-state="synchronized"] { color:var(--success,#195341); }
+.ha-status-grid dd[data-state="pending"] { color:var(--warning,#745116); }
+.ha-maintenance { padding-top:12px; border-top:1px solid var(--line); }
+.ha-maintenance > button { margin-top:10px; }
+.ha-maintenance > .ha-settings p { margin-top:8px; }

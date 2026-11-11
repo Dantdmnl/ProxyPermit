@@ -13,7 +13,9 @@ Tinyproxy build. HTTPS CONNECT exposes the tunnel destination and port, while
 the encrypted HTTP paths and headers inside the tunnel remain opaque.
 
 The installer supports one node or two nodes with Keepalived. New HA deployments
-manage policy per node. Upgrades can retain existing legacy synchronization.
+pair a primary policy writer A with standby B over pinned TLS. Publishing on A
+replicates filters and shared Tinyproxy directives automatically. Upgrades can
+retain existing legacy synchronization.
 The application separates staged drafts from active configuration and restores
 the previous files when activation fails. Service health after activation and
 successful client traffic are separate checks.
@@ -40,14 +42,15 @@ access through the appropriate group with socket permissions of `0660`.
 | TCP load balancing | HAProxy, if required | Distributes connections when multiple active backends are needed. |
 | VM recovery | Proxmox HA, if used | Can restart a VM elsewhere after host loss. |
 | Cluster resource management | Pacemaker / Corosync, if required | Requires explicit quorum and fencing design. |
-| Policy distribution | Local publication or legacy filter sync | New clusters publish on each node. Legacy sync covers filter rules. |
+| Policy distribution | Primary A with pinned-TLS standby pulls | Shared policy replicates automatically after pairing. Legacy sync remains a separate compatibility path. |
 
 VRRP controls address ownership. It cannot enforce a single policy writer
 during a network partition. Legacy bidirectional sync also cannot establish
-consensus. The proposed policy distribution model uses one authoritative source,
-versioned releases, and a controlled rollout. Each node keeps its last active
-configuration if management is unreachable. Publication rights and management
-failover still need a design.
+consensus. Managed replication uses one authoritative writer A and revision-checked
+activation on B. Each node keeps its last active
+configuration if management is unreachable. VIP failover does not promote B
+into a policy writer. Management-plane failover and quorum/fencing remain
+separate design work.
 
 ## Roadmap and verification
 

@@ -10,6 +10,15 @@ from app.web import manager as main
 
 
 class RemotePreviewSecurityTests(unittest.TestCase):
+    def test_hsts_requires_https_and_defaults_to_the_current_host(self):
+        with patch.object(main, 'ENABLE_HSTS', True), patch.object(main, 'HSTS_INCLUDE_SUBDOMAINS', False), \
+                patch.object(main, 'HSTS_PRELOAD', False):
+            with main.app.test_client() as client:
+                http = client.get('/', base_url='http://localhost', headers={'X-Forwarded-Proto': 'https'})
+                https = client.get('/', base_url='https://localhost')
+        self.assertNotIn('Strict-Transport-Security', http.headers)
+        self.assertEqual(https.headers['Strict-Transport-Security'], f'max-age={main.HSTS_MAX_AGE}')
+
     def setUp(self):
         self.client = main.app.test_client()
         self.original_enable_auth = main.ENABLE_AUTH

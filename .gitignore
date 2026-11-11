@@ -63,3 +63,18 @@ backups/
 manual_backups/
 nginx/*.generated.conf
 
+
+# Private logging and HA runtime state
+*.jsonl
+*.journal
+*.journal~
+ha-*.json
+session-state.json
+nonce-store.json
+nonces.json
+sync-state.json
+manual-sync.json
+whitelist_entry_log.json
+.test-data/
+.proxypermit-config-backups/
+.backups/

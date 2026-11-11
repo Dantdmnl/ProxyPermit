@@ -32,7 +32,8 @@ management address, and backup name in the change record.
    verify both an allowed and a blocked destination. Also check that an
    unauthorized client cannot forward traffic.
 4. Publish a small change, retest client traffic, and find the actor and node in
-   the audit log under **Live logs**. Repeat on both nodes for a new HA cluster.
+   the audit log under **Live logs**. On paired HA nodes, publish on A and verify
+   the matching applied revision on B.
 
 Use two internal endpoints with known HTTP responses. Replace the examples.
 
@@ -55,24 +56,29 @@ Verify actual proxy traffic in addition to checking systemd and console health.
    restarts and may interrupt existing connections.
 4. Retest client traffic and verify the change in **Live logs**.
 
-On a new HA cluster, publish the same policy on both nodes. Start with the node
-that does not hold the virtual IP and verify it before changing the active node.
+On paired managed HA nodes, publish shared policy on A. B retrieves and
+activates it automatically; verify matching revisions before testing failover.
+Unpaired nodes retain independent policy. Keep account and software maintenance
+separate from policy publication.
 
 ## Troubleshoot a deployment
 
 Open **Live logs** and filter by source and level. Type to filter loaded
 entries or select **Search server** to include older entries. Expand an audit
-entry to see details about the change.
+entry to see details about the change. Use **Date range** to search retained
+audit archives and journal history. Review incomplete-result notices. See
+[logging, privacy and retention](logging.md) for storage limits and exports.
 
 Check the services and journal on the host.
 
 ```bash
 sudo systemctl status proxypermit.service tinyproxy.service --no-pager
-sudo journalctl -u proxypermit.service -u tinyproxy.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit -u proxypermit.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit-traffic -u tinyproxy.service -n 100 --no-pager
 # On HA nodes
 sudo systemctl status keepalived.service --no-pager
 ip -br -4 address
-sudo journalctl -u keepalived.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit -u keepalived.service -n 100 --no-pager
 ```
 
 | Symptom | Check |

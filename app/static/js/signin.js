@@ -8,18 +8,86 @@ const otpGroup = document.getElementById('loginOtpGroup');
 const feedback = document.getElementById('loginFeedback');
 const button = document.getElementById('loginButton');
 const languageLinks = document.querySelectorAll('.signin-languages a');
-const buttonLabel = button.textContent;
+const reveal = document.getElementById('passwordReveal');
+let buttonLabel = button.textContent;
 let pending = false;
+let changingLanguage = false;
+const otpCells = document.querySelectorAll('.signin-code-cells span');
+
+function renderOtp() {
+    const current = Math.min(otp.selectionStart ?? otp.value.length, 5);
+    otpCells.forEach((cell, index) => {
+        cell.textContent = otp.value[index] || '';
+        cell.toggleAttribute('data-current', index === current);
+    });
+}
+
+otp.addEventListener('input', () => {
+    otp.value = otp.value.replace(/[^0-9]/g, '').slice(0, 6);
+    renderOtp();
+});
+for (const event of ['focus', 'click', 'keyup', 'select']) otp.addEventListener(event, renderOtp);
+otp.addEventListener('paste', event => {
+    const text = event.clipboardData?.getData('text') || '';
+    const digits = text.replace(/[\s-]/g, '');
+    if (!otp.readOnly && /^[0-9]{6}$/.test(digits)) {
+        event.preventDefault();
+        otp.value = digits;
+        otp.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+});
 
 function showFeedback(message) {
     if (feedback.textContent !== message) feedback.textContent = message;
 }
 
 for (const link of languageLinks) {
-    link.addEventListener('click', event => {
-        if (pending) event.preventDefault();
+    link.addEventListener('click', async event => {
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        if (pending || changingLanguage || link.hasAttribute('aria-current')) return;
+        changingLanguage = true;
+        try {
+            const response = await fetch(link.href, { cache: 'no-store', signal: AbortSignal.timeout(5000) });
+            const localized = new DOMParser().parseFromString(await response.text(), 'text/html');
+            const translatedForm = localized.getElementById('loginForm');
+            if (!translatedForm || localized.documentElement.lang !== link.lang) throw new Error();
+            for (const selector of ['#signinTitle', '#loginOtpHint', 'label[for="loginUsername"]',
+                'label[for="loginPassword"]', 'label[for="loginOtp"]']) {
+                document.querySelector(selector).textContent = localized.querySelector(selector).textContent;
+            }
+            for (const key of ['missing', 'otp', 'failure', 'pending', 'languageFailure']) {
+                if (feedback.textContent === form.dataset[key]) showFeedback(translatedForm.dataset[key]);
+                form.dataset[key] = translatedForm.dataset[key];
+            }
+            for (const selector of ['.signin-languages', '#themeToggle', '#passwordReveal']) {
+                const control = document.querySelector(selector);
+                const translated = localized.querySelector(selector);
+                for (const attribute of ['aria-label', 'title']) {
+                    if (translated.hasAttribute(attribute)) control.setAttribute(attribute, translated.getAttribute(attribute));
+                }
+            }
+            buttonLabel = localized.getElementById('loginButton').textContent;
+            button.textContent = buttonLabel;
+            document.documentElement.lang = link.lang;
+            document.title = localized.title;
+            languageLinks.forEach(item => item.removeAttribute('aria-current'));
+            link.setAttribute('aria-current', 'true');
+            history.replaceState(history.state, '', link.href);
+        } catch {
+            showFeedback(form.dataset.languageFailure);
+        } finally {
+            changingLanguage = false;
+        }
     });
 }
+
+reveal.hidden = false;
+reveal.addEventListener('click', () => {
+    const visible = password.type === 'password';
+    password.type = visible ? 'text' : 'password';
+    reveal.setAttribute('aria-pressed', String(visible));
+});
 
 function setPending(value) {
     pending = value;
@@ -39,13 +107,14 @@ form.addEventListener('input', event => {
         otpGroup.hidden = true;
         otp.disabled = true;
         otp.value = '';
+        renderOtp();
         otp.removeAttribute('aria-invalid');
     }
 });
 
 form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (pending) return;
+    if (pending || changingLanguage) return;
     const user = username.value.trim();
     if (!user || !password.value) {
         if (!user) username.setAttribute('aria-invalid', 'true');

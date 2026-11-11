@@ -55,7 +55,59 @@ restrict access to the file. The default release directory is
 `/opt/proxypermit/releases/`, with `/opt/proxypermit/current` pointing to the
 active release.
 
+### HTTPS and HSTS
+
+Over HTTPS, ProxyPermit sends HSTS for the current host by default. Enable
+`HSTS_INCLUDE_SUBDOMAINS=true` only if every subdomain supports HTTPS. Behind
+a reverse proxy, accept the HTTPS indicator only from a trusted proxy and
+restrict access to the application listener to that proxy. The supplied
+Nginx configuration hides the version; removing the generic server name
+requires a separate header filter.
+
 ## New two-node HA cluster
+
+### Join existing standalone nodes through the web interface
+
+Install or upgrade both hosts as standalone nodes first. Assign static
+IPv4 addresses on the HA network. UFW must already be active with incoming
+traffic denied by default and working management access. Conversion preserves
+existing rules and adds narrow client, VRRP, and internal TLS rules. With
+outgoing traffic denied, the added rules permit B’s TLS connection to A
+and a TCP listener check through the virtual IP. Proxy traffic
+remains subject to the existing outgoing policy.
+
+1. On A, open **Settings → High availability → Set up HA**. Choose
+   **Create a new HA cluster** and select the detected HA network. The console
+   fills the interface, local address, client subnet, and a virtual-IP suggestion.
+   Enter the second node’s static address. Review the client subnet and reserve
+   the VIP outside DHCP; a suggestion does not allocate an address.
+2. Review the plan and UFW rules. Confirm with your current password and,
+   when enabled, your authenticator code. The management console restarts.
+3. Sign in again on A and choose **Add node**. The code expires in ten minutes.
+4. On B choose **Set up HA → Join using a pairing code**. Paste the code and
+   select B’s own HA interface. Review and confirm the conversion.
+5. Sign in again on B. Verify matching policy revisions and test proxy traffic
+   through the virtual IP.
+
+The helper takes a recovery backup before changing configuration. On failure
+it restores the previous files and service state. Installed packages remain.
+The backup name appears in progress and the proxypermit-ha-setup.service
+journal. Changes to configuration or filters after review invalidate the plan.
+When package repositories are blocked, Keepalived, UFW, OpenSSL, and iputils-arping must
+already be available. General internet access is not opened.
+If service startup is uncertain, the pending request remains locked against
+retries. Check `sudo journalctl -u proxypermit-ha-setup.service` and
+`sudo systemctl status proxypermit-ha-setup.service` first. Only after the
+service has stopped and recovery is verified may an administrator remove a
+leftover `/var/lib/proxypermit/ha-setup-request.json` and review a fresh plan.
+Treat pairing codes as passwords; do not place them in tickets or logs.
+Network discovery reads local interfaces, routes, and known neighbors without
+scanning the subnet. Before creating A, the helper uses ARP duplicate-address
+detection. A silent host or a later DHCP allocation can still cause a conflict;
+reserve the address in IPAM/DHCP. Joining B selects its interface automatically
+when exactly one detected address matches the pairing code.
+
+### Install fresh hosts using the installer
 
 Under **Settings → High availability (HA)**, validate the addresses, network
 interface, and VRRP ID in advance. The console gives you a plan command for a
@@ -80,7 +132,7 @@ files have changed since installation.
 
 During a maintenance window, verify that the other node holds the virtual IP
 and that clients can proxy through it. On the standby node, open
-**Settings → High availability (HA) → Prepare HA removal**. Confirm the
+**Settings → High availability (HA) → HA maintenance → Retire this HA node**. Confirm the
 handover, enter your password and authenticator code if enabled, then select
 **Retire this HA node**.
 
@@ -126,8 +178,9 @@ sudo bash install.sh "${cluster[@]}" --apply
 
 Clients use the virtual IP on port 3128. Keepalived checks the local Tinyproxy
 port and gives node A priority. Use a separate SSH tunnel to each management
-console. Both nodes start with an empty allowlist. Add the required destinations
-and publish the same policy separately on each node before putting it into use.
+console. Both nodes start with an empty allowlist. Pair them once through
+**Settings → High availability → Add node**. Publish the required policy on A
+and confirm that B has applied the same revision before putting the VIP into use.
 
 Upgrades preserve existing Keepalived and sync settings. Topology changes are
 rejected during an upgrade. For existing clusters with filter synchronization,

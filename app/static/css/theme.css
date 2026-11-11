@@ -34,6 +34,12 @@
 [data-theme="dark"] :is(.status-actions,.modal-header,.modal-footer,.rules-heading,.rule-dialog-header,.rule-dialog-footer) {
     border-color: var(--line);
 }
+[data-theme="dark"] :is(.toast-title,.toast-close:hover) { color: var(--ink); }
+[data-theme="dark"] :is(.toast-message,.toast-close) { color: var(--muted); }
+[data-theme="dark"] .toast.success { border-left-color: var(--success); }
+[data-theme="dark"] .toast.error { border-left-color: var(--danger); }
+[data-theme="dark"] .toast.info { border-left-color: var(--accent); }
+[data-theme="dark"] .toast.warning { border-left-color: var(--warning); }
 [data-theme="dark"] :is(label,.dialog-close,.modal-close-btn,.rule-title,.entry-content,.entry-domain) { color: var(--ink); }
 [data-theme="dark"] :is(.help-text,.hint,.rules-heading p,.rule-description,.rule-pattern summary,
                        .settings-panel p,.settings-accounts small,details summary,#nodeHostname) { color: var(--muted); }
@@ -69,6 +75,8 @@
     border-color: var(--line);
 }
 [data-theme="dark"] .button-secondary:hover { background: #30414c; }
+[data-theme="dark"] .button-danger:is(:hover,:focus-visible) { --danger-bg:#ffb4a9; --danger:#351411; }
+[data-theme="dark"] .button-danger:active { --danger-bg:#ffd0c8; --danger:#351411; }
 [data-theme="dark"] :is(.button-danger,.proxy-workspace button.danger,.rule-validation[data-state=error],
                        #ruleSaveError:not(:empty),.domain-hint.error,.alert-danger) {
     background: var(--danger-bg);
@@ -130,3 +138,27 @@
 }
 [data-theme="dark"] .proxy-workspace .task-list button:is(:hover,[data-selected]) { background: var(--surface-raised); }
 [data-theme="dark"] .auth-gate { background: var(--warning-bg) !important; color: var(--warning) !important; border-color: #6e5730 !important; }
+
+.theme-toggle {
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    cursor: pointer;
+}
+.theme-toggle:not([hidden]) { display: grid; place-items: center; }
+.theme-toggle:hover { background: var(--field); border-color: var(--accent); }
+.theme-toggle svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.theme-toggle[aria-pressed="false"] .theme-sun,
+.theme-toggle[aria-pressed="true"] .theme-moon { display: none; }

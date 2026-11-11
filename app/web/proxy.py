@@ -1,12 +1,18 @@
 """Tinyproxy management routes; legacy Flask authentication remains shared."""
 import os
 import secrets
+import ipaddress
+import json
+import time
+from stat import S_IMODE
 from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request, session
 from ..core.files import file_lock
+from ..core.ha_policy import MAX_TRANSFER, baseline, issue_invite, merge_policy, parse_invite, sign_policy, verify_policy
 
-from ..core.tinyproxy import ConfigError, DIRECTIVES, RevisionConflict, TinyproxyConfigStore, summary, validate
+from ..core.tinyproxy import ConfigError, DIRECTIVES, RevisionConflict, TinyproxyConfigStore, atomic_write, summary, validate
+from . import ha_replication as replication
 
 PENDING_CHANGES = 'Configuration changes are pending. Activate them through Proxy configuration first.'
 
@@ -64,6 +70,26 @@ def activation_supported():
     return os.name != 'nt' and os.getenv('DEMO_MODE', 'false').lower() != 'true'
 
 
+def paired_standby():
+    return managed_ha() and os.getenv('PROXYPERMIT_HA_NODE') == 'b' and replication.state('peer').is_file()
+
+
+def record_published_policy(filter_path, logger):
+    if not managed_ha() or os.getenv('PROXYPERMIT_HA_NODE') != 'a':
+        return
+    try:
+        config = config_store().path.read_text(encoding='utf-8-sig')
+        filters = Path(filter_path).read_text(encoding='utf-8-sig')
+        replication.snapshot(config, filters)
+        replication.state('publication-error').unlink(missing_ok=True)
+    except (OSError, ValueError, KeyError):
+        logger.error('Could not record the active HA policy for replication.')
+        try:
+            replication.write_state('publication-error', {'checked': int(time.time())})
+        except OSError:
+            logger.error('Could not record HA publication failure status.')
+
+
 def register_proxy_api(app, requires_auth, authenticated, manager, audit):
     routes = Blueprint('proxy', __name__)
 
@@ -74,10 +100,12 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
 
     @routes.before_request
     def protect_changes():
+        if request.endpoint == 'proxy.ha_peer':
+            return None
         if request.method in ('POST', 'PUT', 'DELETE'):
             token = session.get('proxy_csrf', '')
             supplied = request.headers.get('X-CSRF-Token', '')
-            if not token or not secrets.compare_digest(token, supplied):
+            if not token or not supplied.isascii() or not secrets.compare_digest(token, supplied):
                 return jsonify(error='Session expired. Reload the page.'), 403
         return None
 
@@ -95,8 +123,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             result = config_store().read()
             return jsonify(**result, csrfToken=csrf_token(), schema=list(DIRECTIVES.values()),
                            deploymentMode='ha' if ha_enabled() else 'standalone',
-                           canEdit=not ha_enabled() or managed_ha(),
-                           canActivate=activation_supported() and (not ha_enabled() or managed_ha()),
+                           canEdit=(not ha_enabled() or managed_ha()) and not paired_standby(),
+                           canActivate=activation_supported() and (not ha_enabled() or managed_ha()) and not paired_standby(),
                            filterStaged=is_staged(TinyproxyConfigStore(manager.whitelist_path)),
                            summary=summary(result['content']))
         except (OSError, ConfigError):
@@ -144,6 +172,7 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 if activating:
                     filters.finish_activation()
                     filters.draft_path.unlink(missing_ok=True)
+                    record_published_policy(manager.whitelist_path, app.logger)
             audit('tinyproxy_config_saved', revision=result['revision'], activated=activating)
             return jsonify(success=True, **result)
         except RevisionConflict as exc:
@@ -161,6 +190,228 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             raise ConfigError('Filter differs from WHITELIST_PATH. Update the installation configuration before managing this file.')
         return TinyproxyConfigStore(manager.whitelist_path,
                                     validator=lambda text: validate_filter(text, config['filterType'].lower()), mode=0o644), config
+
+    def activate_shared_policy(store, filters, config, content, updated, rules):
+        current = baseline(config, content)
+        if current == baseline(updated, rules):
+            return dict(success=True, revision=current[0])
+        store.mode = S_IMODE(store.path.stat().st_mode)
+        filters.mode = S_IMODE(filters.path.stat().st_mode)
+        backup_name = 'ha-policy-' + secrets.token_hex(12) + '.json'
+        store.backup_dir.mkdir(exist_ok=True, mode=0o700)
+        atomic_write(store.backup_dir / backup_name, json.dumps(dict(config=config, filters=content)))
+        attempts = 0
+
+        def apply_and_recover():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                filters.publish_content(rules, content)
+            else:
+                filters.restore_pending()
+            return manager.restart_tinyproxy()
+
+        result = store.save(updated, current[0], apply_and_recover)
+        filters.finish_activation()
+        audit('ha_policy_activated', revision=result['revision'], policy_backup=backup_name)
+        return dict(success=True, policyBackup=backup_name, **result)
+
+    def reconcile_policy():
+        if (not managed_ha() or not activation_supported() or os.getenv('PROXYPERMIT_HA_NODE') != 'b'
+                or not Path('/etc/proxypermit/ha-firewall.json').is_file()):
+            return
+        with file_lock(replication.state('pull-lock')):
+            peer = replication.read_state('peer')
+            if not peer:
+                return
+            previous = replication.read_state('applied-policy')
+            last_status = replication.read_state('replication-status') or {}
+            primary = {key: last_status[key] for key in ('primaryRevision', 'primaryChecked') if key in last_status}
+            try:
+                policy = replication.fetch_primary(peer['pin'], peer['key'], 'policy',
+                                                   previous['revision'] if previous else '')
+                if (not isinstance(policy, dict) or policy.get('cluster') != replication.cluster_id()
+                        or any(not isinstance(policy.get(key), str) for key in ('config', 'filters', 'revision'))):
+                    raise ConfigError('Invalid published HA policy.')
+                primary = dict(primaryRevision=policy['revision'], primaryChecked=int(time.time()))
+                with file_lock(str(manager.whitelist_path) + '.lock'):
+                    store = config_store()
+                    if has_pending_changes(manager.whitelist_path):
+                        raise RevisionConflict('Publish or discard local drafts before transferring HA policy.')
+                    config = store.path.read_text(encoding='utf-8-sig')
+                    filters, _ = filter_store(config)
+                    content = filters.path.read_text(encoding='utf-8-sig')
+                    current = baseline(config, content)
+                    updated = merge_policy(config, policy['config'])
+                    desired = baseline(updated, policy['filters'])
+                    if previous and current != previous['baseline'] and current != desired:
+                        raise RevisionConflict('The standby policy has local changes. Review the active files.')
+                    if not previous or previous['revision'] != policy['revision']:
+                        filters, _ = filter_store(updated)
+                        activate_shared_policy(store, filters, config, content, updated, policy['filters'])
+                        replication.write_state('applied-policy', dict(revision=policy['revision'],
+                                                                        baseline=desired))
+                replication.write_state('replication-status', dict(state='synchronized', revision=policy['revision'],
+                    checked=int(time.time()), **primary))
+            except (OSError, ValueError, KeyError, TimeoutError, EOFError):
+                replication.write_state('replication-status', dict(state='pending',
+                    revision=previous['revision'] if previous else None, checked=int(time.time()), **primary))
+                raise
+
+    app.extensions['ha_policy_reconcile'] = reconcile_policy
+
+    @routes.route('/internal/ha/<action>', methods=['GET', 'POST'])
+    def ha_peer(action):
+        if (not managed_ha() or not activation_supported() or os.getenv('PROXYPERMIT_HA_NODE') != 'a'
+                or (not request.is_secure and request.remote_addr not in ('127.0.0.1', '::1'))):
+            return '', 404
+        token = request.headers.get('Authorization', '').removeprefix('Bearer ')
+        if len(token) != 64 or not token.isascii():
+            return '', 403
+        with file_lock(replication.state('pair-lock')):
+            if action == 'enroll' and request.method == 'POST':
+                invite = replication.read_state('enrollment')
+                if invite and invite['expires'] > time.time() and secrets.compare_digest(invite['key'], token):
+                    key = secrets.token_hex(32)
+                    replication.write_state('peer', dict(key=key))
+                    replication.state('enrollment').unlink()
+                    return jsonify(key=key, cluster=invite['cluster'], topology=invite.get('topology')), 200, {'Cache-Control': 'no-store'}
+            if action == 'policy' and request.method == 'GET':
+                peer = replication.read_state('peer')
+                if peer and secrets.compare_digest(peer['key'], token):
+                    acknowledged = request.headers.get('X-HA-Applied-Revision', '')
+                    if len(acknowledged) == 64 and all(char in '0123456789abcdef' for char in acknowledged):
+                        replication.write_state('replication-status', dict(state='reported', revision=acknowledged, checked=int(time.time())))
+                    policy = replication.read_state('published-policy')
+                    if policy:
+                        return jsonify(policy), 200, {'Cache-Control': 'no-store'}
+                    return '', 409
+        return '', 403
+
+    @routes.post('/api/proxy/ha-replication/<action>')
+    @requires_auth
+    def manage_replication(action):
+        if (not managed_ha() or not activation_supported() or not session.get('user')
+                or (not request.is_secure and request.remote_addr not in ('127.0.0.1', '::1'))):
+            return '', 403
+        role = os.getenv('PROXYPERMIT_HA_NODE')
+        try:
+            if role == 'a' and action == 'invite':
+                with file_lock(str(manager.whitelist_path) + '.lock'):
+                    if has_pending_changes(manager.whitelist_path):
+                        raise RevisionConflict('Publish or discard local drafts before transferring HA policy.')
+                    if not replication.read_state('published-policy'):
+                        record_published_policy(manager.whitelist_path, app.logger)
+                    if replication.state('publication-error').exists() or not replication.read_state('published-policy'):
+                        raise ConfigError('The primary does not have a published HA policy.')
+                with file_lock(replication.state('pair-lock')):
+                    if replication.read_state('peer'):
+                        raise ConfigError('Revoke the current pairing before adding another node.')
+                    code = replication.new_pairing_code()
+                audit('ha_replication_invited')
+                return jsonify(code=code)
+            if role == 'b' and action == 'join':
+                data = request.get_json(silent=True)
+                invite = replication.parse_pairing_code(data.get('code') if isinstance(data, dict) else None)
+                with file_lock(replication.state('pull-lock')):
+                    if replication.read_state('peer'):
+                        raise ConfigError('This node already has a replication peer.')
+                    enrolled = replication.fetch_primary(invite['pin'], invite['key'], 'enroll')
+                    key = enrolled.get('key', '') if isinstance(enrolled, dict) else ''
+                    if not isinstance(key, str) or len(key) != 64 or any(char not in '0123456789abcdef' for char in key):
+                        raise ConfigError('The primary did not issue a valid peer credential.')
+                    replication.write_state('peer', dict(pin=invite['pin'], key=key))
+                audit('ha_replication_joined')
+                return jsonify(success=True)
+            if action == 'disconnect' and role in ('a', 'b'):
+                with file_lock(replication.state('pair-lock' if role == 'a' else 'pull-lock')):
+                    for name in ('peer', 'enrollment', 'applied-policy', 'replication-status'):
+                        replication.state(name).unlink(missing_ok=True)
+                audit('ha_replication_disconnected')
+                return jsonify(success=True)
+            if action == 'status':
+                policy = replication.read_state('published-policy') or {}
+                status = replication.read_state('replication-status')
+                if status:
+                    fresh = time.time() - status['checked'] < 90
+                    matching = (status.get('revision') == policy.get('revision') if role == 'a'
+                                else status['state'] == 'synchronized')
+                    if role == 'a' and replication.state('publication-error').exists():
+                        matching = False
+                    status['state'] = 'synchronized' if fresh and matching else 'pending'
+                return jsonify(paired=bool(replication.read_state('peer')),
+                               status=status, revision=policy.get('revision'))
+            return '', 403
+        except (ConfigError, KeyError, OSError, TimeoutError, ValueError):
+            return jsonify(error='HA replication request failed. Check the peer and TLS configuration.'), 409
+
+    @routes.post('/api/proxy/ha-policy/<action>')
+    @requires_auth
+    def ha_policy(action):
+        if not managed_ha() or not activation_supported() or not session.get('user'):
+            return jsonify(error='HA policy transfer requires a managed HA installation.'), 403
+        if not request.is_secure and request.remote_addr not in ('127.0.0.1', '::1'):
+            return jsonify(error='Use HTTPS or a local SSH tunnel for HA policy transfer.'), 403
+        role = os.getenv('PROXYPERMIT_HA_NODE')
+        if (role, action) not in {('a', 'export'), ('b', 'invite'), ('b', 'preview'), ('b', 'apply')}:
+            return jsonify(error='This action is not available on this HA node.'), 403
+        limit = min(MAX_TRANSFER, request.max_content_length or MAX_TRANSFER)
+        if request.content_length is None or request.content_length > limit:
+            return jsonify(error='The HA transfer is too large.'), 413
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error='Invalid HA policy transfer.'), 400
+        state = Path(os.getenv('SESSION_STATE_FILE', '/var/lib/proxypermit/session-state.json')).with_name('ha-policy-invite.json')
+        try:
+            addresses = [str(ipaddress.IPv4Address(os.environ[key])) for key in ('NODE0_ADDRESS', 'NODE1_ADDRESS', 'VIP_ADDRESS')]
+            if len(set(addresses)) != 3:
+                raise ConfigError('Invalid installed HA topology.')
+            cluster = '/'.join(addresses)
+            with file_lock(str(manager.whitelist_path) + '.lock'):
+                store = config_store()
+                if has_pending_changes(manager.whitelist_path):
+                    raise RevisionConflict('Publish or discard local drafts before transferring HA policy.')
+                config = store.path.read_text(encoding='utf-8-sig')
+                filters, _ = filter_store(config)
+                content = filters.path.read_text(encoding='utf-8-sig')
+                current = baseline(config, content)
+                if action == 'invite':
+                    invite = json.dumps(issue_invite(cluster, current), separators=(',', ':'))
+                    atomic_write(state, invite)
+                    audit('ha_policy_invitation_created')
+                    return jsonify(code=invite)
+                if action == 'export':
+                    invite = parse_invite(data.get('code'), cluster)
+                    code = sign_policy(invite, config, content)
+                    if len(json.dumps({'code': code}, ensure_ascii=False).encode('utf-8')) + 256 > limit:
+                        raise ConfigError('The HA transfer is too large.')
+                    audit('ha_policy_exported')
+                    return jsonify(code=code)
+                if not state.is_file():
+                    raise ConfigError('Create a new invitation on node B first.')
+                invite = parse_invite(state.read_text(encoding='utf-8'), cluster)
+                policy = verify_policy(data.get('code'), invite)
+                if current != invite['baseline']:
+                    raise RevisionConflict('The active policy changed after the invitation was created.')
+                updated = merge_policy(config, policy['config'])
+                filters, _ = filter_store(updated)
+                for checks in (validate(updated), filters.validate(policy['filters'])):
+                    if not checks['valid']:
+                        raise ConfigError('\n'.join(checks['errors']))
+                next_revision = baseline(updated, policy['filters'])
+                if action == 'preview':
+                    return jsonify(configChanged=config != updated, filtersChanged=content != policy['filters'],
+                                   revision=next_revision)
+                if data.get('confirmed') is not True or data.get('revision') != next_revision:
+                    raise ConfigError('Review and confirm the HA policy activation first.')
+                state.unlink()
+                return jsonify(activate_shared_policy(store, filters, config, content, updated, policy['filters']))
+        except RevisionConflict as exc:
+            return jsonify(error=str(exc)), 409
+        except ConfigError as exc:
+            return jsonify(error=str(exc)), 400
+        except (OSError, TimeoutError, KeyError, ipaddress.AddressValueError):
+            return jsonify(error='HA policy transfer failed. Check the installation and service status.'), 500
 
     @routes.route('/api/proxy/<kind>/draft', methods=['DELETE'])
     @requires_auth
@@ -215,6 +466,11 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         # Domain -> ERE conversion must never silently corrupt BRE/fnmatch/URL files.
         if request.method not in ('POST', 'PUT', 'DELETE'):
             return None
+        managed_write = (request.path.startswith('/api/entries') or request.path == '/api/import'
+                         or request.path.startswith('/api/proxy/ha-policy/')
+                         or (request.method == 'PUT' and request.path in ('/api/proxy/config', '/api/proxy/filter')))
+        if managed_write and paired_standby():
+            return jsonify(error='Publish shared proxy policy on the primary HA node.'), 409
         if not (request.path.startswith('/api/entries') or request.path == '/api/import'):
             return None
         path = config_store().path

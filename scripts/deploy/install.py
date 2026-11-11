@@ -27,6 +27,7 @@ from app.core.tinyproxy import atomic_write
 from app.core.files import file_lock
 from app.core.ha import ha_firewall_rules, ha_topology
 from scripts.deploy.install_terminal import InstallTerminal
+from scripts.deploy.logging_policy import MARKER as LOGGING_MARKER, assets as logging_assets
 
 KEEPALIVED_CONFIG = Path('/etc/keepalived/keepalived.conf')
 KEEPALIVED_HEALTH = Path('/etc/keepalived/proxypermit-health')
@@ -35,6 +36,9 @@ HA_FIREWALL_STATE = Path('/etc/proxypermit/ha-firewall.json')
 HA_RETIRE_UNIT = Path('/etc/systemd/system/proxypermit-ha-retire.service')
 HA_RETIRE_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-retire')
 HA_RETIRE_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start proxypermit-ha-retire.service\n'
+HA_SETUP_UNIT = Path('/etc/systemd/system/proxypermit-ha-setup.service')
+HA_SETUP_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-setup')
+HA_SETUP_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block proxypermit-ha-setup.service\n'
 MAINTENANCE_DIRECTORY = Path('/run/proxypermit-maintenance')
 LEGACY_SYNC_SCRIPT = Path('/usr/local/bin/sync_whitelist_v2.py')
 KEEPALIVED_HEALTH_TEXT = (
@@ -93,7 +97,7 @@ MaxClients 100
 Allow 127.0.0.1
 {clients}ConnectPort 443
 Syslog On
-LogLevel Connect
+LogLevel Warning
 Filter "{filter_path}"
 FilterType ere
 FilterDefaultDeny Yes
@@ -172,6 +176,9 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
     plan: dict[str, Any] = dict(schemaVersion=1, mode=mode, server=server, action='upgrade' if existing_env else 'install',
                 installDir=install_dir, existingEnv=str(existing_env) if existing_env else None,
                 configPath=config, whitelistPath=whitelist, steps=steps, notes=notes)
+    if mode == 'standalone' or ha or values.get('PROXYPERMIT_MANAGED_HA') == 'true':
+        steps.append('Install private journal namespaces and hourly age/size retention for audit, management, and Tinyproxy logs.')
+        notes.append('Logging activation restarts local Tinyproxy and managed Keepalived. Existing host journals and external log files keep their own retention policy.')
     if mode == 'standalone':
         notes.append('Standalone mode omits Keepalived and the sync timer.')
     if ha:
@@ -214,6 +221,14 @@ class Transaction:
         self.entries.append(item)
         atomic_write(self.directory / 'manifest.json', json.dumps(self.entries, indent=2))
 
+    def track_new(self, path):
+        """Record creation in an untrusted directory without reading its files."""
+        path = Path(path)
+        if path.exists() or path.is_symlink():
+            raise ValueError(f'Expected a new file: {path}')
+        self.entries.append({'path': str(path), 'existed': False})
+        atomic_write(self.directory / 'manifest.json', json.dumps(self.entries, indent=2))
+
     @staticmethod
     def _restore_permissions(path: Path, item: SnapshotEntry) -> None:
         mode, uid, gid = item.get('mode'), item.get('uid'), item.get('gid')
@@ -231,6 +246,8 @@ class Transaction:
                 continue
             if path.is_symlink() or path.is_file():
                 path.unlink()
+            elif not item['existed'] and path.is_dir():
+                path.rmdir()
             if 'symlink' in item:
                 path.symlink_to(item['symlink'])
             elif 'backup' in item:
@@ -334,6 +351,16 @@ def ha_retire_unit_text(install_dir):
         '[Service]\nType=oneshot\nWorkingDirectory=/\nTimeoutStartSec=75\nKillSignal=SIGINT\n'
         f'ExecStart=/usr/bin/python3 -I {install_dir}/current/scripts/deploy/install.py '
         f'--install-dir {install_dir} --retire-ha --apply\n'
+    )
+
+
+def ha_setup_unit_text(install_dir):
+    return (
+        '[Unit]\nDescription=Configure ProxyPermit HA from an approved local plan\n'
+        '[Service]\nType=oneshot\nWorkingDirectory=/\nTimeoutStartSec=300\nKillSignal=SIGINT\n'
+        'UMask=0077\nPrivateTmp=yes\nProtectHome=yes\n'
+        f'ExecStart=/usr/bin/python3 -I {install_dir}/current/scripts/deploy/install.py '
+        f'--install-dir {install_dir} --configure-ha --apply\n'
     )
 
 
@@ -534,6 +561,8 @@ def _apply_locked(plan, args):
     if update_legacy_sync:
         transaction.track(LEGACY_SYNC_SCRIPT)
     if managed:
+        for path in (HA_SETUP_UNIT, HA_SETUP_SUDOERS):
+            transaction.track(path)
         for path in (Path('/etc/proxypermit'), Path('/var/lib/proxypermit'), Path('/var/log/proxypermit'),
                      config_path.parent, filter_path.parent / '.backups'):
             if path.exists():
@@ -542,8 +571,21 @@ def _apply_locked(plan, args):
             path = Path(legacy_values[key]) if legacy_values.get(key) else None
             if path and path.is_file():
                 transaction.track(path)
+    log_assets = logging_assets(release, {**legacy_values, 'DEPLOYMENT_MODE': plan['mode']}) if managed else {}
+    if managed:
+        run('systemctl', 'cat', 'systemd-journald@.service', stdout=subprocess.DEVNULL)
+        for path in log_assets:
+            if path.is_symlink() or (path.is_file() and not path.read_text().startswith(LOGGING_MARKER)):
+                raise ValueError(f'An administrator-owned logging policy requires review: {path}')
+            transaction.track(path)
     previous = service_state('proxypermit.service')
-    auxiliary = {unit: service_state(unit) for unit in ('tinyproxy.service', 'keepalived.service')} if ha else {}
+    auxiliary_units = ['tinyproxy.service'] if managed else []
+    if ha or plan.get('managedHa'):
+        auxiliary_units.extend(('keepalived.service', 'proxypermit-ha-tls.service', 'proxypermit-ha-policy.timer'))
+    if managed:
+        auxiliary_units.extend(('proxypermit-audit-retention.timer', 'proxypermit-journal-retention.timer',
+                                'systemd-journald@proxypermit.service', 'systemd-journald@proxypermit-traffic.service'))
+    auxiliary = {unit: service_state(unit) for unit in auxiliary_units}
     service_snapshot: dict[str, Any] = dict(**previous, auxiliary=auxiliary, ufw=False)
     atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
     touched_service = False
@@ -575,8 +617,9 @@ def _apply_locked(plan, args):
         ignore = shutil.ignore_patterns(
             '.git', '.venv', 'venv', '__pycache__', '.demo', '.env', '.env.*', '.test-data',
             'accounts.json', 'totp-steps.json', 'login-attempts.json', 'enroll-*.json',
-            '*.key', '*.pem', '*.crt', '*.log', '*.log.*', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex')
-        if ha or HA_RETIRE_UNIT.is_file():
+            '*.key', '*.pem', '*.crt', '*.log', '*.log.*', '*.jsonl', '*.journal*', 'ha-*.json',
+            'session-state.json', 'nonce-store.json', 'nonces.json', 'whitelist_entry_log.json', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex')
+        if managed or HA_RETIRE_UNIT.is_file():
             for directory in (base, *base.parents, release.parent):
                 require_trusted_path(directory, directory=True)
             with tempfile.TemporaryDirectory(prefix='.release-', dir=release.parent) as directory:
@@ -592,6 +635,7 @@ def _apply_locked(plan, args):
         requirements = 'requirements/granian.txt' if plan['server'] == 'granian' else 'requirements/base.txt'
         run(python, '-m', 'pip', 'install', '-r', str(release / requirements))
         test_env = dict(os.environ, FLASK_SECRET_KEY=secrets.token_hex(32), ENABLE_AUTH='false',
+                        DEMO_MODE='true', DEPLOYMENT_MODE='standalone',
                         WHITELIST_PATH=str(release / '.test-data/filter'),
                         SESSION_STATE_FILE=str(release / '.test-data/session.json'),
                         AUDIT_LOG_PATH=str(release / '.test-data/audit.log'),
@@ -654,7 +698,24 @@ def _apply_locked(plan, args):
         if ha:
             additions.update(PROXYPERMIT_MANAGED_HA='true', NODE0_ADDRESS=ha['nodeA'],
                              NODE1_ADDRESS=ha['nodeB'], VIP_ADDRESS=ha['vip'].split('/')[0],
-                             PROXYPERMIT_HA_NODE=ha['node'])
+                             PROXYPERMIT_HA_NODE=ha['node'], PROXYPERMIT_HA_INTERFACE=ha['interface'],
+                             HA_CLIENT_CIDR=ha['clients'], HA_VRID=str(ha['vrid']),
+                             HA_VIP_PREFIX=ha['vip'].split('/')[1])
+        elif plan.get('managedHa') and HA_FIREWALL_STATE.is_file():
+            topology = json.loads(HA_FIREWALL_STATE.read_text())['topology']
+            additions.update(PROXYPERMIT_HA_INTERFACE=topology['interface'],
+                             HA_CLIENT_CIDR=topology['clients'], HA_VRID=str(topology['vrid']),
+                             HA_VIP_PREFIX=topology['vip'].split('/')[1])
+        if managed:
+            for key, default in (('AUDIT_LOG_RETENTION_DAYS', '30'), ('LOG_RETENTION_DAYS', '30'),
+                                 ('PROXY_TRAFFIC_RETENTION_DAYS', '7'), ('LOG_IP_MODE', 'masked'),
+                                 ('AUDIT_ENTRY_MODE', 'hash'), ('HTTP_ACCESS_LOGS', 'false')):
+                if key not in values:
+                    additions[key] = default
+            additions['PROXYPERMIT_MANAGED_LOGGING'] = 'true'
+            audit_path = Path(additions.get('AUDIT_LOG_PATH', values.get('AUDIT_LOG_PATH', '/var/log/proxypermit/audit.log')))
+            if audit_path.parent != Path('/var/log/proxypermit'):
+                raise ValueError('Managed audit retention requires AUDIT_LOG_PATH under /var/log/proxypermit.')
         # Preserve every legacy line and append only explicit overrides.
         env_content = legacy.rstrip() + '\n\n# ProxyPermit installer migration\n'
         for key, value in additions.items():
@@ -707,6 +768,10 @@ def _apply_locked(plan, args):
             atomic_write(HA_RETIRE_UNIT, ha_retire_unit_text(str(base)), 0o644)
             atomic_write(HA_RETIRE_SUDOERS, HA_RETIRE_RULE, 0o440)
             run('visudo', '-cf', str(HA_RETIRE_SUDOERS))
+        if managed:
+            atomic_write(HA_SETUP_UNIT, ha_setup_unit_text(str(base)), 0o644)
+            atomic_write(HA_SETUP_SUDOERS, HA_SETUP_RULE, 0o440)
+            run('visudo', '-cf', str(HA_SETUP_SUDOERS))
         # Load all migrated values via the same dotenv parser as the application,
         # and import as the service user before changing the running service.
         smoke = 'from dotenv import load_dotenv; load_dotenv("/etc/proxypermit/.env", override=True); import wsgi; import os; from app.runtime.server import build_command; build_command(os.getenv("APP_SERVER", "gunicorn"), os.environ)'
@@ -722,7 +787,12 @@ def _apply_locked(plan, args):
             temporary_link.unlink()
         temporary_link.symlink_to(release, target_is_directory=True)
         os.replace(temporary_link, current)
+        for path, content in log_assets.items():
+            atomic_write(path, content, 0o644)
         run('systemctl', 'daemon-reload')
+        if managed:
+            for namespace in ('proxypermit', 'proxypermit-traffic'):
+                run('systemctl', 'restart', 'systemd-journald@' + namespace + '.service')
         touched_service = True
         run('systemctl', 'enable', 'proxypermit.service')
         run('systemctl', 'restart', 'proxypermit.service')
@@ -742,7 +812,19 @@ def _apply_locked(plan, args):
             atomic_write(HA_FIREWALL_STATE, json.dumps({'topology': ha, 'rules': owned_rules}))
             service_snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
             atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
-        # Existing Tinyproxy is deliberately not restarted during an upgrade.
+        if managed:
+            for timer in ('proxypermit-audit-retention.timer', 'proxypermit-journal-retention.timer'):
+                run('systemctl', 'enable', '--now', timer)
+            run('systemctl', 'start', 'proxypermit-audit-retention.service', 'proxypermit-journal-retention.service')
+            # Restart locally to attach the selected journal namespace. On HA,
+            # Keepalived lets the peer serve traffic while Tinyproxy recovers.
+            if plan['action'] == 'upgrade':
+                run('systemctl', 'restart', 'tinyproxy.service')
+                if plan.get('managedHa'):
+                    run('systemctl', 'restart', 'keepalived.service')
+                    if auxiliary['proxypermit-ha-tls.service']['active']:
+                        run('systemctl', 'restart', 'proxypermit-ha-tls.service')
+        # Fresh deployments also need the package service enabled.
         if plan['action'] == 'install':
             run('systemctl', 'enable', 'tinyproxy.service')
             # apt may already have started the package default configuration.
@@ -759,8 +841,10 @@ def _apply_locked(plan, args):
             print(f"HA node {ha['node'].upper()} is configured. Shared proxy address: {ha['vip'].split('/')[0]}:3128.")
         print(f'Backup and recovery manifest: {transaction.directory}')
     except (Exception, KeyboardInterrupt):
-        if auxiliary:
-            subprocess.run(['systemctl', 'stop', 'keepalived.service', 'tinyproxy.service'], check=False)
+        if touched_service:
+            subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
+        for unit in auxiliary:
+            subprocess.run(['systemctl', 'stop', unit], check=False)
         transaction.restore()
         if touched_ufw:
             reload_ufw()
@@ -801,7 +885,8 @@ def build_uninstall_plan(root, install_dir):
         'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl restart tinyproxy.service\n'
     ):
         paths.append(sudoers)
-    for path, content in ((HA_RETIRE_UNIT, ha_retire_unit_text(install_dir)), (HA_RETIRE_SUDOERS, HA_RETIRE_RULE)):
+    for path, content in ((HA_RETIRE_UNIT, ha_retire_unit_text(install_dir)), (HA_RETIRE_SUDOERS, HA_RETIRE_RULE),
+                          (HA_SETUP_UNIT, ha_setup_unit_text(install_dir)), (HA_SETUP_SUDOERS, HA_SETUP_RULE)):
         target = Path(root).resolve() / path.as_posix().lstrip('/')
         if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
             paths.append(target)
@@ -863,8 +948,12 @@ def build_ha_retirement_plan(install_dir):
     rules = state['rules']
     if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
         raise ValueError('The managed HA firewall rule record is invalid.')
+    services = ['keepalived.service', 'tinyproxy.service']
+    for name in ('proxypermit-ha-tls.service', 'proxypermit-ha-policy.timer'):
+        if Path('/etc/systemd/system', name).is_file():
+            services.append(name)
     return {'action': 'retire-ha-node', 'vip': topology['vip'].split('/', 1)[0], 'peer': topology['peer'],
-            'services': ['keepalived.service', 'tinyproxy.service'], 'ownedFirewallRules': rules}
+            'services': services, 'ownedFirewallRules': rules}
 
 
 def verify_remote_proxy(vip, peer):
@@ -895,7 +984,8 @@ def retire_ha_node(install_dir):
         snapshot: dict[str, Any] = dict(**service_state('proxypermit.service'), auxiliary=previous, ufw=True)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
         transaction = Transaction(base / 'backups' / stamp)
-        for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE):
+        peer_state = (Path('/var/lib/proxypermit/ha-peer.json'), Path('/var/lib/proxypermit/ha-enrollment.json'))
+        for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE, *peer_state):
             transaction.track(path)
         atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
         print(f'Recovery backup: {stamp}', flush=True)
@@ -906,6 +996,8 @@ def retire_ha_node(install_dir):
             remove_owned_ha_firewall(plan['ownedFirewallRules'])
             verify_remote_proxy(plan['vip'], plan['peer'])
             HA_FIREWALL_STATE.unlink()
+            for path in peer_state:
+                path.unlink(missing_ok=True)
             snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
             atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
         except (Exception, KeyboardInterrupt):
@@ -931,8 +1023,10 @@ def rollback_install(base, stamp, execute=False):
             raise ValueError('UFW rules changed since installation. Review the firewall backup before restoring.')
         subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
         auxiliary = state.get('auxiliary', {})
-        if auxiliary:
-            run('systemctl', 'stop', 'keepalived.service', 'tinyproxy.service')
+        for unit in auxiliary:
+            if subprocess.run(['systemctl', 'cat', unit], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, check=False).returncode == 0:
+                run('systemctl', 'stop', unit)
         transaction = object.__new__(Transaction)
         transaction.directory, transaction.entries = directory, entries
         transaction.restore()
@@ -1045,6 +1139,7 @@ def main(argv=None):
     operation.add_argument('--upgrade', action='store_true', help='Plan an upgrade of an installer-managed deployment from this source tree.')
     operation.add_argument('--uninstall', action='store_true', help='Plan removal of the ProxyPermit manager. Add --apply to remove it.')
     operation.add_argument('--retire-ha', action='store_true', help='Plan retirement of a standby HA node and its managed firewall rules.')
+    operation.add_argument('--configure-ha', action='store_true', help='Apply the approved local HA setup request through the privileged helper.')
     parser.add_argument('--root', default='/', help='Plan only: inspect an alternative system root.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
     parser.add_argument('--admin-user', default='admin')
@@ -1076,6 +1171,12 @@ def main(argv=None):
                    args.ha_vip, args.ha_client_cidr, args.ha_vrid)
         if args.apply and args.root != '/':
             raise ValueError('--root is available only when planning.')
+        if args.configure_ha:
+            if not args.apply or args.root != '/' or args.mode or args.server or any(value is not None for value in ha_args):
+                raise ValueError('HA setup requires --apply and the fixed local request file.')
+            from scripts.deploy.ha_setup import configure
+            configure(args.install_dir)
+            return 0
         if args.uninstall or args.retire_ha:
             if args.mode or args.server or any(value is not None for value in ha_args):
                 raise ValueError('Removal does not take deployment or server options.')

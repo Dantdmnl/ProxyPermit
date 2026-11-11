@@ -100,3 +100,29 @@ de paden. De beheerinterface draait in demomodus zodat de nodes geen services
 van de testhost herstarten. De twee Tinyproxy- en Keepalived-processen zijn
 echte processen. Automatische beleidssynchronisatie maakt geen deel uit van
 dit lab.
+
+## 11 november 2026: beheerde HA en logretentie
+
+Twee disposable Ubuntu 24.04-VM's in VirtualBox zijn vanuit standalone via
+gecontroleerde GUI-plannen en een eenmalige koppelcode omgezet naar HA. UFW
+bleef inkomend en uitgaand standaard weigeren. Filterregels en gedeelde
+Tinyproxy-instellingen kwamen automatisch op B terecht. Echte proxyverzoeken
+werkten via het virtuele IP op A en na failover op B. Automatisch foutherstel en
+handmatig herstel naar standalone zijn gecontroleerd. De VM's draaien op één
+fysieke host; dit bewijst geen fysieke hostfailover, fencing of partitiegedrag.
+
+De nieuwe audit- en journalretentieservices zijn op een echte guest uitgevoerd.
+Synthetische records van 31 dagen oud zijn uit het actieve auditbestand en een
+archief verwijderd. Records van twee dagen oud bleven via een UTC-datumbereik
+doorzoekbaar. Het operationele journal en het Tinyproxy-journal waren via de
+ingelogde API leesbaar. Opruiming in deze namespaces liet een testrecord in het
+algemene hostjournal intact. Ook schijfbudgetten en succesvolle onderhoudstaken
+zijn gecontroleerd.
+
+Regressietests behandelen parallel schrijven/roteren, leeftijds- en grootte-
+opruiming, lezen tijdens rotatie, paginering met boventijdstip, beschadigde
+records, IPv4/IPv6- en credentialafscherming, veilige logpaden, toegangscontrole
+en de publieke melding. Playwright controleert NL/EN, beide thema's, mobiele
+logs, datumfilters, wisselen tussen historie/live en contrast van gevaarlijke
+acties. De organisatie moet haar eigen privacymelding, externe logs,
+back-up-/exportretentie, netwerkplan en belasting blijven valideren.

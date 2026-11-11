@@ -260,10 +260,14 @@ class TinyproxyConfigStore:
         if draft:
             live = self._live_content()
             self._check_baseline(draft, live)
-            checks = self.validate(draft['content'])
-            if not checks['valid']:
-                raise ConfigError('\n'.join(checks['errors']))
-            self._publish(draft['content'], live)
+            self.publish_content(draft['content'], live)
+
+    def publish_content(self, content, live):
+        """Stage an active replacement under the caller's file lock."""
+        checks = self.validate(content)
+        if not checks['valid']:
+            raise ConfigError('\n'.join(checks['errors']))
+        self._publish(content, live)
 
     def discard_draft(self, expected_revision):
         with file_lock(str(self.path) + '.lock'):

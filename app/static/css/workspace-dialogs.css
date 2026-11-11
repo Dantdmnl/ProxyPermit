@@ -109,6 +109,112 @@ body:has(.workspace-dialog[open]) { overflow: hidden; }
 .log-options summary { cursor: pointer; font-weight: 600; }
 .clipboard-fallback { position: fixed; top: 0; left: -9999px; }
 
+/* Log viewer layout */
+.log-container {
+    flex: 1;
+    border: none;
+    padding: 12px 14px;
+    background: #11161c;
+    color: #d7dde6;
+    font-family: 'Fira Mono', 'Consolas', 'Menlo', 'Monaco', monospace;
+    font-size: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.log-row {
+    background: #151c24;
+    border: 1px solid #1f2a36;
+    border-radius: 6px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.log-row:nth-child(even) {
+    background: #131a21;
+}
+.log-row:hover {
+    border-color: #2b3a4d;
+    background: #18202a;
+}
+.log-row-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    font-size: 11px;
+    color: #94a3b8;
+}
+.log-row-time {
+    font-variant-numeric: tabular-nums;
+    color: #8aa0b8;
+}
+.log-row-service {
+    color: #cbd5e1;
+    font-weight: 600;
+}
+.log-row-level {
+    font-weight: 600;
+}
+.log-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+.log-row-msg {
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #e2e8f0;
+    font-size: 12px;
+}
+.log-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 20px;
+    border-bottom: 1px solid #eee;
+    background: #f9fafb;
+    font-size: 11px;
+    color: #475569;
+}
+.log-summary-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fff;
+    border: 1px solid #e2e8f0;
+}
+.log-summary-item strong {
+    color: #111827;
+    font-weight: 700;
+}
+.log-container.compact .log-row {
+    padding: 6px 8px;
+    gap: 2px;
+}
+.log-container.compact .log-row-msg {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.log-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 6px;
+    padding: 1px 6px;
+    background: #f1f3f5;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    font-size: 11px;
+    color: #334155;
+    cursor: pointer;
+}
+
 .logs-dialog { width: min(1120px, calc(100% - 24px)); }
 .logs-dialog > .workspace-panel { height: min(820px, calc(100dvh - 26px)); overflow-y: auto; }
 .log-controls { flex: none; padding: 10px 18px; border-bottom: 1px solid var(--line); }
@@ -116,6 +222,7 @@ body:has(.workspace-dialog[open]) { overflow: hidden; }
 .log-controls label { display: block; margin: 0; font-size: 12px; font-weight: 600; }
 .log-filter-fields select, .log-search-input { margin-top: 3px; }
 .log-search-input { display: flex; gap: 6px; }
+.log-filter-fields :is(input, select) { width: 100%; min-width: 0; }
 .log-search-input button { flex: none; }
 .log-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .log-actions [data-paused] { border-color: var(--accent); }
@@ -167,7 +274,7 @@ body:has(.workspace-dialog[open]) { overflow: hidden; }
 .log-footer { justify-content: space-between; padding-block: 8px; font-size: 12px; }
 .log-footer-status, .log-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 #logLoadingStatus { display: inline-flex; align-items: center; gap: 5px; }
-#logLoadingSpinner { width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: currentColor; border-radius: 50%; animation: spin .8s linear infinite; }
+#logLoadingSpinner { width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: currentColor; border-radius: 50%; animation: log-spin .8s linear infinite; }
 #logLoadingStatus[data-state=error] { color: var(--danger, #9e392e); }
 
 @media (max-width: 650px) {
@@ -179,3 +286,13 @@ body:has(.workspace-dialog[open]) { overflow: hidden; }
     .workspace-dialog-header p { display: none; }
     .workspace-dialog-header, .workspace-dialog-footer { padding-block: 7px; }
 }
+
+@keyframes log-spin { to { transform: rotate(360deg); } }
+.log-period[open] { flex-basis:100%; }
+.log-date-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin-top:8px; }
+.log-date-fields input { width:100%; min-width:0; }
+.log-date-fields p { grid-column:1/-1; margin:0; font-size:12px; color:var(--muted); }
+.log-privacy { margin-top:8px; font-size:12px; }
+.log-privacy p { margin:6px 0 0; color:var(--muted); }
+#logCoverageFeedback { margin:6px 0 0; color:var(--warning,#805209); font-size:12px; }
+@media(max-width:520px) { .log-date-fields { grid-template-columns:minmax(0,1fr); } }

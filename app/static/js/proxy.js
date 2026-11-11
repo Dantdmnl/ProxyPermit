@@ -60,9 +60,10 @@
     }
     async function work(action) {
         if (busy) return;
-        busy = true; document.querySelectorAll('button').forEach(b => { b.disabled = true; }); markDirty();
+        const controls = document.querySelectorAll('button');
+        busy = true; controls.forEach(b => { b.disabled = true; }); markDirty();
         try { await action(); } catch (error) { message(error.message, true); }
-        finally { busy = false; document.querySelectorAll('button').forEach(b => { b.disabled = false; }); markDirty(); }
+        finally { busy = false; controls.forEach(b => { b.disabled = false; }); markDirty(); }
     }
     function chooseDirective() {
         const spec = schema.find(item => item.name === $('directive').value);

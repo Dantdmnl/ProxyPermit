@@ -17,6 +17,7 @@
 
 .signin-header,
 .signin-brand,
+.signin-controls,
 .signin-languages {
     display: flex;
     align-items: center;
@@ -43,6 +44,7 @@
 .signin-languages a[aria-current] { border-color: var(--line); font-weight: 700; }
 .signin-languages a[aria-disabled=true] { cursor: wait; }
 
+.signin-controls { gap: 6px; }
 .signin-card h1 {
     margin: 20px 0 16px;
     font-size: clamp(22px, 5vw, 26px);
@@ -69,8 +71,37 @@
 
 .signin-card :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .signin-card input[aria-invalid] { border-color: var(--danger, #a63f34); }
+.signin-password { position:relative; margin-bottom:14px; }
+.signin-password input { padding-inline-end:52px; margin-bottom:0; }
+.signin-password button {
+    position:absolute; inset:0 0 0 auto; width:44px; padding:0;
+    background:transparent; color:var(--muted); border:0; cursor:pointer;
+}
+.signin-password button:not([hidden]) { display:grid; place-items:center; }
+.signin-password button:hover { color:var(--ink); }
+.signin-password svg { width:20px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; }
+.signin-password button[aria-pressed="false"] .eye-slash { display:none; }
 .signin-factor input { margin-bottom: 4px; }
+.signin-code { position:relative; width:min(100%,324px); margin:8px 0; }
+.signin-card .signin-code input {
+    position:absolute; inset:0; width:100%; height:100%; margin:0; padding:0;
+    opacity:0; z-index:1; cursor:text;
+}
+.signin-code-cells { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; }
+.signin-code-cells span {
+    display:grid; place-items:center; min-height:48px; border:1px solid var(--line);
+    border-radius:7px; background:var(--field,#fff); color:var(--ink);
+    font:600 24px/1 ui-monospace,monospace;
+}
+.signin-code:focus-within .signin-code-cells span[data-current] {
+    outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent);
+}
+.signin-code:has(input[aria-invalid]) .signin-code-cells span { border-color:var(--danger,#a63f34); }
 .signin-factor small { color: var(--muted); }
 .signin-feedback { color: var(--danger, #a63f34); }
 .signin-feedback:empty { margin: 0; }
-.signin-card button { width: 100%; min-height: 44px; margin-top: 6px; }
+.signin-card button[type="submit"] { width: 100%; min-height: 44px; margin-top: 6px; }
+.signin-privacy { margin:18px 0 0; font-size:12px; line-height:1.5; color:var(--muted); }
+.signin-privacy a { display:inline-block; margin-top:4px; }
+.privacy-card { width:min(680px,calc(100% - 32px)); max-width:680px; }
+.privacy-card p,.privacy-card li { line-height:1.65; }

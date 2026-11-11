@@ -47,7 +47,7 @@ class WhitelistManager:
         else:
             self.backup_dir.mkdir(exist_ok=True, mode=0o750)
         
-        logger.info(f"WhitelistManager geïnitialiseerd: {self.whitelist_path}")
+        logger.info(f"WhitelistManager initialized: {self.whitelist_path}")
     
     def _create_backup(self) -> Optional[Path]:
         """Back up the current filter file at most once per minute."""
@@ -418,31 +418,6 @@ class WhitelistManager:
         # Add the rule.
         new_entries = [e['original'] for e in current_entries]
         new_entries.append(entry)
-
-        # Record the addition for conflict resolution.
-        try:
-            import hashlib, json, socket
-            log_path = self.entry_log_path
-            entry_hash = hashlib.sha256(entry.encode('utf-8')).hexdigest()
-            log_entry = {
-                'timestamp': datetime.now().isoformat(),
-                'entry_hash': entry_hash,
-                'entry': entry,
-                'node': socket.gethostname()
-            }
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            # Append to log file
-            logs = []
-            try:
-                with open(log_path, 'r') as f:
-                    logs = json.load(f)
-            except Exception:
-                pass
-            logs.append(log_entry)
-            with open(log_path, 'w') as f:
-                json.dump(logs, f, indent=2)
-        except Exception as log_exc:
-            logger.warning(f"Entry loggen faalde: {log_exc}")
 
         return self.write_whitelist(new_entries)
     

@@ -1,0 +1,94 @@
+<dialog id="loggingModal" class="workspace-dialog logs-dialog" aria-labelledby="loggingTitle">
+        <div class="modal-content workspace-panel">
+            <header class="modal-header workspace-dialog-header">
+                <div>
+                    <h3 id="loggingTitle">{{ _('📋 Realtime Logging - Live Monitor') }}</h3>
+                    <p>{{ _('Filter op bron of niveau en doorzoek de logregels.') }}</p>
+                </div>
+                <button type="button" class="modal-close-btn" onclick="closeLoggingModal()" aria-label="{{ _('Sluiten') }}">×</button>
+            </header>
+            <div class="log-toolbar log-controls">
+                <div class="log-filter-fields">
+                    <label>{{ _('Bron') }}
+                        <select id="logService" onchange="handleLogServiceChange()">
+                            <option value="all">{{ _('📋 Alle Services') }}</option>
+                            <option value="manager">{{ _('🟦 Manager (Gunicorn)') }}</option>
+                            <option value="tinyproxy">{{ _('🟥 Tinyproxy') }}</option>
+                            <option value="proxy_traffic">{{ _('🟪 Proxy Verkeer') }}</option>
+                            <option value="keepalived">{{ _('🟩 Keepalived') }}</option>
+                            <option value="audit">{{ _('🛡️ Audit/Auth logs') }}</option>
+                        </select>
+                    </label>
+                    <label>{{ _('Niveau') }}
+                        <select id="logLevel" onchange="handleLogLevelChange()">
+                            <option value="">{{ _('Alle niveaus') }}</option>
+                            <option value="DEBUG">{{ _('🔍 Debug') }}</option>
+                            <option value="INFO">{{ _('ℹ️ Info') }}</option>
+                            <option value="WARNING">{{ _('⚠️ Waarschuwing') }}</option>
+                            <option value="ERROR">{{ _('❌ Fout') }}</option>
+                        </select>
+                    </label>
+                    <div class="log-search">
+                        <label for="logFilter">{{ _('Zoeken') }}</label>
+                        <div class="log-search-input">
+                            <input type="search" id="logFilter" placeholder="{{ _('IP-adres, hostnaam of tekst') }}"
+                                   oninput="handleLogFilterInput()" onkeydown="handleLogFilterKeydown(event)">
+                            <button type="button" class="button button-secondary" onclick="jumpToFirstLogMatch()">{{ _('Zoek op server') }}</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="log-actions">
+                    <button type="button" class="button button-secondary" id="autoRefreshBtn" onclick="toggleAutoRefresh()">{{ _('⏹️ Pauzeer') }}</button>
+                    <button type="button" class="button button-secondary" onclick="refreshLogs('page')">{{ _('Nu verversen') }}</button>
+                    <button type="button" class="button button-secondary" id="logLiveBanner" onclick="goToLiveLogs()" hidden>{{ _('↩ Terug naar live') }}</button>
+                    <details class="log-period">
+                        <summary>{{ _('Periode') }}</summary>
+                        <form id="logPeriodForm" class="log-date-fields">
+                            <label>{{ _('Van') }}<input type="datetime-local" id="logSince" step="1"></label>
+                            <label>{{ _('Tot en met') }}<input type="datetime-local" id="logUntil" step="1"></label>
+                            <button type="submit" class="button button-secondary">{{ _('Periode toepassen') }}</button>
+                            <button type="button" id="logClearPeriod" class="button button-secondary">{{ _('Terug naar live') }}</button>
+                            <p>{{ _('Datums worden ingevoerd in je lokale tijdzone.') }}</p>
+                        </form>
+                    </details>
+                    <details class="log-options">
+                        <summary>{{ _('Weergave en export') }}</summary>
+                        <div class="log-actions">
+                            <label>{{ _('Refresh interval') }}
+                                <select id="logRefreshInterval" onchange="handleRefreshIntervalChange()">
+                                    <option value="2000">{{ _('2s') }}</option>
+                                    <option value="5000">{{ _('5s') }}</option>
+                                    <option value="10000">{{ _('10s') }}</option>
+                                    <option value="30000">{{ _('30s') }}</option>
+                                </select>
+                            </label>
+                            <button type="button" class="button button-secondary" id="autoScrollBtn" onclick="toggleAutoScroll()">{{ _('🔒 Scroll vergrendeld') }}</button>
+                            <button type="button" class="button button-secondary" id="logViewToggle" onclick="toggleLogCompactMode()">{{ _('🧭 Compact') }}</button>
+                            <button type="button" class="button button-secondary" onclick="downloadLogs()">{{ _('💾 Download pagina') }}</button>
+                        </div>
+                        <div id="logSummary" class="log-summary"></div>
+                    </details>
+                </div>
+                <details class="log-privacy"><summary>{{ _('Privacy en bewaartermijn') }}</summary>
+                    <p>{{ _('Auditlogs') }}: {{ log_privacy.auditDays }} {{ _('dagen') }}. {{ _('Beheerlogs') }}: {{ log_privacy.managementDays }} {{ _('dagen') }}.
+                        {{ _('Tinyproxy- en verkeerslogs:') }} {{ log_privacy.trafficDays }} {{ _('dagen') }}.
+                        {{ _('Downloads kunnen persoonsgegevens bevatten en verlopen niet automatisch.') }}
+                        <a href="{{ url_for('privacy_notice') }}" target="_blank" rel="noopener">{{ _('Privacy en logging') }}</a></p>
+                </details>
+                <p id="logCoverageFeedback" role="status" hidden></p>
+                <p id="logSearchFeedback" role="status" hidden></p>
+            </div>
+            <div id="logContainer" class="log-container" tabindex="0" role="region" aria-labelledby="loggingTitle"></div>
+            <footer class="log-toolbar workspace-dialog-footer log-footer">
+                <div class="log-footer-status">
+                    <span id="logLoadingStatus"><span id="logLoadingSpinner" hidden></span><span id="logLoadingStatusText" role="status">{{ _('Klaar') }}</span></span>
+                    <span id="logTimeZoneBadge"></span>
+                </div>
+                <div class="log-pagination">
+                    <span id="logPageInfo"></span>
+                    <button type="button" id="logPrevPageBtn" class="button button-secondary" onclick="goToPreviousLogPage()">{{ _('← Vorige') }}</button>
+                    <button type="button" id="logNextPageBtn" class="button button-secondary" onclick="goToNextLogPage()">{{ _('Volgende →') }}</button>
+                </div>
+            </footer>
+        </div>
+    </dialog>

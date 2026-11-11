@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/proxy.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/workspace-dialogs.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/dialog-dismiss.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/proxy.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/version.js', v=app_version) }}"></script>
     <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
@@ -40,6 +42,7 @@
         <a href="#settings">{{ _('Instellingen') }}</a>
         <a href="#filter-panel">{{ _('Filterbestand') }}</a>
         <a href="#native-config" id="native-link">{{ _('Native configuratie') }}</a>
+        {% if managed_ha %}<a href="/settings#ha-policy">{{ _('Beleid synchroniseren') }}</a>{% endif %}
     </nav>
     <div class="summary" id="summary" aria-label="{{ _('Instellingen in de editor') }}"></div>
     <div class="settings-layout" id="settings">

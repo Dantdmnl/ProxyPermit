@@ -18,11 +18,45 @@ from werkzeug.security import generate_password_hash
 
 from ..core.accounts import consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
-from ..core.ha import ha_firewall_rules, ha_topology
-from ..core.tinyproxy import atomic_write
-from .proxy import ha_enabled, managed_ha
+from ..core.ha import HA_SETUP_ENV, HA_SETUP_REQUEST, HA_SETUP_RESULT, ha_firewall_rules, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
+from ..core.tinyproxy import ConfigError, atomic_write
+from .proxy import activation_supported, ha_enabled, has_pending_changes, managed_ha
+from . import ha_replication
+from .ha_network import discover_network
 
 HA_RETIRE_COMMAND = ('/usr/bin/sudo', '-n', '/usr/bin/systemctl', 'start', 'proxypermit-ha-retire.service')
+HA_SETUP_COMMAND = ('/usr/bin/sudo', '-n', '/usr/bin/systemctl', 'start', '--no-block', 'proxypermit-ha-setup.service')
+
+
+def ha_setup_available():
+    return (not ha_enabled() and activation_supported()
+            and Path('/etc/systemd/system/proxypermit-ha-setup.service').is_file())
+
+
+def setup_topology(data):
+    code = data.get('joinCode', '')
+    if code:
+        if not isinstance(code, str) or len(code) > 2048:
+            raise ValueError('Invalid HA pairing code.')
+        invite = json.loads(code)
+        topology = invite.get('topology') if isinstance(invite, dict) else None
+        if not isinstance(topology, dict):
+            raise ValueError('Create a new pairing code on the primary node.')
+        topology = ha_topology('b', data.get('interface'), topology.get('nodeA'), topology.get('nodeB'),
+                               topology.get('vip'), topology.get('clients'), topology.get('vrid'))
+        cluster = '/'.join((topology['nodeA'], topology['nodeB'], topology['vip'].split('/')[0]))
+        ha_replication.parse_pairing_code(code, cluster)
+        return topology
+    if data.get('node') != 'a':
+        raise ValueError('Create a primary cluster or join using its pairing code.')
+    keys = ('interface', 'nodeA', 'nodeB', 'vip', 'clients', 'vrid')
+    if any(not isinstance(data.get(key), str) or len(data[key]) > 64 for key in keys):
+        raise ValueError('Invalid input.')
+    return ha_topology('a', *(data[key].strip() for key in keys[:-1]), int(data['vrid']))
+
+
+def setup_fingerprint(data):
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def ha_retirement_available():
@@ -59,8 +93,21 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         return render_template('settings.html', actor=actor, accounts=accounts,
                                editable=bool(path and secure_access() and os.access(path.parent, os.W_OK)),
                                ha_enabled=ha_enabled(), managed_ha=managed_ha(),
+                               ha_policy_role=os.getenv('PROXYPERMIT_HA_NODE') if managed_ha() and secure_access() and activation_supported() else None,
+                               ha_policy_csrf=session.setdefault('proxy_csrf', secrets.token_urlsafe(32)) if managed_ha() else None,
                                ha_retire_available=bool(path and secure_access() and ha_retirement_available()),
+                               ha_setup_available=bool(path and secure_access() and ha_setup_available()),
                                csrf=session.setdefault('settings_csrf', secrets.token_urlsafe(32)))
+
+    @settings.get('/api/settings/ha/network')
+    @requires_auth
+    def ha_network():
+        if not session.get('user') or not secure_access():
+            return jsonify(error='Use HTTPS or a local SSH tunnel for HA policy transfer.'), 403
+        try:
+            return jsonify(networks=discover_network())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return jsonify(error='Network detection is unavailable. Enter the network settings manually.'), 503
 
     @settings.post('/api/settings/ha/preview')
     @requires_auth
@@ -72,6 +119,22 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         if not csrf or not supplied.isascii() or not secrets.compare_digest(csrf, supplied):
             return jsonify(error='Session expired. Reload the page.'), 403
         data = request.get_json(silent=True)
+        if ha_setup_available() and secure_access():
+            try:
+                if not isinstance(data, dict):
+                    raise ValueError('Invalid input.')
+                topology = setup_topology(data)
+                config = Path(os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf'))
+                filters = Path(os.getenv('WHITELIST_PATH', '/etc/tinyproxy/whitelist.txt'))
+                if has_pending_changes(filters):
+                    raise ValueError('Publish or discard saved drafts before HA setup.')
+                ha_proxy_config(config.read_text(encoding='utf-8-sig'), topology)
+                revision = setup_revision(config, filters)
+                session['ha_setup_plan'] = dict(revision=revision, fingerprint=setup_fingerprint(data), created=int(time.time()))
+                return jsonify(topology=topology, firewallRules=ha_setup_firewall_rules(topology),
+                               canApply=True, revision=revision)
+            except (ValueError, ConfigError, TypeError, KeyError, OSError):
+                return jsonify(error='Cannot prepare HA setup. Check the pairing code, network settings, and saved drafts.'), 400
         keys = ('node', 'interface', 'nodeA', 'nodeB', 'vip', 'clients', 'vrid')
         if not isinstance(data, dict) or any(not isinstance(data.get(key), str) or len(data[key]) > 64 for key in keys):
             return jsonify(error='Invalid input.'), 400
@@ -85,6 +148,70 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
         return jsonify(topology=topology, firewallRules=ha_firewall_rules(topology))
+
+    @settings.post('/api/settings/ha/setup')
+    @requires_auth
+    def apply_ha_setup():
+        path, _ = paths()
+        if not path or not secure_access() or not ha_setup_available() or not session.get('user'):
+            return jsonify(error='HA setup is unavailable on this node.'), 403
+        csrf, supplied = session.get('settings_csrf', ''), request.headers.get('X-CSRF-Token', '')
+        if not csrf or not supplied.isascii() or not secrets.compare_digest(csrf, supplied):
+            return jsonify(error='Session expired. Reload the page.'), 403
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or data.get('confirmed') is not True or not isinstance(data.get('plan'), dict):
+            return jsonify(error='Review and confirm the HA setup plan first.'), 400
+        approved = session.get('ha_setup_plan', {})
+        if (data.get('revision') != approved.get('revision') or setup_fingerprint(data['plan']) != approved.get('fingerprint')
+                or time.time() - approved.get('created', 0) > 300):
+            return jsonify(error='The HA setup plan expired or changed. Review it again.'), 409
+        password, otp = data.get('password'), data.get('otp', '')
+        if not isinstance(password, str) or len(password) > 256 or not isinstance(otp, str) or len(otp) > 6:
+            return jsonify(error='Invalid input.'), 400
+        with file_lock(str(path) + '.lock'):
+            account = load_accounts(path).get(session['user'])
+            if not account or not authenticated():
+                return jsonify(error='Authentication required'), 403
+            error, _ = reauthenticate(session['user'], account, password, otp)
+        if error is not None:
+            return error
+        try:
+            topology = setup_topology(data['plan'])
+            with file_lock(str(HA_SETUP_REQUEST) + '.lock'):
+                if HA_SETUP_REQUEST.exists():
+                    return jsonify(error='HA setup is already running.'), 409
+                if HA_SETUP_RESULT.is_file():
+                    previous = json.loads(HA_SETUP_RESULT.read_text())
+                    if previous.get('phase') in ('queued', 'running', 'activating') and time.time() - HA_SETUP_RESULT.stat().st_mtime < 330:
+                        return jsonify(error='HA setup is already running.'), 409
+                identifier = secrets.token_hex(16)
+                atomic_write(HA_SETUP_REQUEST, json.dumps(dict(id=identifier, topology=topology,
+                    revision=approved['revision'], created=int(time.time()), joinCode=data['plan'].get('joinCode', ''))))
+                # The helper writes its own result. An application-owned initial record is only a progress indicator.
+                atomic_write(HA_SETUP_RESULT, json.dumps(dict(id=identifier, phase='queued')), 0o644)
+                try:
+                    subprocess.run(HA_SETUP_COMMAND, check=True, capture_output=True, timeout=10)
+                except subprocess.TimeoutExpired:
+                    # The service may already have been queued. Keep its request and
+                    # concurrency guard intact; the status endpoint reports the outcome.
+                    pass
+            session.pop('ha_setup_plan', None)
+            audit('ha_setup_requested', setup_id=identifier, node=topology['node'])
+            return jsonify(success=True, id=identifier), 202
+        except (ValueError, OSError, TimeoutError, subprocess.SubprocessError):
+            return jsonify(error='HA setup could not be started. Check the host service log.'), 409
+
+    @settings.get('/api/settings/ha/setup-status')
+    @requires_auth
+    def ha_setup_status():
+        try:
+            state = json.loads(HA_SETUP_RESULT.read_text()) if HA_SETUP_RESULT.is_file() else dict(phase='idle')
+            if (state.get('phase') in ('queued', 'running', 'activating')
+                    and time.time() - HA_SETUP_RESULT.stat().st_mtime > 420):
+                state = {**state, 'phase': 'failed', 'error': 'HA setup failed. Check the host service log.'}
+            return jsonify(state)
+        except (OSError, ValueError):
+            return jsonify(error='Cannot read HA setup status.'), 500
 
     @settings.post('/api/settings/ha/retire')
     @requires_auth

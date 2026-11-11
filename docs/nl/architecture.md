@@ -94,18 +94,19 @@ Beschikbaarheid bestaat hier uit afzonderlijke verantwoordelijkheden:
 | TCP-balancing, indien nodig | HAProxy | Alleen toevoegen wanneer meerdere actieve proxybackends nodig zijn. |
 | VM-/hostherstel | Proxmox HA | Kan de VM na hostuitval elders starten; dit vervangt geen applicatie-healthcheck. |
 | Complex clusterresourcebeheer | Pacemaker / Corosync | Pas inzetten als resources, quorum en fencing dat vereisen. |
-| Configuratieverdeling | Lokale publicatie of bestaande synchronisatie | Nieuwe clusters publiceren per node. Bestaande synchronisatie omvat filterregels. |
+| Configuratieverdeling | Primaire schrijver A met TLS-pulls door B | Na koppeling wordt gedeeld beleid automatisch gesynchroniseerd. Legacy-sync blijft een afzonderlijk compatibiliteitspad. |
 
 Keepalived wordt behouden. De huidige zelfgeschreven bidirectionele sync is
 geen consensusprotocol. VRRP alleen garandeert bij een netwerkpartitionering ook
 geen exclusieve schrijver. Pacemaker wordt niet automatisch toegevoegd: een
 betrouwbare configuratie vergt een expliciete keuze voor quorum en fencing.
 
-De volgende ontwerpstap is één beheerbron met versiegebonden configuratiereleases
-en gecontroleerde uitrol naar proxy-nodes. Bij onbereikbaar beheer blijven nodes
-de laatst geactiveerde configuratie gebruiken. Wie wijzigingen mag publiceren,
-hoe beheerfailover werkt en waar de bron wordt opgeslagen moeten eerst worden
-uitgewerkt; dit is nog geen geïmplementeerde vervanging voor legacy sync.
+Beheerde replicatie gebruikt A als enige schrijver en revisiegecontroleerde
+activering op B via TLS met een vastgezette certificaatvingerafdruk. Filters en
+gedeelde Tinyproxy-directieven worden automatisch overgenomen na publicatie.
+Bij onbereikbaar beheer blijft de laatst actieve configuratie werken.
+VIP-failover maakt B niet tot beleidsschrijver. Beheerfailover, quorum en
+fencing blijven afzonderlijke ontwerpvragen.
 
 Bronnen: [Keepalived](https://keepalived.org/),
 [Pacemaker](https://clusterlabs.org/projects/pacemaker/),

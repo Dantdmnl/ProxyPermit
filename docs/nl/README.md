@@ -16,10 +16,12 @@ Beheerders kunnen elk een eigen account met optionele tweefactorauthenticatie
 | Bijwerken, migreren of herstellen | [Upgrade, migratie en herstel](installatie.md#upgrade-migratie-en-herstel) |
 | De beheerconsole verwijderen | [Beheerconsole verwijderen](installatie.md#beheerconsole-verwijderen) |
 | Een installatie controleren of een storing onderzoeken | [Beheerdershandleiding](beheer.md) |
+| Installatie, herstel of HA-failover oefenen | [VM-testlab](vm-lab.md) |
 
 ## Technische achtergrond
 
 - [Architectuur en HA-keuzes](architecture.md) voor componenten en ontwerpbeslissingen.
+- [Logging en bewaartermijnen](logging.md) voor zoeken, privacymeldingen en afgedwongen bewaartermijnen.
 - [Verificatieverslag](verification.md) voor uitgevoerde tests en openstaande controles.
 - [Projectstructuur](layout.md) voor broncode, ontwikkelomgeving en tests.
 - [Versies, releases en CI](releases.md) voor lokale controles en releasevoorbereiding.

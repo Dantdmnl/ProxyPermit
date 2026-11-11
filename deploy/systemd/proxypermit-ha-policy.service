@@ -1,0 +1,12 @@
+[Unit]
+Description=Reconcile ProxyPermit policy from the primary HA node
+After=network-online.target proxypermit.service
+
+[Service]
+Type=oneshot
+User=proxypermit
+Group=proxypermit
+EnvironmentFile=/etc/proxypermit/.env
+WorkingDirectory=/opt/proxypermit/current
+ExecStart=/opt/proxypermit/current/.venv/bin/python -m app.runtime.ha_reconcile
+TimeoutStartSec=45

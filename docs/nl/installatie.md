@@ -57,7 +57,60 @@ gebruikt. Beperk de rechten van dat bestand; wachtwoorden worden niet als
 commandoregelargument doorgegeven. Het standaard releasepad is
 `/opt/proxypermit/releases/`, met `/opt/proxypermit/current` als actieve verwijzing.
 
+### HTTPS en HSTS
+
+Via HTTPS stuurt ProxyPermit standaard HSTS voor de huidige host. Zet
+`HSTS_INCLUDE_SUBDOMAINS=true` alleen als alle subdomeinen HTTPS ondersteunen.
+Achter een reverse proxy moet de HTTPS-indicatie uit een vertrouwde proxy
+komen. Beperk de toegang tot de app-listener tot die proxy. De meegeleverde
+Nginx-configuratie verbergt het versienummer; de generieke servernaam vereist
+een afzonderlijke headerfilter om te verwijderen.
+
 ## Nieuw HA-cluster met twee nodes
+
+### Twee zelfstandige nodes vanuit de webinterface koppelen
+
+Installeer of upgrade beide hosts eerst als zelfstandige node. Gebruik vaste
+IPv4-adressen op het HA-netwerk. UFW moet al actief zijn met inkomend verkeer
+standaard geweigerd en met werkende beheertoegang. De omzetting behoudt de
+bestaande regels en voegt gerichte regels voor clients, VRRP en intern
+TLS-verkeer toe. Bij een uitgaand geblokkeerde firewall staan de nieuwe regels
+B’s TLS-verbinding naar A en een TCP-controle via het virtuele IP toe. Proxyverkeer blijft onder het bestaande uitgaande beleid vallen.
+
+1. Open op A **Instellingen → Hoge beschikbaarheid → HA instellen**.
+   Kies **Nieuw HA-cluster maken** en selecteer het gedetecteerde HA-netwerk.
+   De interface, het lokale adres, het clientsubnet en een voorstel voor het
+   virtuele IP worden ingevuld. Vul het vaste adres van de tweede node in.
+   Controleer het clientsubnet en reserveer het virtuele IP buiten DHCP.
+2. Controleer het plan en de UFW-regels. Bevestig met je huidige wachtwoord
+   en, als ingeschakeld, je authenticatorcode. De beheerconsole start opnieuw.
+3. Log opnieuw in op A en kies **Node toevoegen**. De code is tien minuten geldig.
+4. Kies op B **HA instellen → Aansluiten met koppelcode**. Plak de code en
+   kies B’s eigen HA-interface. Controleer en bevestig de omzetting.
+5. Log opnieuw in op B. Controleer dat beide nodes dezelfde beleidsrevisie
+   tonen en test proxyverkeer via het virtuele IP.
+
+De helper maakt een herstelback-up voordat instellingen veranderen. Bij een
+mislukte uitvoering worden de vorige configuratie en servicestatus hersteld.
+Geïnstalleerde pakketten blijven aanwezig. De back-upnaam staat in de voortgang
+en in het servicelogboek van proxypermit-ha-setup.service. Een wijziging van
+configuratie of filterregels na de plancontrole maakt het plan ongeldig.
+Als packagebronnen door de firewall geblokkeerd zijn, moeten Keepalived, UFW
+en OpenSSL vooraf beschikbaar zijn. Algemene internettoegang wordt niet geopend.
+Bij een onzekere servicestart blijft de aanvraag geblokkeerd voor herhaling.
+Controleer eerst `sudo journalctl -u proxypermit-ha-setup.service` en
+`sudo systemctl status proxypermit-ha-setup.service`. Pas nadat de service is
+gestopt en het herstel is gecontroleerd, mag een beheerder een achtergebleven
+`/var/lib/proxypermit/ha-setup-request.json` verwijderen en een nieuw plan controleren.
+Behandel koppelcodes als wachtwoorden; zet ze niet in tickets of logs.
+Netwerkdetectie leest lokale interfaces, routes en bekende buren zonder het
+subnet te scannen. Voor het aanmaken van A controleert de helper met ARP of
+het virtuele IP al in gebruik is. Een stil apparaat of latere DHCP-toewijzing
+kan nog steeds een conflict veroorzaken; reserveer het adres in IPAM/DHCP.
+Bij het koppelen kiest B automatisch de interface als precies één gedetecteerd
+adres overeenkomt met de koppelcode.
+
+### Nieuwe hosts via de installer
 
 Onder **Instellingen → Hoge beschikbaarheid (HA)** kun je de adressen,
 netwerkinterface en VRRP-ID vooraf controleren. De webinterface geeft een
@@ -83,7 +136,7 @@ weigert automatisch herstel als die bestanden intussen zijn gewijzigd.
 
 Controleer tijdens een onderhoudsvenster dat de andere node het virtuele IP
 heeft en dat clients via dat IP kunnen proxyen. Open op de standby-node
-**Instellingen → Hoge beschikbaarheid (HA) → HA verwijderen voorbereiden**.
+**Instellingen → Hoge beschikbaarheid (HA) → HA-beheeracties → Deze HA-node uit bedrijf nemen**.
 Bevestig de overname en voer je wachtwoord en eventueel een authenticatorcode
 in. Kies **Deze HA-node uit bedrijf nemen**.
 
@@ -132,9 +185,10 @@ sudo bash install.sh "${cluster[@]}" --apply  # Installeer deze node
 Clients gebruiken het virtuele IP op poort 3128. Keepalived bewaakt de lokale
 Tinyproxy-poort. Node A heeft voorrang en node B neemt over wanneer A uitvalt.
 De beheerconsole luistert per node op localhost. Gebruik per host een SSH-tunnel
-zoals bij een zelfstandige installatie. Voeg vóór ingebruikname op beide nodes dezelfde
-bestemmingen toe. De installer begint met een lege allowlist en ProxyPermit
-publiceert wijzigingen lokaal per node.
+zoals bij een zelfstandige installatie. De installer begint met een lege
+allowlist. Koppel de nodes via **Instellingen → Hoge beschikbaarheid → Node toevoegen**.
+Publiceer het beleid op A en controleer vóór ingebruikname van het virtuele IP
+dat B dezelfde revisie heeft toegepast.
 
 Bij upgrades van bestaande clusters blijven de bestaande Keepalived- en
 sync-instellingen behouden. De installer weigert een wijziging van topologie
@@ -146,7 +200,8 @@ staan en stel `SYNC_SCHEME=https`, `SYNC_VERIFY_CERT=true` en zo nodig
 `SYNC_PORT` in. Bij TLS-terminatie
 moet ProxyFix uitsluitend via de vertrouwde reverse proxy bereikbaar zijn.
 `SYNC_ALLOW_INSECURE_TRANSPORT=true` maakt een tijdelijke uitzondering mogelijk
-voor oude omgevingen. Nieuw ingerichte HA-clusters beheren beleid per node.
+voor oude omgevingen. Nieuw ingerichte, gekoppelde HA-clusters synchroniseren
+gepubliceerd beleid automatisch van A naar B.
 
 ## Persoonlijke beheerdersaccounts en optionele 2FA
 

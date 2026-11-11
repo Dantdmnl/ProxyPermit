@@ -10,11 +10,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/workspace-dialogs.css', v=app_version) }}">
     <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
     <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
     <script src="{{ url_for('static', filename='js/dialog-dismiss.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/settings.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/ha-settings.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/ha-policy.js', v=app_version) }}" defer></script>
 </head>
 <body>
 {% include "_shell.html" %}
@@ -37,6 +39,12 @@
             </div>
         </header>
     </section>
+    <section class="card settings-panel" aria-labelledby="privacy-title">
+        <header><div><h2 id="privacy-title">{{ _('Privacy en bewaartermijn') }}</h2>
+            <p>{{ _('Auditlogs') }}: {{ log_privacy.auditDays }} {{ _('dagen') }} · {{ _('Beheerlogs') }}: {{ log_privacy.managementDays }} {{ _('dagen') }} · {{ _('Tinyproxy- en verkeerslogs') }}: {{ log_privacy.trafficDays }} {{ _('dagen') }}</p></div></header>
+        <p>{{ _('Schijflimieten kunnen de beschikbare geschiedenis verkorten. Oudere systeemlogs, eigen logbestanden, back-ups en downloads vallen onder het beleid van de beheerder.') }}</p>
+        <p><a href="{{ url_for('privacy_notice') }}" target="_blank" rel="noopener">{{ _('Privacy en logging') }}</a></p>
+    </section>
     {% if sign_in %}
     <section class="card"><h2>{{ _('Inloggen') }}</h2><p>{{ _('Log in om instellingen te beheren.') }}</p>
         <a href="/">{{ _('Naar overzicht') }}</a>
@@ -47,21 +55,66 @@
     <section class="card settings-panel" aria-labelledby="ha-title">
         <header>
             <div><h2 id="ha-title">{{ _('Hoge beschikbaarheid (HA)') }}</h2>
-                <p>{{ _('Controleer het netwerkplan voor twee nodes voordat je de installatie uitvoert.') }}</p></div>
+                {% if not ha_enabled %}<p>{{ _('Maak van twee zelfstandige nodes een HA-cluster.') if ha_setup_available else _('Controleer het netwerkplan voor twee nodes voordat je de installatie uitvoert.') }}</p>{% endif %}</div>
             <span class="settings-badge">{{ _('Beheerde HA') if managed_ha else _('Bestaande HA') if ha_enabled else _('Zelfstandige node') }}</span>
         </header>
+        {% if ha_policy_role in ('a', 'b') %}
+        <div class="ha-settings" id="ha-policy" data-csrf="{{ ha_policy_csrf }}" data-role="{{ ha_policy_role }}">
+            <p>{{ _('Koppel de nodes eenmalig. Publiceer op A om de actieve filterregels en gedeelde Tinyproxy-instellingen automatisch naar B te sturen.') }}</p>
+            <dl class="ha-status-grid">
+                <div><dt>{{ _('Beleid synchroniseren') }}</dt><dd id="ha-policy-status" role="status">—</dd></div>
+                <div><dt>{{ _('Virtueel IP') }}</dt><dd id="ha-policy-vip">—</dd></div>
+                <div id="ha-policy-published-row" hidden><dt>{{ _('Laatst opgehaalde revisie van A') if ha_policy_role == 'b' else _('Gepubliceerde revisie') }}</dt><dd><code id="ha-policy-published"></code></dd></div>
+                <div id="ha-policy-applied-row" hidden><dt>{{ _('Toegepaste revisie op B') }}</dt><dd><code id="ha-policy-applied"></code></dd></div>
+                <div id="ha-policy-checked-row" hidden><dt>{{ _('Laatste succesvolle contact') }}</dt><dd><time id="ha-policy-checked"></time></dd></div>
+            </dl>
+            {% if ha_policy_role == 'a' %}
+            <button type="button" data-ha-policy="invite">{{ _('Node toevoegen') }}</button>
+            <div id="ha-policy-result" hidden>
+                <label for="ha-policy-code">{{ _('Kopieer deze code') }}</label>
+                <textarea id="ha-policy-code" readonly spellcheck="false" autocomplete="off"></textarea>
+            </div>
+            {% else %}
+            <div id="ha-policy-join">
+                <label for="ha-policy-code">{{ _('Koppelcode van node A') }}</label>
+                <textarea id="ha-policy-code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+                <button type="button" data-ha-policy="join">{{ _('Deelnemen aan cluster') }}</button>
+            </div>
+            {% endif %}
+            <p id="ha-policy-feedback" class="notice" role="status"></p>
+        </div>
+        {% endif %}
+        {% if not ha_enabled %}
         <details class="ha-settings">
-            <summary>{{ _('HA-instellingen controleren') }}</summary>
-            <form id="haPreviewForm" class="ha-fields">
+            <summary>{{ _('HA instellen') if ha_setup_available else _('HA-instellingen controleren') }}</summary>
+            {% if ha_setup_available %}
+            <p>{{ _('Maak hier een cluster aan of sluit deze node met een koppelcode aan bij een bestaande primaire node.') }}</p>
+            <p class="hint">{{ _('UFW moet actief zijn met inkomend verkeer standaard geweigerd. Laat je bestaande beheertoegang toe voordat je doorgaat.') }}</p>
+            <div class="ha-setup-intent"><label for="haSetupMode">{{ _('Wat wil je doen?') }}</label>
+            <select id="haSetupMode"><option value="create">{{ _('Nieuw HA-cluster maken') }}</option><option value="join">{{ _('Aansluiten met koppelcode') }}</option></select></div>
+            {% endif %}
+            <form id="haPreviewForm" class="ha-fields" data-can-setup="{{ 'true' if ha_setup_available else 'false' }}">
+                <div class="ha-network-picker">
+                    <label for="haDetectedNetwork">{{ _('Netwerk op deze node') }}</label>
+                    <select id="haDetectedNetwork" aria-describedby="haNetworkHelp"><option value="">{{ _('Kies een gedetecteerd netwerk') }}</option></select>
+                    <p id="haNetworkHelp" class="hint" role="status">{{ _('Interfaces en IPv4-adressen worden opgehaald zodra je HA instelt.') }}</p>
+                    <button type="button" class="button button-secondary" id="haRefreshNetworks">{{ _('Netwerken vernieuwen') }}</button>
+                </div>
+                {% if ha_setup_available %}
+                <label id="haJoinCodeLabel" hidden>{{ _('Koppelcode van node A') }}<textarea name="joinCode" id="haJoinCode" spellcheck="false" autocomplete="off" disabled></textarea></label>
+                <input type="hidden" name="node" value="a">
+                {% else %}
                 <div><label for="haNode">{{ _('Node') }}</label>
                     <select id="haNode" name="node"><option value="a">A</option><option value="b">B</option></select></div>
-                <label>{{ _('Netwerkinterface') }}<input name="interface" placeholder="ens18" maxlength="15" required></label>
+                {% endif %}
+                <label>{{ _('Netwerkinterface') }}<input name="interface" list="haInterfaceOptions" placeholder="ens18" maxlength="15" required></label>
+                <datalist id="haInterfaceOptions"></datalist>
                 <label>{{ _('IPv4-adres van node A') }}<input name="nodeA" placeholder="192.0.2.11" maxlength="15" required></label>
-                <label>{{ _('IPv4-adres van node B') }}<input name="nodeB" placeholder="192.0.2.12" maxlength="15" required></label>
-                <label>{{ _('Virtueel IPv4-adres met prefix') }}<input name="vip" placeholder="192.0.2.10/24" maxlength="18" required></label>
+                <label>{{ _('IPv4-adres van node B') }}<input name="nodeB" placeholder="192.0.2.12" maxlength="15" required><small class="hint">{{ _('Neem het vaste IPv4-adres over van de tweede node.') }}</small></label>
+                <label>{{ _('Virtueel IPv4-adres met prefix') }}<input name="vip" placeholder="192.0.2.10/24" maxlength="18" required><small class="hint">{{ _('Een voorstel is geen reservering. Reserveer het virtuele IP buiten DHCP.') }}</small></label>
                 <label>{{ _('Toegestaan clientnetwerk met prefix') }}<input name="clients" placeholder="192.0.2.0/24" maxlength="18" required></label>
                 <label>{{ _('VRRP-ID') }}<input name="vrid" type="number" min="1" max="255" value="51" required></label>
-                <button type="submit" class="button button-secondary">{{ _('HA-plan controleren') }}</button>
+                <div class="ha-plan-actions"><button type="submit" class="button button-primary">{{ _('HA-plan controleren') }}</button></div>
             </form>
             <p id="haPreviewFeedback" role="status"></p>
             <pre id="haPreviewResult" hidden></pre>
@@ -69,15 +122,46 @@
                 <summary>{{ _('UFW-regels voor deze node') }}</summary>
                 <pre id="haFirewallRules"></pre>
             </details>
+            {% if ha_setup_available %}
+            <button type="button" class="button button-primary" id="haSetupConfirm" hidden>{{ _('HA instellen') }}</button>
+            <dialog id="haSetupDialog" class="workspace-dialog" aria-labelledby="haSetupTitle" aria-describedby="haSetupDescription">
+                <form method="dialog" id="haSetupApplyForm" class="workspace-panel">
+                    <header class="workspace-dialog-header"><h3 id="haSetupTitle">{{ _('HA instellen bevestigen') }}</h3></header>
+                    <div class="workspace-dialog-body">
+                        <p id="haSetupDescription">{{ _('De proxy wordt herstart en de interface krijgt het gekozen HA-profiel. Daarna log je opnieuw in. De huidige instellingen worden geback-upt.') }}</p>
+                        <label for="haSetupPassword">{{ _('Je huidige wachtwoord') }}</label>
+                        <input type="password" id="haSetupPassword" autocomplete="current-password" required maxlength="256">
+                        {% if mfa %}<label for="haSetupOtp">{{ _('Authenticatorcode') }}</label><input id="haSetupOtp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" required>{% endif %}
+                        <label><input type="checkbox" id="haSetupApproved" required> {{ _('Ik heb het netwerkplan en mijn beheertoegang gecontroleerd.') }}</label>
+                        <p id="haSetupError" role="alert"></p>
+                    </div>
+                    <footer class="workspace-dialog-footer">
+                        <button class="button button-secondary" value="cancel" formnovalidate autofocus>{{ _('Annuleren') }}</button>
+                        <button class="button button-primary" value="apply">{{ _('HA activeren') }}</button>
+                    </footer>
+                </form>
+            </dialog>
+            {% endif %}
         </details>
+        {% endif %}
         {% if ha_enabled %}
-        <details class="ha-settings">
-            <summary>{{ _('HA verwijderen voorbereiden') }}</summary>
-            <ol>
-                <li>{{ _('Kies welke node het proxyverkeer blijft verwerken.') }}</li>
-                <li>{{ _('Plan hoe clients van het virtuele adres naar het nieuwe proxyadres overstappen.') }}</li>
-                <li>{{ _('Leg het actieve beleid en de Keepalived-configuratie per node vast.') }}</li>
-            </ol>
+        <details class="ha-settings ha-maintenance">
+            <summary>{{ _('HA-beheeracties') }}</summary>
+            {% if ha_policy_role in ('a', 'b') %}
+            <button type="button" class="button button-danger" data-ha-policy="disconnect" aria-haspopup="dialog" hidden>{{ _('Koppeling intrekken') }}</button>
+            <dialog id="ha-disconnect-dialog" class="workspace-dialog" aria-labelledby="ha-disconnect-title" aria-describedby="ha-disconnect-description">
+                <form method="dialog" class="workspace-panel">
+                    <header class="workspace-dialog-header"><h3 id="ha-disconnect-title">{{ _('HA-koppeling intrekken?') }}</h3></header>
+                    <div class="workspace-dialog-body"><p id="ha-disconnect-description">{{ _('Automatische synchronisatie stopt. Beide nodes behouden hun laatst actieve proxybeleid. Voor synchronisatie moet je de nodes opnieuw koppelen.') }}</p></div>
+                    <footer class="workspace-dialog-footer">
+                        <button class="button button-secondary" value="cancel" autofocus>{{ _('Annuleren') }}</button>
+                        <button class="button button-danger" value="disconnect">{{ _('Koppeling intrekken') }}</button>
+                    </footer>
+                </form>
+            </dialog>
+            {% endif %}
+            <details class="ha-settings">
+            <summary>{{ _('Deze HA-node uit bedrijf nemen') }}</summary>
             {% if ha_retire_available %}
             <p>{{ _('Deze actie stopt Keepalived en Tinyproxy op deze node. De beheerconsole blijft beschikbaar.') }}</p>
             <form id="haRetireForm" class="ha-fields">
@@ -92,6 +176,7 @@
             {% else %}
             <p>{{ _('Voor het verwijderen van HA is een afzonderlijke migratie op de hosts nodig.') }}</p>
             {% endif %}
+            </details>
         </details>
         {% endif %}
     </section>

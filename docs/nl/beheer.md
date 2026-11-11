@@ -37,7 +37,8 @@ naam van de back-up bij het wijzigingsverzoek.
    geen verkeer kan doorsturen.
 4. Maak een kleine wijziging via de beheerconsole. Controleer na publicatie
    opnieuw het verkeer. Zoek de beheerder en node op in de auditlog onder
-   **Live logs**. Bij nieuwe HA-nodes herhaal je dit op beide nodes.
+   **Live logs**. Publiceer bij gekoppelde HA-nodes op A en controleer de
+   overeenkomende toegepaste revisie op B.
 
 Gebruik voor de verkeersproef twee interne testbestemmingen waarvan je de
 normale HTTP-respons kent. Vervang de voorbeeldwaarden:
@@ -62,25 +63,30 @@ beheerconsole is op zichzelf onvoldoende om clientverkeer te verifiëren.
    herstart en bestaande verbindingen kunnen worden onderbroken.
 4. Test het clientverkeer opnieuw en controleer de wijziging in **Live logs**.
 
-Publiceer bij een nieuw HA-cluster hetzelfde beleid op beide nodes. Begin met
-de node die het virtuele IP op dat moment niet heeft. Controleer die node vóór
-je de actieve node wijzigt.
+Publiceer gedeeld beleid bij gekoppelde beheerde HA-nodes op A. B haalt het
+automatisch op en activeert het. Controleer gelijke revisies vóór een
+failovertest. Niet-gekoppelde nodes houden zelfstandig beleid. Houd account- en
+softwareonderhoud gescheiden van beleidspublicatie.
 
 ## Een storing onderzoeken
 
 Open **Live logs** en filter op bron en niveau. Typ om de geladen regels te
 filteren of kies **Zoek op server** om ook oudere regels te doorzoeken. Klap
-een auditregel uit voor details over de wijziging.
+een auditregel uit voor details over de wijziging. Zoek met **Periode** in
+bewaarde auditarchieven en journalgeschiedenis. Let op meldingen over
+onvolledige resultaten. Zie [logging, privacy en bewaartermijnen](logging.md)
+voor opslaglimieten en exports.
 
 Controleer op de host de service en het journal.
 
 ```bash
 sudo systemctl status proxypermit.service tinyproxy.service --no-pager
-sudo journalctl -u proxypermit.service -u tinyproxy.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit -u proxypermit.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit-traffic -u tinyproxy.service -n 100 --no-pager
 # Alleen op HA-nodes
 sudo systemctl status keepalived.service --no-pager
 ip -br -4 address
-sudo journalctl -u keepalived.service -n 100 --no-pager
+sudo journalctl --namespace=proxypermit -u keepalived.service -n 100 --no-pager
 ```
 
 | Symptoom | Controle |

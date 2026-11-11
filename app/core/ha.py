@@ -1,6 +1,39 @@
 """Validate the shared two-node HA topology."""
 import ipaddress
 import re
+import hashlib
+from pathlib import Path
+
+from .tinyproxy import ConfigError, parse, validate
+
+HA_SETUP_REQUEST = Path('/var/lib/proxypermit/ha-setup-request.json')
+HA_SETUP_RESULT = Path('/var/lib/proxypermit/ha-setup-result.json')
+HA_SETUP_ENV = Path('/etc/proxypermit/.env')
+
+
+def setup_revision(config_path, filter_path):
+    """Bind approval to the current installation and active policy."""
+    digest = hashlib.sha256()
+    for path in (HA_SETUP_ENV, Path(config_path), Path(filter_path)):
+        content = path.read_bytes()
+        digest.update(len(content).to_bytes(8, 'big'))
+        digest.update(content)
+    return digest.hexdigest()
+
+
+def ha_proxy_config(content, topology):
+    rows = parse(content)
+    ports = [row['args'] for row in rows if row['name'].lower() == 'port']
+    if ports != [['3128']]:
+        raise ConfigError('HA conversion requires Tinyproxy port 3128.')
+    remove = {row['line'] for row in rows if row['name'].lower() == 'listen'}
+    lines = [line for number, line in enumerate(content.splitlines(), 1) if number not in remove]
+    # The new client ACL is deliberately before existing ACLs, whose relative order is preserved.
+    updated = f"Listen 0.0.0.0\nAllow {topology['clients']}\n" + '\n'.join(lines) + '\n'
+    checks = validate(updated)
+    if not checks['valid']:
+        raise ConfigError('\n'.join(checks['errors']))
+    return updated
 
 
 def ha_topology(node, interface, node_a, node_b, vip, clients, vrid):
@@ -38,3 +71,16 @@ def ha_firewall_rules(topology):
         ['allow', 'out', 'on', interface, 'from', local, 'to', peer, 'proto', 'vrrp',
          'comment', 'ProxyPermit HA OUT - Keepalived VRRP to peer'],
     ]
+
+
+def ha_setup_firewall_rules(topology):
+    rules = ha_firewall_rules(topology)
+    if topology['node'] == 'a':
+        rules.append(['allow', 'in', 'on', topology['interface'], 'from', topology['peer'], 'to', topology['local'],
+                      'port', '8443', 'proto', 'tcp', 'comment', 'ProxyPermit HA IN - Policy TLS from peer'])
+    else:
+        rules.append(['allow', 'out', 'on', topology['interface'], 'from', topology['local'], 'to', topology['peer'],
+                      'port', '8443', 'proto', 'tcp', 'comment', 'ProxyPermit HA OUT - Policy TLS to peer'])
+    rules.append(['allow', 'out', 'on', topology['interface'], 'from', topology['local'], 'to', topology['vip'].split('/')[0],
+                  'port', '3128', 'proto', 'tcp', 'comment', 'ProxyPermit HA OUT - Verify proxy virtual IP'])
+    return rules

@@ -1,6 +1,6 @@
 """Flask application for ProxyPermit web management and cluster synchronization."""
 
-from flask import Flask, render_template, request, jsonify, url_for, make_response, session
+from flask import Flask, render_template, request, jsonify, url_for, make_response, session, has_request_context
 import json
 import base64
 import os
@@ -12,6 +12,7 @@ import importlib.util
 from io import StringIO
 import hmac
 import hashlib
+import ipaddress
 import stat
 import socket
 import time
@@ -32,11 +33,11 @@ PYRAD_AVAILABLE = importlib.util.find_spec('pyrad') is not None
 
 from ..core.filters import WhitelistManager
 from ..core.accounts import account_for, consume_totp, load_accounts, matching_totp_step, verify_password
-from ..core.audit import SharedAuditHandler
+from ..core.audit import SharedAuditHandler, bounded_setting
 from ..core.files import file_lock
 from ..core.tinyproxy import atomic_write
 from ..core.validators import WhitelistValidator
-from .proxy import PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, register_proxy_api, validate_filter
+from .proxy import PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, record_published_policy, register_proxy_api, validate_filter
 from .settings import register_settings
 from ..i18n import register_i18n
 
@@ -83,8 +84,8 @@ if not audit_logger.handlers:
         logger.warning(f"Could not prepare audit log directory: {exc}")
 
     try:
-        audit_handler = SharedAuditHandler(AUDIT_LOG_PATH, maxBytes=AUDIT_LOG_MAX_BYTES,
-                                           backupCount=AUDIT_LOG_BACKUP_COUNT, encoding='utf-8', delay=True)
+        audit_handler = SharedAuditHandler(AUDIT_LOG_PATH, maxBytes=bounded_setting('AUDIT_LOG_MAX_BYTES', 2097152, 65536, 104857600),
+                                           backupCount=bounded_setting('AUDIT_LOG_BACKUP_COUNT', 5, 1, 50), encoding='utf-8', delay=True)
         # We write JSON payloads as the raw message; keep file lines as JSON only
         audit_handler.setFormatter(logging.Formatter('%(message)s'))
         audit_logger.addHandler(audit_handler)
@@ -152,7 +153,12 @@ if not os.getenv('FLASK_SECRET_KEY'):
 app.config['SECRET_KEY'] = os.getenv('FLASK_SECRET_KEY')
 app.config['JSON_AS_ASCII'] = True  # ASCII-only JSON
 app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_NAME'] = os.getenv('SESSION_COOKIE_NAME') or 'session'
+ha_role = os.getenv('PROXYPERMIT_HA_NODE')
+app.config['SESSION_COOKIE_NAME'] = os.getenv('SESSION_COOKIE_NAME') or (
+    f'proxypermit-ha-{ha_role}'
+    if os.getenv('PROXYPERMIT_MANAGED_HA') == 'true' and ha_role in ('a', 'b')
+    else 'session'
+)
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', '').lower() == 'true' or os.getenv('MANAGER_SCHEME', 'http') == 'https'
 app.permanent_session_lifetime = timedelta(hours=8)
@@ -160,16 +166,8 @@ app.permanent_session_lifetime = timedelta(hours=8)
 # HSTS configuratie (RFC 6797)
 ENABLE_HSTS = os.getenv('ENABLE_HSTS', 'true').lower() == 'true'
 HSTS_MAX_AGE = int(os.getenv('HSTS_MAX_AGE', '31536000'))
-HSTS_INCLUDE_SUBDOMAINS = os.getenv('HSTS_INCLUDE_SUBDOMAINS', 'true').lower() == 'true'
+HSTS_INCLUDE_SUBDOMAINS = os.getenv('HSTS_INCLUDE_SUBDOMAINS', 'false').lower() == 'true'
 HSTS_PRELOAD = os.getenv('HSTS_PRELOAD', 'false').lower() == 'true'
-
-
-def _is_https_request() -> bool:
-    """Detect HTTPS requests (direct TLS or behind reverse proxy)."""
-    if request.is_secure:
-        return True
-    forwarded_proto = (request.headers.get('X-Forwarded-Proto') or '').lower()
-    return forwarded_proto == 'https'
 
 
 def _canonicalize_whitelist_content(content: str) -> str:
@@ -222,7 +220,7 @@ def add_cors_headers(response):
     response.headers.setdefault('X-XSS-Protection', '1; mode=block')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
 
-    if ENABLE_HSTS and _is_https_request():
+    if ENABLE_HSTS and request.is_secure:
         hsts_value = f'max-age={HSTS_MAX_AGE}'
         if HSTS_INCLUDE_SUBDOMAINS:
             hsts_value += '; includeSubDomains'
@@ -265,6 +263,8 @@ def restart_tinyproxy_async():
                 success, error = whitelist_manager.restart_tinyproxy()
                 if not success:
                     logger.error("Tinyproxy async restart failed: %s", error)
+                else:
+                    record_published_policy(filter_path, logger)
         except OSError:
             logger.exception('Tinyproxy async restart could not acquire the filter lock')
 
@@ -421,36 +421,18 @@ def login_attempts(now):
         atomic_write(path, json.dumps(attempts))
 
 
-# Log limits for audit and forensic queries.
-try:
-    LOG_API_MAX_PAGE_LIMIT = max(100, int(os.getenv('LOG_API_MAX_PAGE_LIMIT', '5000')))
-except ValueError:
-    LOG_API_MAX_PAGE_LIMIT = 5000
-try:
-    LOG_API_MAX_SCAN_LIMIT = max(1000, int(os.getenv('LOG_API_MAX_SCAN_LIMIT', '120000')))
-except ValueError:
-    LOG_API_MAX_SCAN_LIMIT = 120000
-try:
-    LOG_API_MAX_PER_SOURCE_LIMIT = max(500, int(os.getenv('LOG_API_MAX_PER_SOURCE_LIMIT', '50000')))
-except ValueError:
-    LOG_API_MAX_PER_SOURCE_LIMIT = 50000
-try:
-    LOG_API_MANAGER_PER_SOURCE_LIMIT = max(500, int(os.getenv('LOG_API_MANAGER_PER_SOURCE_LIMIT', '3000')))
-except ValueError:
-    LOG_API_MANAGER_PER_SOURCE_LIMIT = 3000
-
 # Log/output privacy tuning
-LOG_IP_MODE = os.getenv('LOG_IP_MODE', 'full').lower().strip()
+LOG_IP_MODE = os.getenv('LOG_IP_MODE', 'masked').lower().strip()
 if LOG_IP_MODE not in ('full', 'masked', 'hash'):
-    LOG_IP_MODE = 'full'
+    LOG_IP_MODE = 'masked'
 
 CLIENT_IP_MAP_PATH = os.getenv('CLIENT_IP_MAP_PATH', '').strip()
 CLIENT_IP_MAP_JSON = os.getenv('CLIENT_IP_MAP_JSON', '').strip()
 
 # Audit entry payload control
-AUDIT_ENTRY_MODE = os.getenv('AUDIT_ENTRY_MODE', 'preview').lower().strip()
+AUDIT_ENTRY_MODE = os.getenv('AUDIT_ENTRY_MODE', 'hash').lower().strip()
 if AUDIT_ENTRY_MODE not in ('preview', 'full', 'hash'):
-    AUDIT_ENTRY_MODE = 'preview'
+    AUDIT_ENTRY_MODE = 'hash'
 try:
     AUDIT_ENTRY_MAX_LEN = max(40, int(os.getenv('AUDIT_ENTRY_MAX_LEN', '160')))
 except ValueError:
@@ -479,12 +461,13 @@ def _format_ip_for_logs(ip_value: str) -> str:
         return ''
     mode = LOG_IP_MODE
     if mode == 'masked':
-        parts = ip_value.split('.')
-        if len(parts) == 4:
-            return f"{parts[0]}.{parts[1]}.{parts[2]}.x"
-        return ip_value
+        try:
+            address = ipaddress.ip_address(ip_value)
+            return str(ipaddress.ip_network(f'{address}/{24 if address.version == 4 else 64}', strict=False))
+        except ValueError:
+            return '-'
     if mode == 'hash':
-        return hashlib.sha256(ip_value.encode('utf-8')).hexdigest()[:12]
+        return hmac.new(app.config['SECRET_KEY'].encode(), ip_value.encode(), hashlib.sha256).hexdigest()[:12]
     return ip_value
 
 
@@ -525,7 +508,7 @@ def _audit_entry_value(value: Optional[str]) -> str:
         return ''
     raw = str(value)
     if AUDIT_ENTRY_MODE == 'hash':
-        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+        return hmac.new(app.config['SECRET_KEY'].encode(), raw.encode('utf-8'), hashlib.sha256).hexdigest()
     if AUDIT_ENTRY_MODE == 'full':
         return raw
     if len(raw) > AUDIT_ENTRY_MAX_LEN:
@@ -536,7 +519,8 @@ def _audit_entry_value(value: Optional[str]) -> str:
 def _safe_audit_value(value: Any, max_len: int = 200) -> str:
     if value is None:
         return ''
-    text = str(value).replace('\r', '\\r').replace('\n', '\\n')
+    from .logs import scrub_message
+    text = scrub_message(str(value)).replace('\r', '\\r').replace('\n', '\\n')
     if len(text) > max_len:
         return text[:max_len] + '...'
     return text
@@ -544,16 +528,19 @@ def _safe_audit_value(value: Any, max_len: int = 200) -> str:
 
 def _audit_event(event: str, level: str = 'info', **details) -> None:
     """Write structured audit logs for configuration changes."""
+    from_request = has_request_context()
     safe_details = {
         'event': event,
         'node': AUDIT_NODE,
-        'ip': _format_ip_for_logs(_client_ip()),
-        'path': request.path,
-        'method': request.method,
-        'username': session.get('user') or '-'
+        'ip': _format_ip_for_logs(_client_ip()) if from_request else '-',
+        'path': request.path if from_request else '-',
+        'method': request.method if from_request else '-',
+        'username': (session.get('user') or '-') if from_request else 'proxypermit-system'
     }
     for key, value in (details or {}).items():
-        if key not in safe_details:
+        if key not in safe_details and not re.search(r'password|passwd|secret|token|cookie|authorization|otp', key, re.I):
+            if key == 'description' and AUDIT_ENTRY_MODE != 'full':
+                continue
             safe_details[key] = _safe_audit_value(value)
 
     payload = ', '.join(f"{k}={safe_details[k]}" for k in sorted(safe_details.keys()))
@@ -561,6 +548,7 @@ def _audit_event(event: str, level: str = 'info', **details) -> None:
 
     audit_entry = {
         'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'id': os.urandom(16).hex(),
         'level': (level or 'info').upper(),
         'message': log_line
     }
@@ -575,19 +563,16 @@ def _audit_event(event: str, level: str = 'info', **details) -> None:
         json_payload = json.dumps({'message': log_line}, ensure_ascii=False)
 
     if level == 'warning':
-        logger.warning(log_line)
         try:
             audit_logger.warning(json_payload)
         except Exception:
             logger.debug('Failed to write to audit.log')
     elif level == 'error':
-        logger.error(log_line)
         try:
             audit_logger.error(json_payload)
         except Exception:
             logger.debug('Failed to write to audit.log')
     else:
-        logger.info(log_line)
         try:
             audit_logger.info(json_payload)
         except Exception:
@@ -599,11 +584,12 @@ def _auth_audit(event: str, level: str = 'info', **details) -> None:
     safe_details = {
         'event': event,
         'node': AUDIT_NODE,
-        'ip': _client_ip(),
+        'ip': _format_ip_for_logs(_client_ip()),
         'path': request.path,
         'method': request.method
     }
-    safe_details.update({key: _safe_audit_value(value) for key, value in details.items() if key not in safe_details})
+    safe_details.update({key: _safe_audit_value(value) for key, value in details.items()
+                         if key not in safe_details and not re.search(r'password|passwd|secret|token|cookie|authorization|otp', key, re.I)})
 
     # Human-readable message (kept for journalctl / UI compatibility)
     payload = ', '.join(f"{k}={safe_details[k]}" for k in sorted(safe_details.keys()))
@@ -612,6 +598,7 @@ def _auth_audit(event: str, level: str = 'info', **details) -> None:
     # Structured audit entry for file logging (JSON LINES)
     audit_entry = {
         'timestamp': datetime.utcnow().isoformat() + 'Z',
+        'id': os.urandom(16).hex(),
         'level': (level or 'info').upper(),
         'message': log_line
     }
@@ -629,19 +616,16 @@ def _auth_audit(event: str, level: str = 'info', **details) -> None:
 
     # Log to main logger (visible in journalctl) and to dedicated audit file
     if level == 'warning':
-        logger.warning(log_line)
         try:
             audit_logger.warning(json_payload)
         except Exception:
             logger.debug('Failed to write to audit.log')
     elif level == 'error':
-        logger.error(log_line)
         try:
             audit_logger.error(json_payload)
         except Exception:
             logger.debug('Failed to write to audit.log')
     else:
-        logger.info(log_line)
         try:
             audit_logger.info(json_payload)
         except Exception:
@@ -1294,6 +1278,8 @@ def get_sync_secret():
 
 def _check_sync_secret_file():
     """Warn when the sync secret is missing or its file permissions are too broad."""
+    if not ha_enabled() or managed_ha():
+        return
     try:
         if not os.path.exists(SYNC_SECRET_FILE):
             logger.warning(f'Sync secret file is missing: {SYNC_SECRET_FILE}')
@@ -2283,957 +2269,39 @@ def run_sync_status():
     return jsonify({'success': True, 'state': state}), 200
 
 
+@app.context_processor
+def logging_privacy_context():
+    from .logs import policy
+    external = os.getenv('PRIVACY_POLICY_URL', '').strip()
+    try:
+        parsed = urlsplit(external)
+        if external and (parsed.scheme != 'https' or not parsed.hostname or parsed.username or parsed.password):
+            external = ''
+    except ValueError:
+        external = ''
+    return dict(log_privacy=policy(), privacy_contact=os.getenv('PRIVACY_CONTACT', '').strip()[:300],
+                privacy_policy_url=external)
+
+
+@app.get('/privacy')
+def privacy_notice():
+    return render_template('privacy.html'), 200, {'Cache-Control': 'no-store'}
+
+
 @app.route('/api/logs', methods=['GET'])
 @requires_auth
 def get_logs():
-    """Read application logs for multiple services from the journal."""
+    """Query only application logs within the configured retention window."""
+    from .logs import query_logs
     try:
-        import subprocess
-        import sys
-        import json as json_lib
-        
-        limit = request.args.get('limit', 1000, type=int)
-        limit = max(1, min(limit or 1000, LOG_API_MAX_PAGE_LIMIT))
-        offset = request.args.get('offset', 0, type=int)
-        offset = max(0, offset or 0)
-        requested_service = (request.args.get('service', 'all') or 'all').strip().lower()
-        include_internal = request.args.get('include_internal', 'false').lower() == 'true'
-        query = (request.args.get('q', '') or '').strip().lower()
-        scan_hint = request.args.get('scan_limit', 0, type=int)
-        scan_hint = max(0, scan_hint or 0)
-        base_scan_limit = max(limit * 3, 1200)
-        if query:
-            base_scan_limit = max(base_scan_limit, 6000)
-        if scan_hint:
-            base_scan_limit = max(base_scan_limit, scan_hint)
-        scan_limit = min(base_scan_limit, LOG_API_MAX_SCAN_LIMIT)
-        is_windows = sys.platform == 'win32'
-        client_ip_map = _load_client_ip_map()
-
-        allowed_services = {'all', 'manager', 'tinyproxy', 'proxy_traffic', 'keepalived', 'audit'}
-        service_filter = requested_service if requested_service in allowed_services else 'all'
-        
-        logs = []
-        log_sequence = 0
-        noisy_manager_markers = (
-            '"GET /api/logs',
-            '"GET /api/status',
-            '"GET /api/sync/status',
-            '"GET /api/sync/run/status',
-            '"GET /api/sync/info',
-            '"GET /api/sync/peer-status',
-            '"GET /api/auth/me',
-            '"POST /api/auth/transfer',
-            '"GET /api/entries',
-            '"GET /api/config',
-            '"GET /health',
-            '"GET /favicon.ico',
-            '"GET /static/',
-            '"GET / HTTP/1.1"',
-            'Whitelist gelezen:'
-        )
-        noisy_manager_warning_markers = (
-            'InsecureRequestWarning',
-            'urllib3/connectionpool.py',
-            'Unverified HTTPS request is being made',
-            'warnings.warn(',
-            'SSLV3_ALERT_CERTIFICATE_UNKNOWN'
-        )
-
-        def _split_host_port(value: str) -> Tuple[str, Optional[str]]:
-            raw = (value or '').strip()
-            if not raw:
-                return '', None
-            if '://' in raw:
-                try:
-                    parsed = urlsplit(raw)
-                    host = parsed.hostname or ''
-                    port = str(parsed.port) if parsed.port else None
-                    return host, port
-                except Exception:
-                    return raw, None
-            if ':' in raw and raw.count(':') == 1:
-                host, port = raw.rsplit(':', 1)
-                return host, port if port.isdigit() else None
-            return raw, None
-
-        def _parse_proxy_traffic_meta(message: str) -> Dict[str, Any]:
-            meta: Dict[str, Any] = {}
-            if not message:
-                return meta
-            text = message.strip()
-
-            if text.startswith('[file]'):
-                meta['source'] = 'file'
-                text = text[len('[file]'):].strip()
-
-            pid_match = re.match(r'^\[(\d+)\]\s+(.*)$', text)
-            if pid_match:
-                meta['pid'] = pid_match.group(1)
-                text = pid_match.group(2)
-
-            ip_match = re.search(r'Connect \(file descriptor (\d+)\):\s*([0-9]{1,3}(?:\.[0-9]{1,3}){3})', text)
-            if ip_match:
-                meta['client_fd'] = ip_match.group(1)
-                raw_ip = ip_match.group(2)
-                meta['client_ip'] = _format_ip_for_logs(raw_ip)
-                if raw_ip in client_ip_map:
-                    meta['client_name'] = client_ip_map.get(raw_ip)
-
-            unauthorized_match = re.search(r'Unauthorized connection from\s+([0-9]{1,3}(?:\.[0-9]{1,3}){3})', text, re.IGNORECASE)
-            if unauthorized_match:
-                raw_ip = unauthorized_match.group(1)
-                meta['client_ip'] = _format_ip_for_logs(raw_ip)
-                if raw_ip in client_ip_map:
-                    meta['client_name'] = client_ip_map.get(raw_ip)
-                meta['action'] = 'unauthorized'
-
-            request_match = re.search(r'Request \(file descriptor (\d+)\):\s*([A-Z]+)\s+([^\s]+)', text)
-            if request_match:
-                meta['client_fd'] = request_match.group(1)
-                meta['method'] = request_match.group(2)
-                host, port = _split_host_port(request_match.group(3))
-                if host:
-                    meta['host'] = host
-                if port:
-                    meta['port'] = port
-                meta['action'] = 'request'
-
-            opensock_match = re.search(r'opensock: (?:getaddrinfo returned for|opening connection to)\s+([^\s:]+):(\d+)', text)
-            if opensock_match:
-                meta['host'] = opensock_match.group(1)
-                meta['port'] = opensock_match.group(2)
-                meta['action'] = 'opensock'
-
-            established_match = re.search(r'Established connection to host "([^"]+)" using file descriptor (\d+)', text)
-            if established_match:
-                meta['host'] = established_match.group(1)
-                meta['remote_fd'] = established_match.group(2)
-                meta['action'] = 'established'
-
-            no_proxy_match = re.search(r'No upstream proxy for\s+([^\s]+)', text)
-            if no_proxy_match:
-                meta['host'] = no_proxy_match.group(1)
-                meta['action'] = 'no_upstream'
-
-            refused_match = re.search(r'proxying refused on filtered domain:?\s*([^\s]+)', text, re.IGNORECASE)
-            if refused_match:
-                meta['host'] = refused_match.group(1)
-                meta['action'] = 'refused'
-
-            closed_match = re.search(
-                r'Closed connection between local client \(fd:(\d+)\) and remote client \(fd:(\d+)\)',
-                text
-            )
-            if closed_match:
-                meta['client_fd'] = closed_match.group(1)
-                meta['remote_fd'] = closed_match.group(2)
-                meta['action'] = 'closed'
-            elif 'Closed connection between local client' in text:
-                meta['action'] = 'closed'
-
-            return meta
-
-        def _enrich_proxy_traffic_context(entries: List[Dict[str, Any]]) -> None:
-            def _parse_entry_ts(entry: Dict[str, Any]) -> Optional[datetime]:
-                try:
-                    return _parse_log_timestamp(entry.get('timestamp') or '')
-                except Exception:
-                    return None
-
-            def _is_recent(state_ts: Optional[datetime], entry_ts: Optional[datetime], window_seconds: int = 5) -> bool:
-                if not state_ts or not entry_ts:
-                    return False
-                return abs((entry_ts - state_ts).total_seconds()) <= window_seconds
-
-            ordered = []
-            for idx, entry in enumerate(entries):
-                if entry.get('service') != 'proxy_traffic':
-                    continue
-                entry_ts = _parse_entry_ts(entry)
-                seq = entry.get('_seq', idx)
-                ordered.append((entry_ts or datetime.min, seq, entry))
-            ordered.sort(key=lambda item: (item[0], item[1]))
-
-            client_state: Dict[str, Dict[str, Any]] = {}
-            host_state_client: Dict[str, Dict[str, Any]] = {}
-            host_state_remote: Dict[str, Dict[str, Any]] = {}
-            pid_ip_state: Dict[str, Dict[str, Any]] = {}
-
-            for entry_ts, _, entry in ordered:
-                meta = entry.get('meta') or {}
-                pid = meta.get('pid')
-                if not pid:
-                    continue
-
-                client_fd = meta.get('client_fd')
-                remote_fd = meta.get('remote_fd')
-
-                merged = dict(meta)
-
-                if client_fd:
-                    key = f"{pid}:{client_fd}"
-                    state = client_state.get(key)
-                    if state and _is_recent(state.get('ts'), entry_ts):
-                        fields = state.get('fields') or {}
-                        for field in ('client_ip', 'client_name', 'method'):
-                            if not merged.get(field) and fields.get(field):
-                                merged[field] = fields[field]
-
-                    host_state = host_state_client.get(key)
-                    if host_state and _is_recent(host_state.get('ts'), entry_ts):
-                        fields = host_state.get('fields') or {}
-                        for field in ('host', 'port'):
-                            if not merged.get(field) and fields.get(field):
-                                merged[field] = fields[field]
-
-                if remote_fd:
-                    key = f"{pid}:{remote_fd}"
-                    host_state = host_state_remote.get(key)
-                    if host_state and _is_recent(host_state.get('ts'), entry_ts):
-                        fields = host_state.get('fields') or {}
-                        for field in ('host', 'port'):
-                            if not merged.get(field) and fields.get(field):
-                                merged[field] = fields[field]
-
-                pid_state = pid_ip_state.get(pid)
-                if pid_state and _is_recent(pid_state.get('ts'), entry_ts):
-                    if not merged.get('client_ip') and not pid_state.get('ambiguous'):
-                        merged['client_ip'] = pid_state.get('client_ip')
-                        if not merged.get('client_name') and pid_state.get('client_name'):
-                            merged['client_name'] = pid_state.get('client_name')
-
-                entry['meta'] = merged
-
-                if client_fd:
-                    key = f"{pid}:{client_fd}"
-                    if any(meta.get(field) for field in ('client_ip', 'client_name', 'method')):
-                        state = client_state.setdefault(key, {'fields': {}, 'ts': None})
-                        for field in ('client_ip', 'client_name', 'method'):
-                            value = meta.get(field)
-                            if value:
-                                state['fields'][field] = value
-                        state['ts'] = entry_ts
-
-                if meta.get('client_ip'):
-                    current_ip = meta.get('client_ip')
-                    pid_state = pid_ip_state.get(pid)
-                    if pid_state and pid_state.get('client_ip') and pid_state.get('client_ip') != current_ip:
-                        if _is_recent(pid_state.get('ts'), entry_ts, window_seconds=2):
-                            pid_state['ambiguous'] = True
-                        else:
-                            pid_state = None
-                    if not pid_state:
-                        pid_state = {'client_ip': current_ip, 'client_name': meta.get('client_name'), 'ts': entry_ts, 'ambiguous': False}
-                        pid_ip_state[pid] = pid_state
-                    else:
-                        pid_state['client_ip'] = current_ip
-                        if meta.get('client_name'):
-                            pid_state['client_name'] = meta.get('client_name')
-                        pid_state['ts'] = entry_ts
-
-                    if meta.get('host') or meta.get('port'):
-                        state = host_state_client.setdefault(key, {'fields': {}, 'ts': None})
-                        for field in ('host', 'port'):
-                            value = meta.get(field)
-                            if value:
-                                state['fields'][field] = value
-                        state['ts'] = entry_ts
-
-                if remote_fd and (meta.get('host') or meta.get('port')):
-                    key = f"{pid}:{remote_fd}"
-                    state = host_state_remote.setdefault(key, {'fields': {}, 'ts': None})
-                    for field in ('host', 'port'):
-                        value = meta.get(field)
-                        if value:
-                            state['fields'][field] = value
-                    state['ts'] = entry_ts
-
-        def _append_log(timestamp: str, level: str, service: str, message: str, audit=None) -> None:
-            nonlocal log_sequence
-            # Recognize authentication and audit events, including historical Dutch logs.
-            audit_keywords = (
-                'auth_audit', 'audit', 'audit:', 'audit_event',
-                'login', 'logout', 'auth', 'authentication', 'sessie', 'session', 'token',
-                'wachtwoord', 'password', '2fa', 'mfa', 'failed login', 'invalid password',
-                'user logged', 'user login', 'user logout', 'login attempt', 'login failure',
-                'login success', 'login failed', 'login error', 'login denied', 'login blocked',
-                'login accepted', 'login ok', 'login incorrect', 'login expired', 'login timeout',
-                'login required', 'login rejected', 'login warning', 'login info', 'login info:',
-                'login:', 'logout:', 'auth:', 'authentication:', 'token:', 'session:'
-            )
-            msg_lc = (message or '').lower()
-            is_audit = (
-                'auth_audit' in msg_lc or 'audit_event' in msg_lc or 'audit:' in msg_lc
-                or msg_lc.startswith('audit ')
-                or 'event=login' in msg_lc or 'event=logout' in msg_lc
-                or 'event=login_success' in msg_lc or 'event=login_failed' in msg_lc
-                or 'event=login_failure' in msg_lc or 'event=login_error' in msg_lc
-                or any(kw in msg_lc for kw in audit_keywords)
-            )
-            # Classify audit messages under the audit service.
-            effective_service = 'audit' if is_audit else service
-            if service == 'tinyproxy' and 'referenced but unset environment variable' in msg_lc and level == 'INFO':
-                level = 'WARNING'
-            # Filteren
-            if service_filter == 'audit' and not is_audit:
-                return
-            elif service_filter != 'all' and effective_service != service_filter:
-                return
-            entry = {
-                'timestamp': timestamp,
-                'level': level,
-                'service': effective_service,
-                'message': message,
-                '_seq': log_sequence
-            }
-            if effective_service == 'proxy_traffic':
-                meta = _parse_proxy_traffic_meta(message)
-                if meta:
-                    entry['meta'] = meta
-            if audit:
-                entry['audit'] = audit
-            logs.append(entry)
-            log_sequence += 1
-
-        def _parse_log_timestamp(value: str) -> Optional[datetime]:
-            if not value:
-                return None
-
-            raw_value = str(value).strip()
-            if not raw_value:
-                return None
-
-            # ISO 8601 (e.g. 2026-05-26T14:03:45.676387Z)
-            try:
-                if 'T' in raw_value:
-                    return datetime.fromisoformat(raw_value.replace('Z', ''))
-            except Exception:
-                pass
-
-            current_year = datetime.now().year
-            candidates = [
-                ('%Y-%m-%d %H:%M:%S', raw_value),
-                ('%Y-%m-%d %H:%M:%S,%f', raw_value),
-                ('%b %d %H:%M:%S.%f', f"{raw_value} {current_year}"),
-                ('%b %d %H:%M:%S', f"{raw_value} {current_year}")
-            ]
-
-            for fmt, raw in candidates:
-                try:
-                    if '%Y' in fmt:
-                        return datetime.strptime(raw, fmt)
-                    # For syslog-style timestamps, parse with appended year.
-                    return datetime.strptime(raw, f"{fmt} %Y")
-                except Exception:
-                    continue
-            return None
-
-        def _parse_short_log_line(line: str) -> Tuple[Optional[str], str]:
-            """Parse journal/syslog short lines into timestamp + message."""
-            parts = line.split(None, 3)
-            if len(parts) < 4:
-                return None, line
-
-            timestamp = ' '.join(parts[:3])
-            rest = parts[3]
-
-            # Strip optional "hostname process:" prefix if present.
-            prefix_match = re.match(r'^(?:\S+\s+)?[^:]+:\s*(.*)$', rest)
-            message = prefix_match.group(1) if prefix_match else rest
-            return timestamp, message
-
-        def _detect_level(message: str) -> str:
-            lowered = (message or '').lower()
-            if 'error' in lowered or '[ee]' in lowered:
-                return 'ERROR'
-            if 'warning' in lowered or 'warn' in lowered:
-                return 'WARNING'
-            if 'debug' in lowered:
-                return 'DEBUG'
-            return 'INFO'
-
-        def _normalize_manager_message(message: str) -> Tuple[str, str]:
-            """Normalize manager log formats (python logger and gunicorn access) to a cleaner message/level."""
-            if not message:
-                return 'INFO', ''
-
-            # Python logger format inside journal, e.g.:
-            # 2026-03-16 13:29:30,634 - app.web.manager - INFO - Priority detected ...
-            py_match = re.match(
-                r'^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d+)?\s+-\s+[^-]+\s+-\s+(DEBUG|INFO|WARNING|ERROR)\s+-\s+(.*)$',
-                message
-            )
-            if py_match:
-                return py_match.group(1), py_match.group(2)
-
-            return _detect_level(message), message
-
-        def _is_loopback_proxy_noise(message: str) -> bool:
-            """Detect recurring tinyproxy probe noise from local loopback checks."""
-            if not message:
-                return False
-
-            lowered = message.lower()
-            is_loopback = ('127.0.0.1' in lowered or '::1' in lowered)
-            if not is_loopback:
-                return False
-
-            noise_markers = (
-                'could not retrieve request entity',
-                'error reading readable client_fd',
-                'unauthorized connection from',
-                'connect (file descriptor'
-            )
-            return any(marker in lowered for marker in noise_markers)
-
-        def _is_generic_proxy_noise(message: str) -> bool:
-            """Detect noisy tinyproxy parser lines that are usually not actionable."""
-            if not message:
-                return False
-            lowered = message.lower()
-            generic_noise_markers = (
-                'could not retrieve request entity',
-                'error reading readable client_fd'
-            )
-            return any(marker in lowered for marker in generic_noise_markers)
-        
-        if not is_windows:
-            # Query the relevant services and fall back to explicit unit suffixes.
-            services = [
-                ('proxypermit.service', 'manager'),
-                ('proxypermit', 'manager'),
-                ('tinyproxy.service', 'tinyproxy'),
-                ('tinyproxy', 'tinyproxy'),
-                ('keepalived.service', 'keepalived'),
-                ('keepalived', 'keepalived')
-            ]
-
-            # Limit single-service queries to matching labels.
-            if service_filter == 'all':
-                allowed_labels_to_scan = {'manager', 'tinyproxy', 'keepalived'}
-            elif service_filter == 'proxy_traffic':
-                # Proxy traffic entries are only discoverable by parsing tinyproxy logs
-                allowed_labels_to_scan = {'tinyproxy', 'proxy_traffic'}
-            else:
-                allowed_labels_to_scan = {service_filter}
-
-            # When requesting audit logs, also scan the manager logs
-            # since `AUTH_AUDIT` messages are often emitted by the manager
-            # logger; additionally we'll try to read the dedicated audit.log
-            # file below if present.
-            if service_filter == 'audit':
-                allowed_labels_to_scan.add('manager')
-
-            seen_services = set()
-
-            for service_name, service_label in services:
-                # Skip labels we don't need to scan for this request
-                if service_label not in allowed_labels_to_scan:
-                    continue
-
-                # Skip labels already collected.
-                if service_label in seen_services:
-                    continue
-
-                try:
-                    # Get logs from journalctl - JSON format is beter parseable
-                    # Cap per-source fetch size; manager logs can be large so limit them.
-                    per_label_limit = LOG_API_MAX_PER_SOURCE_LIMIT
-                    if service_label == 'manager':
-                        per_label_limit = min(LOG_API_MAX_PER_SOURCE_LIMIT, LOG_API_MANAGER_PER_SOURCE_LIMIT)
-                    if service_filter == 'all':
-                        per_service_lines = min(max(scan_limit // 3, 500), per_label_limit)
-                    else:
-                        per_service_lines = min(max(scan_limit, 500), per_label_limit)
-                    result = subprocess.run(
-                        ['journalctl', '-u', service_name, '-n', str(per_service_lines), '--no-pager', '-o', 'short'],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-
-                    if result.returncode == 0 and result.stdout.strip():
-                        seen_services.add(service_label)  # Mark the service as collected.
-                        for line in result.stdout.strip().split('\n'):
-                            if line and len(line) > 20:
-                                try:
-                                    timestamp, message = _parse_short_log_line(line)
-                                    if not timestamp:
-                                        continue
-
-                                    # Skip noisy internal polling requests unless explicitly requested.
-                                    if not include_internal and service_label == 'manager':
-                                        if any(marker in message for marker in noisy_manager_markers):
-                                            continue
-                                        if any(marker in message for marker in noisy_manager_warning_markers):
-                                            continue
-
-                                    if service_label == 'manager':
-                                        level, normalized_message = _normalize_manager_message(message)
-                                        _append_log(timestamp, level, service_label, normalized_message[:200])
-                                    else:
-                                        # For tinyproxy journal entries, try to classify traffic lines
-                                        if service_label == 'tinyproxy':
-                                            lowered = (message or '').lower()
-                                            traffic_markers = (
-                                                'request (file descriptor',
-                                                'connect (file descriptor',
-                                                'opensock:',
-                                                'established connection to host',
-                                                'closed connection between local client',
-                                                'not sending client headers to remote machine',
-                                                'no upstream proxy',
-                                                'proxying refused on filtered domain',
-                                                'could not retrieve request entity',
-                                                'unauthorized connection from',
-                                                'error reading readable client_fd'
-                                            )
-                                            if any(marker in lowered for marker in traffic_markers):
-                                                _append_log(timestamp, _detect_level(message), 'proxy_traffic', message[:200])
-                                            else:
-                                                _append_log(timestamp, _detect_level(message), service_label, message[:200])
-                                        else:
-                                            _append_log(timestamp, _detect_level(message), service_label, message[:200])
-                                except Exception:
-                                    pass
-                except Exception as e:
-                    logger.warning(f"Could not read logs for {service_name}: {e}")
-
-            # Some distributions tag these logs by SYSLOG_IDENTIFIER.
-            fallback_tags = {
-                'tinyproxy': ['tinyproxy'],
-                'keepalived': ['keepalived', 'Keepalived', 'Keepalived_vrrp', 'keepalived_script']
-            }
-
-            for service_label, tags in fallback_tags.items():
-                # Skip labels we don't need to scan
-                if service_label not in allowed_labels_to_scan:
-                    continue
-
-                if service_label in seen_services:
-                    continue
-
-                for tag in tags:
-                    try:
-                        if service_filter == 'all':
-                            per_tag_lines = min(max(scan_limit // 3, 300), LOG_API_MAX_PER_SOURCE_LIMIT)
-                        else:
-                            per_tag_lines = min(max(scan_limit, 300), LOG_API_MAX_PER_SOURCE_LIMIT)
-                        result = subprocess.run(
-                            ['journalctl', '-t', tag, '-n', str(per_tag_lines), '--no-pager', '-o', 'short'],
-                            capture_output=True,
-                            text=True,
-                            timeout=5
-                        )
-
-                        if result.returncode == 0 and result.stdout.strip():
-                            seen_services.add(service_label)
-                            for line in result.stdout.strip().split('\n'):
-                                if line and len(line) > 20:
-                                    try:
-                                        timestamp, message = _parse_short_log_line(line)
-                                        if not timestamp:
-                                            continue
-                                        if service_label == 'manager':
-                                            level, normalized_message = _normalize_manager_message(message)
-                                            _append_log(timestamp, level, service_label, normalized_message[:200])
-                                        else:
-                                            # Classify tinyproxy journal lines for traffic if applicable
-                                            if service_label == 'tinyproxy':
-                                                lowered = (message or '').lower()
-                                                traffic_markers = (
-                                                    'request (file descriptor',
-                                                    'connect (file descriptor',
-                                                    'opensock:',
-                                                    'established connection to host',
-                                                    'closed connection between local client',
-                                                    'not sending client headers to remote machine',
-                                                    'no upstream proxy',
-                                                    'proxying refused on filtered domain',
-                                                    'could not retrieve request entity',
-                                                    'unauthorized connection from',
-                                                    'error reading readable client_fd'
-                                                )
-                                                if any(marker in lowered for marker in traffic_markers):
-                                                    _append_log(timestamp, _detect_level(message), 'proxy_traffic', message[:200])
-                                                else:
-                                                    _append_log(timestamp, _detect_level(message), service_label, message[:200])
-                                            else:
-                                                _append_log(timestamp, _detect_level(message), service_label, message[:200])
-                                    except Exception:
-                                        pass
-                            break
-                    except Exception as e:
-                        logger.warning(f"Could not read fallback logs for tag {tag}: {e}")
-
-            # Check syslog and messages as a fallback.
-            file_fallback_markers = {
-                'keepalived': ('keepalived',),
-                'tinyproxy': ('tinyproxy',)
-            }
-
-            for service_label, markers in file_fallback_markers.items():
-                # Skip labels we don't need to scan
-                if service_label not in allowed_labels_to_scan:
-                    continue
-
-                if service_label in seen_services:
-                    continue
-
-                for source_file in ['/var/log/syslog', '/var/log/messages']:
-                    try:
-                        if not os.path.exists(source_file):
-                            continue
-
-                        result = subprocess.run(
-                            ['tail', '-n', str(min(max(scan_limit, 400), LOG_API_MAX_PER_SOURCE_LIMIT)), source_file],
-                            capture_output=True,
-                            text=True,
-                            timeout=5
-                        )
-
-                        if result.returncode != 0 or not result.stdout.strip():
-                            continue
-
-                        matched_any = False
-                        for line in result.stdout.strip().split('\n'):
-                            if not line or len(line) < 20:
-                                continue
-                            lowered_line = line.lower()
-                            if not any(marker in lowered_line for marker in markers):
-                                continue
-
-                            timestamp, message = _parse_short_log_line(line)
-                            if not timestamp:
-                                continue
-
-                            _append_log(
-                                timestamp,
-                                _detect_level(message),
-                                service_label,
-                                f"[file:{os.path.basename(source_file)}] {message[:200]}"
-                            )
-                            matched_any = True
-
-                        if matched_any:
-                            seen_services.add(service_label)
-                            break
-                    except Exception as e:
-                        logger.warning(f"Could not read {service_label} file fallback {source_file}: {e}")
-
-            # Read Tinyproxy file logs for installations that use them.
-            try:
-                # Read the file only for Tinyproxy or proxy traffic queries.
-                if any(lbl in allowed_labels_to_scan for lbl in ('tinyproxy', 'proxy_traffic')) and os.path.exists(TINYPROXY_LOGFILE):
-                    tail_count = str(min(max(scan_limit, 200), LOG_API_MAX_PER_SOURCE_LIMIT))
-                    result = subprocess.run(
-                        ['tail', '-n', tail_count, TINYPROXY_LOGFILE],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-
-                    if result.returncode == 0 and result.stdout.strip():
-                        for raw_line in result.stdout.strip().split('\n'):
-                            line = raw_line.strip()
-                            if not line:
-                                continue
-
-                            # Tinyproxy formaat voorbeeld:
-                            # NOTICE   Mar 16 11:36:35.157 [127908]: Unauthorized connection...
-                            tinyproxy_pattern = re.compile(
-                                r'^\s*(CRITICAL|ERROR|WARNING|NOTICE|CONNECT|INFO)\s+'
-                                r'([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+'
-                                r'\[(\d+)\]:\s*(.*)$'
-                            )
-                            match = tinyproxy_pattern.match(line)
-
-                            level = 'INFO'
-                            timestamp = ''
-                            message = line
-
-                            if match:
-                                level_token = match.group(1).upper()
-                                timestamp = match.group(2)
-                                pid = match.group(3)
-                                body = match.group(4)
-                                message = f"[{pid}] {body}"
-                            else:
-                                # Fallback parser die meerdere spaties tussen velden netjes afhandelt
-                                parts = line.split(None, 4)
-                                if len(parts) >= 5:
-                                    level_token = parts[0].upper()
-                                    timestamp = ' '.join(parts[1:4])
-                                    message = parts[4]
-                                else:
-                                    level_token = 'INFO'
-
-                            if level_token in ('CRITICAL', 'ERROR', 'WARNING', 'NOTICE', 'CONNECT', 'INFO'):
-                                if level_token == 'CRITICAL':
-                                    level = 'ERROR'
-                                elif level_token == 'NOTICE' or level_token == 'CONNECT':
-                                    level = 'INFO'
-                                else:
-                                    level = level_token
-
-                            traffic_markers = (
-                                'request (file descriptor',
-                                'connect (file descriptor',
-                                'opensock:',
-                                'established connection to host',
-                                'closed connection between local client',
-                                'not sending client headers to remote machine',
-                                'no upstream proxy',
-                                'proxying refused on filtered domain',
-                                'could not retrieve request entity',
-                                'unauthorized connection from',
-                                'error reading readable client_fd'
-                            )
-                            normalized_message = message.lower()
-                            target_service = 'proxy_traffic' if any(marker in normalized_message for marker in traffic_markers) else 'tinyproxy'
-
-                            # Suppress known loopback probe noise unless explicitly requested.
-                            if not include_internal and target_service == 'proxy_traffic' and _is_loopback_proxy_noise(message):
-                                continue
-
-                            # Suppress generic parser noise unless explicitly requested.
-                            if not include_internal and target_service == 'proxy_traffic' and _is_generic_proxy_noise(message):
-                                continue
-
-                            _append_log(timestamp, level, target_service, f"[file] {message[:200]}")
-            except Exception as e:
-                logger.warning(f"Could not read tinyproxy logfile {TINYPROXY_LOGFILE}: {e}")
-        else:
-            # Windows: mock logs
-            _append_log('2026-02-06 13:00:00', 'INFO', 'manager', 'Logs are unavailable in Windows test mode.')
-
-        # Try to read dedicated `audit.log` file (written by the app audit logger) when requested.
-        try:
-            audit_paths = []
-            for h in getattr(audit_logger, 'handlers', []) or []:
-                base = getattr(h, 'baseFilename', None)
-                if base and os.path.exists(base):
-                    audit_paths.append(base)
-
-            # Fallback locations (cwd and project root)
-            if not audit_paths:
-                candidate_paths = [
-                    os.path.join(os.getcwd(), 'audit.log'),
-                    os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'audit.log'))
-                ]
-                for p in candidate_paths:
-                    if os.path.exists(p):
-                        audit_paths.append(p)
-
-            # Only read audit logfile when audit service was requested or when scanning all
-            if audit_paths and (service_filter == 'audit' or service_filter == 'all' or 'audit' in allowed_labels_to_scan):
-                per_audit_lines = min(max(scan_limit, 500), LOG_API_MAX_PER_SOURCE_LIMIT)
-                for audit_file in audit_paths:
-                    try:
-                        # Read the last N lines efficiently
-                        with open(audit_file, 'rb') as f:
-                            try:
-                                f.seek(0, os.SEEK_END)
-                                filesize = f.tell()
-                                blocksize = 1024
-                                data = b''
-                                lines = []
-                                read_pos = filesize
-                                while read_pos > 0 and len(lines) <= per_audit_lines:
-                                    read_size = min(blocksize, read_pos)
-                                    f.seek(read_pos - read_size)
-                                    chunk = f.read(read_size)
-                                    data = chunk + data
-                                    lines = data.splitlines()
-                                    read_pos -= read_size
-                                    if read_pos <= 0:
-                                        break
-                                tail = [ln.decode('utf-8', errors='replace') for ln in lines[-per_audit_lines:]]
-                            except Exception:
-                                f.seek(0)
-                                tail = [ln.decode('utf-8', errors='replace') for ln in f.read().splitlines()[-per_audit_lines:]]
-                        for line in tail:
-                            if not line or len(line) < 5:
-                                continue
-                            line_text = line.strip()
-                            ts = ''
-                            lvl = 'INFO'
-                            msg = line_text
-                            audit = None
-
-                            # Try JSON structured line first (our new format)
-                            try:
-                                parsed = json.loads(line_text)
-                                if isinstance(parsed, dict):
-                                    ts = parsed.get('timestamp') or parsed.get('time') or parsed.get('ts') or ''
-                                    lvl = str(parsed.get('level') or parsed.get('lvl') or parsed.get('levelname') or 'INFO').upper()
-                                    if isinstance(parsed.get('event'), str) and isinstance(parsed.get('username'), str):
-                                        audit = {key: parsed[key] for key in ('event', 'username')}
-                                    if parsed.get('message'):
-                                        msg = str(parsed.get('message'))
-                                    else:
-                                        # Fallback to compose a readable message from keys
-                                        if 'event' in parsed:
-                                            event = parsed.get('event')
-                                            rest = ', '.join(f"{k}={parsed[k]}" for k in sorted(parsed.keys()) if k not in ('event','timestamp','level','message'))
-                                            msg = f"{event} {rest}" if rest else str(event)
-                                        else:
-                                            msg = json.dumps(parsed, ensure_ascii=False)
-                            except Exception:
-                                # Not JSON — try legacy "TIMESTAMP LEVEL MESSAGE" pattern
-                                m = re.match(r'^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d+)?)\s+(\w+)\s+(.*)$', line_text)
-                                if m:
-                                    ts = m.group(1)
-                                    lvl = m.group(2).upper()
-                                    msg = m.group(3)
-
-                            if audit:
-                                audit['message'] = msg[:4096]
-                            _append_log(ts, lvl, 'audit', (msg or '')[:200], audit)
-                    except Exception as e:
-                        logger.warning(f"Could not read audit logfile {audit_file}: {e}")
-        except Exception:
-            pass
-
-        # Enrich proxy traffic metadata with per-connection context.
-        try:
-            _enrich_proxy_traffic_context(logs)
-        except Exception:
-            pass
-
-        # Deduplicate identical log entries (e.g., same message present in
-        # both journalctl output and the dedicated audit.log) to avoid
-        # duplicate lines in the UI.
-        try:
-            def _timestamp_preference(ts_value: str) -> int:
-                raw_ts = (ts_value or '').strip()
-                if not raw_ts:
-                    return 0
-                if 'T' in raw_ts:
-                    return 3
-                if re.match(r'^\d{4}-\d{2}-\d{2}', raw_ts):
-                    return 2
-                if re.match(r'^[A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}', raw_ts):
-                    return 1
-                return 0
-
-            seen_signatures: Dict[Tuple[str, str, str, str], int] = {}
-            unique_logs = []
-            for entry in logs:
-                ts_raw = str(entry.get('timestamp') or '').strip()
-                lvl = str(entry.get('level') or '').strip()
-                svc = str(entry.get('service') or '').strip()
-                msg = str(entry.get('message') or '').strip()
-
-                # Try to normalize timestamp to second-resolution for dedupe.
-                ts_key = None
-                if ts_raw:
-                    parsed_ts = None
-                    try:
-                        parsed_ts = _parse_log_timestamp(ts_raw)
-                    except Exception:
-                        parsed_ts = None
-                    if not parsed_ts:
-                        try:
-                            # Handle ISO timestamps like 2026-03-30T16:07:00Z
-                            parsed_ts = datetime.fromisoformat(ts_raw.replace('Z', ''))
-                        except Exception:
-                            parsed_ts = None
-
-                    if parsed_ts:
-                        try:
-                            parsed_ts = parsed_ts.replace(microsecond=0)
-                            ts_key = parsed_ts.isoformat()
-                        except Exception:
-                            ts_key = None
-
-                # Only dedupe when we have a normalized timestamp (same-second).
-                if ts_key:
-                    sig = (ts_key, lvl, svc, msg)
-                    if sig in seen_signatures:
-                        existing_idx = seen_signatures[sig]
-                        existing = unique_logs[existing_idx]
-                        if ('audit' in entry, _timestamp_preference(ts_raw)) > (
-                            'audit' in existing, _timestamp_preference(str(existing.get('timestamp') or ''))
-                        ):
-                            unique_logs[existing_idx] = entry
-                        continue
-                    seen_signatures[sig] = len(unique_logs)
-                    unique_logs.append(entry)
-                else:
-                    # No reliable timestamp — keep the entry to avoid over-aggressive dedupe.
-                    unique_logs.append(entry)
-
-            logs = unique_logs
-        except Exception:
-            pass
-
-        for entry in logs:
-            if 'audit' in entry:
-                entry['message'] = entry['audit'].pop('message')
-
-        # Sort logs reverse (newest first) using parsed datetime instead of raw text.
-        logs.sort(
-            key=lambda x: (_parse_log_timestamp(x.get('timestamp', '')) or datetime.min, x.get('_seq', -1)),
-            reverse=True
-        )
-
-        filtered_logs = logs
-        if query:
-            def _matches_query(entry: Dict[str, Any]) -> bool:
-                message = str(entry.get('message') or '').lower()
-                level = str(entry.get('level') or '').lower()
-                service = str(entry.get('service') or '').lower()
-                timestamp = str(entry.get('timestamp') or '').lower()
-                meta = entry.get('meta') or {}
-                meta_text = ' '.join(str(v).lower() for v in meta.values() if v is not None)
-                return (
-                    query in message
-                    or query in level
-                    or query in service
-                    or query in timestamp
-                    or (query in meta_text)
-                )
-
-            filtered_logs = [entry for entry in logs if _matches_query(entry)]
-
-        total_count = len(filtered_logs)
-        if limit > 0:
-            final_logs = filtered_logs[offset:offset + limit]
-        else:
-            final_logs = filtered_logs[offset:]
-        has_more = (offset + len(final_logs)) < total_count
-
-        for log in final_logs:
-            log.pop('_seq', None)
-        
-        return jsonify({
-            'success': True,
-            'logs': final_logs,
-            'pagination': {
-                'offset': offset,
-                'limit': limit,
-                'returned': len(final_logs),
-                'total': total_count,
-                'hasMore': has_more,
-                'query': query
-            },
-            'serviceCounts': {
-                'manager': sum(1 for log in filtered_logs if log.get('service') == 'manager'),
-                'tinyproxy': sum(1 for log in filtered_logs if log.get('service') == 'tinyproxy'),
-                'proxy_traffic': sum(1 for log in filtered_logs if log.get('service') == 'proxy_traffic'),
-                'keepalived': sum(1 for log in filtered_logs if log.get('service') == 'keepalived'),
-                'audit': sum(1 for log in filtered_logs if log.get('service') == 'audit')
-            }
-        })
-        
-    except Exception as e:
-        logger.error(f"Error getting logs: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        path = next((getattr(handler, 'baseFilename') for handler in audit_logger.handlers
+                     if getattr(handler, 'baseFilename', None)), AUDIT_LOG_PATH)
+        return jsonify(query_logs(request.args, path))
+    except ValueError as error:
+        return jsonify(success=False, error=str(error)), 400
+    except (OSError, TimeoutError):
+        logger.warning('Log query could not be completed.')
+        return jsonify(success=False, error='Cannot read logs. Check the service configuration.'), 503
 
 
 @app.route('/')
@@ -3392,6 +2460,12 @@ def add_entry():
 def get_status():
     """Return node role, virtual IP ownership, and Tinyproxy status."""
     try:
+        filter_metadata = {'whitelist_mtime': None, 'whitelist_size': None}
+        try:
+            metadata = os.stat(WHITELIST_PATH)
+            filter_metadata.update(whitelist_mtime=metadata.st_mtime, whitelist_size=metadata.st_size)
+        except OSError:
+            pass
         if not ha_enabled():
             import socket
             service = whitelist_manager.get_service_status()
@@ -3401,6 +2475,7 @@ def get_status():
                 'tinyproxy_check_status': service['status'], 'vip_active': False,
                 'vip_address': '', 'peer_address': None, 'peer_online': None,
                 'last_sync': None, 'split_brain_warning': False,
+                **filter_metadata,
             })
         import subprocess
         import sys
@@ -3424,7 +2499,8 @@ def get_status():
                            'MASTER' if owns_vip else 'BACKUP',
                            hostname=socket.gethostname(), tinyproxy_active=service['running'],
                            tinyproxy_check_status=service['status'], vip_active=owns_vip, vip_address=vip,
-                           peer_address=None, peer_online=None, last_sync=None, split_brain_warning=False)
+                           peer_address=None, peer_online=None, last_sync=None, split_brain_warning=False,
+                           **filter_metadata)
         
         status = {
             'configured_role': 'UNKNOWN',
@@ -3437,8 +2513,7 @@ def get_status():
             'peer_online': None,
             'peer_check_method': 'none',
             'last_sync': None,
-            'whitelist_mtime': None,
-            'whitelist_size': None,
+            **filter_metadata,
             'hostname': None,
             'split_brain_warning': False,
             'debug_info': {}
@@ -3722,14 +2797,6 @@ def get_status():
             except:
                 pass
 
-            # Filter metadata used to refresh the console.
-            try:
-                if os_module.path.exists(WHITELIST_PATH):
-                    stat = os_module.stat(WHITELIST_PATH)
-                    status['whitelist_mtime'] = stat.st_mtime
-                    status['whitelist_size'] = stat.st_size
-            except Exception as e:
-                logger.debug(f'Could not read filter metadata: {e}')
                 
         else:
             # Windows test mode

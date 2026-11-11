@@ -14,6 +14,23 @@ spec.loader.exec_module(installer)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_recovery_removes_created_tls_directory_without_deleting_unknown_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tls = root / 'tls'
+            transaction = installer.Transaction(root / 'backup')
+            transaction.track(tls)
+            transaction.track(tls / 'cert.pem')
+            tls.mkdir()
+            (tls / 'cert.pem').write_text('example certificate')
+            transaction.restore()
+            self.assertFalse(tls.exists())
+            tls.mkdir()
+            (tls / 'unknown').write_text('operator file')
+            with self.assertRaises(OSError):
+                transaction.restore()
+            self.assertEqual((tls / 'unknown').read_text(), 'operator file')
+
     @unittest.skipIf(os.name == 'nt', 'The installer manages Linux symlinks and systemd.')
     def test_uninstall_is_scoped_and_can_restore_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:

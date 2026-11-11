@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ _('Privacy en logging') }} · ProxyPermit</title>
+    {% include "_favicon.html" %}
+    <script src="{{ url_for('static', filename='js/theme.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/signin.css', v=app_version) }}">
+</head>
+<body class="signin-page">
+<main class="signin-card privacy-card">
+    <h1>{{ _('Privacy en logging') }}</h1>
+    <p>{{ _('Deze installatie registreert aanmeldingen, beheeracties en technische gebeurtenissen voor toegangsbeveiliging, verantwoording en probleemonderzoek.') }}</p>
+    <p>{{ _('Auditlogs kunnen gebruikersnamen, tijdstippen, acties en beperkte IP-gegevens bevatten. Optionele Tinyproxy-verkeerslogs kunnen clientadressen en bestemmingen bevatten.') }}</p>
+    <p>{{ _('Bewaartermijnen voor beheerde logs:') }}</p>
+    <ul>
+        <li>{{ _('Auditlogs') }}: {{ log_privacy.auditDays }} {{ _('dagen') }}</li>
+        <li>{{ _('Beheerlogs') }}: {{ log_privacy.managementDays }} {{ _('dagen') }}</li>
+        <li>{{ _('Tinyproxy- en verkeerslogs') }}: {{ log_privacy.trafficDays }} {{ _('dagen') }}</li>
+    </ul>
+    <p>{{ _('Schijflimieten kunnen de beschikbare geschiedenis verkorten. Oudere systeemlogs, eigen logbestanden, back-ups en downloads vallen onder het beleid van de beheerder.') }}</p>
+    {% if not log_privacy.managed %}<p>{{ _('Automatische opslagretentie is hier niet door de installer ingesteld. De beheerder moet deze afzonderlijk configureren.') }}</p>{% endif %}
+    <p>{{ _('De organisatie die deze installatie beheert bepaalt het doel, de rechtsgrond en het privacybeleid. Vraag die organisatie naar inzage, verwijdering en andere privacyrechten. Deze melding is geen toestemmingsverzoek.') }}</p>
+    {% if privacy_contact %}<p>{{ _('Privacycontact') }}: {{ privacy_contact }}</p>{% endif %}
+    {% if privacy_policy_url %}<p><a href="{{ privacy_policy_url }}" rel="noopener noreferrer">{{ _('Privacybeleid van de organisatie') }}</a></p>{% endif %}
+    <a href="/">{{ _('Naar de beheerconsole') }}</a>
+</main>
+</body></html>

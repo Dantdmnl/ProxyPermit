@@ -79,9 +79,34 @@ async function main() {
         await page.emulateMedia({ colorScheme: 'dark' });
         assert.equal(await page.locator('.signin-card').evaluate(card => getComputedStyle(card).backgroundColor), 'rgb(25, 36, 44)');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        const signInTheme = page.getByRole('button', { name: 'Dark mode' });
+        assert.equal(await signInTheme.getAttribute('aria-pressed'), 'true');
+        assert.equal(await signInTheme.locator('.theme-sun').isVisible(), true);
+        await page.locator('#loginUsername').fill('admin');
+        await signInTheme.press('Space');
+        assert.equal(await signInTheme.getAttribute('aria-pressed'), 'false');
+        assert.equal(await signInTheme.locator('.theme-moon').isVisible(), true);
+        assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
+        assert.equal(await page.locator('#loginUsername').inputValue(), 'admin');
+        await page.locator('#loginPassword').fill('unsent browser password');
+        const reveal = page.getByRole('button', { name: 'Show password' });
+        await reveal.press('Space');
+        assert.equal(await page.locator('#loginPassword').getAttribute('type'), 'text');
         await page.getByRole('link', { name: 'Nederlands' }).click();
         await page.getByRole('heading', { name: 'Inloggen' }).waitFor();
+        assert.equal(await page.locator('#loginUsername').inputValue(), 'admin');
+        assert.equal(await page.locator('#loginPassword').inputValue(), 'unsent browser password');
+        await page.getByRole('button', { name: 'Wachtwoord tonen' }).click();
+        assert.equal(await page.locator('#loginPassword').getAttribute('type'), 'password');
+        const dutchTheme = page.getByRole('button', { name: 'Donkere modus' });
+        assert.equal(await dutchTheme.getAttribute('aria-pressed'), 'false');
+        await dutchTheme.click();
+        assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
+        await page.evaluate(() => localStorage.removeItem('proxypermit-theme'));
         await page.getByRole('link', { name: 'English' }).click();
+        await page.getByRole('heading', { name: 'Sign in' }).waitFor();
+        assert.equal(await page.locator('#loginPassword').inputValue(), 'unsent browser password');
+        await page.locator('#loginPassword').clear();
         const feedback = page.locator('#loginFeedback');
         await page.locator('#loginButton').click();
         await page.keyboard.press('Enter');
@@ -118,6 +143,32 @@ async function main() {
         await page.locator('#workspace').waitFor();
         assert.equal(loginRequests, 1);
         await checkBrand();
+        const remove = page.locator('.entry-item .button-danger').first();
+        for (const mode of ['light','dark']) {
+            await page.evaluate(value=>{document.documentElement.dataset.theme=value},mode);
+            await remove.hover();
+            const contrast=await remove.evaluate(button=>{
+                const style=getComputedStyle(button);
+                const luminance=color=>{
+                    const values=color.match(/[0-9.]+/g).slice(0,3).map(Number).map(v=>{
+                        v/=255;return v<=0.04045?v/12.92:Math.pow((v+0.055)/1.055,2.4);
+                    });
+                    return values[0]*0.2126+values[1]*0.7152+values[2]*0.0722;
+                };
+                const a=luminance(style.color),b=luminance(style.backgroundColor);
+                return (Math.max(a,b)+0.05)/(Math.min(a,b)+0.05);
+            });
+            assert.ok(contrast>=4.5, `${mode} remove hover contrast: ${contrast}`);
+        }
+        await page.evaluate(()=>{document.documentElement.dataset.theme='light'});
+        await page.mouse.move(0,0);
+        assert.equal(await page.locator('.sidebar').evaluate(sidebar => {
+            const locale = sidebar.querySelector('.locale-switch').getBoundingClientRect();
+            const toggle = sidebar.querySelector('.theme-toggle').getBoundingClientRect();
+            const footer = sidebar.querySelector('.sidebar-footer').getBoundingClientRect();
+            return Math.abs(locale.left - footer.left) < 1 && locale.right < toggle.left &&
+                Math.abs(locale.top + locale.height / 2 - toggle.top - toggle.height / 2) < 1;
+        }), true);
         assert.equal(await page.locator('.header-logo').count(), 0);
         assert.equal(await page.locator('.shell-label').first().evaluate(label => getComputedStyle(label).fontSize), '12px');
         const rulesLink = page.getByRole('link', { name: 'Filter rules' });
@@ -144,17 +195,59 @@ async function main() {
         await page.locator('#submitButton').click();
         await page.locator('#ruleDialog').waitFor({ state: 'hidden' });
         assert.match(readFileSync(filter, 'utf8'), /example/);
+        const rulesStat = page.locator('.stat-card').filter({ has: page.locator('#totalEntries') });
+        await rulesStat.getByText('Filter rule', { exact: true }).waitFor();
+        assert.equal(await page.locator('#totalEntries').textContent(), '1');
+        assert.equal(await page.locator('#regexEntries + .label').textContent(), 'Regex pattern');
+        assert.equal(await page.locator('#commentEntries + .label').textContent(), 'Comment');
+        const savedFilter = readFileSync(filter, 'utf8');
+        await page.locator('button[onclick="refreshStatus()"]').click();
+        writeFileSync(filter, savedFilter + '\n# external comment\n');
+        await page.locator('button[onclick="refreshStatus()"]').click();
+        await page.locator('.stat-card').getByText('Comments', { exact: true }).waitFor();
+        assert.equal(await page.locator('#totalEntries').textContent(), '1');
+        writeFileSync(filter, savedFilter);
+        await page.locator('button[onclick="refreshStatus()"]').click();
+        await page.locator('.stat-card').getByText('Comment', { exact: true }).waitFor();
         await page.getByRole('button', { name: 'Collapse navigation' }).click();
         assert.equal(await page.locator('.sidebar').evaluate(sidebar => {
             const rail = sidebar.getBoundingClientRect();
-            return [...sidebar.querySelectorAll('.shell-brand, .shell-toggle, .shell-nav a')].every(control => {
+            const theme = sidebar.querySelector('.theme-toggle').getBoundingClientRect();
+            return Math.abs(theme.x + theme.width / 2 - rail.x - rail.width / 2) < 1 &&
+                [...sidebar.querySelectorAll('.shell-brand, .shell-toggle, .shell-nav a')].every(control => {
                 const box = control.getBoundingClientRect();
                 return box.width === 40 && box.height === 40 && Math.abs(box.left + box.width / 2 - rail.left - rail.width / 2) < 1;
             });
         }), true);
         await openSettings();
+        await page.route('**/api/settings/ha/network', route => route.fulfill({json:{networks:[
+            {interface:'ens18',address:'192.0.2.11',prefix:24,network:'192.0.2.0/24',dynamic:false,suggestedVip:'192.0.2.10/24'},
+            {interface:'ens19',address:'198.51.100.11',prefix:24,network:'198.51.100.0/24',dynamic:false,suggestedVip:'198.51.100.10/24'},
+            {interface:'enp0s3',address:'10.0.2.15',prefix:24,network:'10.0.2.0/24',dynamic:true,suggestedVip:'10.0.2.10/24'}
+        ]}}));
         await page.getByText('Validate HA settings', { exact: true }).click();
         const haForm = page.locator('#haPreviewForm');
+        await page.locator('#haDetectedNetwork option[value="0"]').waitFor({state:'attached'});
+        await page.locator('#haDetectedNetwork').selectOption('0');
+        assert.equal(await haForm.locator('[name=interface]').inputValue(), 'ens18');
+        assert.equal(await haForm.locator('[name=nodeA]').inputValue(), '192.0.2.11');
+        assert.equal(await haForm.locator('[name=clients]').inputValue(), '192.0.2.0/24');
+        assert.equal(await haForm.locator('[name=vip]').inputValue(), '192.0.2.10/24');
+        await haForm.locator('[name=clients]').fill('192.0.2.128/25');
+        await page.locator('#haDetectedNetwork').selectOption('1');
+        assert.equal(await haForm.locator('[name=clients]').inputValue(), '192.0.2.128/25');
+        await page.locator('#haDetectedNetwork').selectOption('0');
+        await page.locator('#haDetectedNetwork').selectOption('2');
+        assert.equal(await haForm.locator('[name=vip]').inputValue(), '');
+        assert.equal(await haForm.getByRole('button', {name:'Validate HA plan'}).isDisabled(), true);
+        await page.locator('#haDetectedNetwork').selectOption('0');
+        assert.equal(await haForm.getByRole('button', {name:'Validate HA plan'}).isDisabled(), false);
+        assert.equal(await haForm.evaluate(form => {
+            for (const [left,right] of [['node','interface'],['nodeA','nodeB'],['vip','clients']]) {
+                if (Math.abs(form.elements[left].getBoundingClientRect().top-form.elements[right].getBoundingClientRect().top)>1) return false;
+            }
+            return true;
+        }), true);
         await haForm.getByLabel('Node', { exact: true }).selectOption('b');
         await haForm.getByLabel('Network interface').fill('ens18');
         await haForm.getByLabel('IPv4 address of node A').fill('192.0.2.11');
@@ -177,6 +270,16 @@ async function main() {
         await theme.selectOption('light');
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
         await theme.selectOption('dark');
+        const shellTheme = page.getByRole('button', { name: 'Dark mode' });
+        await shellTheme.click();
+        assert.equal(await theme.inputValue(), 'light');
+        await shellTheme.click();
+        assert.equal(await theme.inputValue(), 'dark');
+        const settingsUrl = page.url();
+        await page.getByRole('link', { name: 'Live logs' }).click();
+        await page.locator('#loggingModal').waitFor();
+        await page.keyboard.press('Escape');
+        assert.equal(page.url(), settingsUrl);
         await page.getByRole('link', { name: 'Proxy configuration' }).click();
         await checkBrand();
         assert.equal(await page.locator('html').getAttribute('data-theme'), 'dark');
@@ -194,8 +297,10 @@ async function main() {
             assert.deepEqual(layout.overflow, []);
             assert.ok(layout.inset >= 10 && layout.closeWidth >= 36 && layout.closeHeight >= 36, JSON.stringify(layout));
         }
+        const proxyUrl = page.url();
         await logsLink.click();
         await page.locator('#loggingModal .modal-header h3').waitFor();
+        assert.equal(page.url(), proxyUrl);
         await checkDialogLayout(page.locator('#loggingModal'));
         const lowContrastTitles = await page.locator('.modal-header h3, .rule-dialog-header h2').evaluateAll(headings => {
             function luminance(color) {
@@ -263,7 +368,7 @@ async function main() {
         await logs.locator('#autoRefreshBtn').click();
         logFailure = true;
         await logs.getByRole('button', { name: 'Refresh now' }).click();
-        await logs.getByText('Could not load logs. Try again.').waitFor();
+        await logs.getByText('Fixture log failure').waitFor();
         assert.equal(await logs.locator('.log-row').count(), 1);
         logFailure = false;
         await logs.getByRole('button', { name: 'Refresh now' }).click();
@@ -275,18 +380,34 @@ async function main() {
         await logs.getByText('FLAGS is unset').waitFor();
         await logs.getByText('Filter rule added by admin').click();
         await logs.getByText('AUDIT event=whitelist_add, username=admin').waitFor();
+        await logs.locator('.log-period > summary').click();
+        await logs.locator('#logSince').fill('2026-11-10T10:00:00');
+        await logs.locator('#logUntil').fill('2026-11-10T11:00:00');
+        const datedRequest=page.waitForRequest(request=>request.url().includes('/api/logs?') && request.url().includes('since='));
+        await logs.getByRole('button',{name:'Apply date range'}).click();
+        const range=new URL((await datedRequest).url());
+        assert.match(range.searchParams.get('since'), /Z$/);
+        assert.match(range.searchParams.get('until'), /Z$/);
+        assert.equal(await logs.locator('#autoRefreshBtn').isDisabled(), true);
+        await logs.locator('#logClearPeriod').click();
+        assert.equal(await logs.locator('#logSince').inputValue(),'');
+        assert.equal(await logs.locator('#logUntil').inputValue(),'');
+        await logs.locator('.log-period > summary').click();
+
         await page.setViewportSize({ width: 390, height: 700 });
         await checkDialogLayout(logs);
         assert.ok(await logs.locator('#logContainer').evaluate(pane => pane.clientHeight >= 100 && pane.scrollWidth <= pane.clientWidth));
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.keyboard.press('Escape');
         await logs.waitFor({ state: 'hidden' });
+        assert.equal(page.url(), proxyUrl);
         await page.unroute(logEndpoint);
         const auditResponse = await page.request.get(base + '/api/logs?service=audit&q=whitelist_add');
         assert.equal(auditResponse.status(), 200);
         const auditLogs = (await auditResponse.json()).logs;
         assert.ok(auditLogs.some(log => log.audit?.event === 'whitelist_add' && log.audit.username === 'admin' &&
             log.message.includes('event=whitelist_add')));
+        await page.getByRole('link', { name: 'Overview', exact: true }).click();
         await page.getByRole('button', { name: 'New rule' }).click();
         assert.equal(await page.locator('#ruleDialog').evaluate(dialog => getComputedStyle(dialog).backgroundColor), 'rgb(25, 36, 44)');
         await page.keyboard.press('Escape');
@@ -367,6 +488,19 @@ async function main() {
         assert.equal((await other.request.get(base + '/api/config')).status(), 401);
         await page.setViewportSize({ width: 390, height: 700 });
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        const mobileNav = page.locator('.sidebar');
+        const mobileNavToggle = mobileNav.locator('.shell-toggle');
+        assert.equal(await mobileNavToggle.getAttribute('aria-expanded'), 'false');
+        const collapsedHeight = (await mobileNav.boundingBox()).height;
+        assert.equal(await mobileNav.evaluate(sidebar => {
+            const navigation = sidebar.querySelector('.shell-toggle').getBoundingClientRect();
+            const theme = sidebar.querySelector('.theme-toggle').getBoundingClientRect();
+            return Math.abs(navigation.top - theme.top) < 1 && navigation.right < theme.left;
+        }), true);
+        await mobileNavToggle.click();
+        assert.equal(await mobileNav.locator('.locale-switch').isVisible(), true);
+        await mobileNavToggle.click();
+        assert.equal((await mobileNav.boundingBox()).height, collapsedHeight);
         await page.getByRole('button', { name: 'Set up 2FA' }).click();
         await page.locator('#currentAccountPassword').fill(password);
         await page.locator('#accountSubmit').click();
@@ -388,6 +522,15 @@ async function main() {
         await signin.locator('#loginButton').click();
         await signin.locator('#loginOtp').waitFor();
         assert.equal(await signin.evaluate(() => document.activeElement.id), 'loginOtp');
+        await signin.locator('#loginOtp').evaluate(input => {
+            const clipboardData = new DataTransfer();
+            clipboardData.setData('text/plain', '123 456');
+            input.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+        });
+        assert.equal(await signin.locator('#loginOtp').inputValue(), '123456');
+        assert.deepEqual(await signin.locator('.signin-code-cells span').allTextContents(), ['1', '2', '3', '4', '5', '6']);
+        await signin.keyboard.press('ArrowLeft');
+        assert.equal(await signin.locator('.signin-code-cells [data-current]').count(), 1);
         await signin.locator('#loginOtp').fill(code);
         await signin.locator('#loginButton').click();
         await signin.locator('#loginFeedback').filter({ hasText: /.+/ }).waitFor();

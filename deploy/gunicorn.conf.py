@@ -55,11 +55,11 @@ timeout = 120
 keepalive = 2
 
 # Logging
-accesslog = "-"
+accesslog = "-" if os.getenv("HTTP_ACCESS_LOGS", "false").lower() == "true" else None
 errorlog = "-"
 loglevel = os.getenv('GUNICORN_LOGLEVEL', 'info')
 # AVG/GDPR: Geen IP adressen in access logs
-access_log_format = '%(t)s "%(r)s" %(s)s %(b)s'
+access_log_format = '%(t)s "%(m)s %(U)s" %(s)s %(b)s'
 
 # Process naming
 proc_name = "proxypermit"

@@ -22,7 +22,7 @@
             <svg class="shell-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h15m-4-4 4 4-4 4m5 4H5m4-4-4 4 4 4"/></svg>
             <span class="shell-label">{{ _('Proxyconfiguratie') }}</span>
         </a>
-        <a href="/#live-logs" aria-label="{{ _('Live logs') }}" title="{{ _('Live logs') }}">
+        <a href="#live-logs" data-open-live-logs aria-haspopup="dialog" aria-controls="loggingModal" aria-label="{{ _('Live logs') }}" title="{{ _('Live logs') }}">
             <svg class="shell-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>
             <span class="shell-label">{{ _('Live logs') }}</span>
         </a>
@@ -31,10 +31,15 @@
             <span class="shell-label">{{ _('Instellingen') }}</span>
         </a>
     </nav>
-    <div class="locale-switch" aria-label="{{ _('Taal') }}">
-        <a href="{{ request.path }}?lang=nl" lang="nl" {% if locale == 'nl' %}aria-current="true"{% endif %}>{{ _('NL') }}</a>
-        <a href="{{ request.path }}?lang=en" lang="en" {% if locale == 'en' %}aria-current="true"{% endif %}>{{ _('EN') }}</a>
+    <div class="shell-utilities">
+        <div class="locale-switch" aria-label="{{ _('Taal') }}">
+            <a href="{{ request.path }}?lang=nl" lang="nl" {% if locale == 'nl' %}aria-current="true"{% endif %}>{{ _('NL') }}</a>
+            <a href="{{ request.path }}?lang=en" lang="en" {% if locale == 'en' %}aria-current="true"{% endif %}>{{ _('EN') }}</a>
+        </div>
+        {% include "_theme_toggle.html" %}
     </div>
-    <p class="sidebar-footer">ProxyPermit {{ app_version }} · {{ _('Control Center') }}</p>
+    <p class="sidebar-footer">ProxyPermit {{ app_version }}</p>
 </aside>
 <script src="{{ url_for('static', filename='js/shell.js', v=app_version) }}"></script>
+{% include "_live_logs.html" %}
+<script defer src="{{ url_for('static', filename='js/live-logs.js', v=app_version) }}"></script>

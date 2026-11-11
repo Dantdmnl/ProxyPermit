@@ -15,10 +15,12 @@ use an individual account with optional two-factor authentication (2FA).
 | Upgrade, migrate, or recover | [Upgrade, migration, and recovery](installation.md#upgrade-migration-and-recovery) |
 | Remove the management console | [Remove the management console](installation.md#remove-the-management-console) |
 | Commission or troubleshoot a deployment | [Administrator guide](administration.md) |
+| Test installation, recovery, or HA failover | [VM test lab](vm-lab.md) |
 
 ## Technical reference
 
 - [Architecture and HA](architecture.md) for components and design decisions.
+- [Logging and retention](logging.md) for search, privacy notices, and enforced retention.
 - [Verification report](verification.md) for test results and outstanding checks.
 - [Project layout](layout.md) for the source tree, development setup, and tests.
 - [Versions, releases, and CI](releases.md) for local checks and release preparation.
