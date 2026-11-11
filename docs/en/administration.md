@@ -111,3 +111,11 @@ recovery.
 - The WSL lab verified virtual IP failover. Validate installation, host loss,
   network partitions, and recovery on the separate hosts you intend to use.
   [Verification report](verification.md)
+
+## Connection loss
+
+Every loaded page checks whether the management console is reachable. A connection notice distinguishes a browser without a network connection from an unavailable console. It also appears above open dialogs, supports light and dark themes, and checks again every five seconds during an outage. This check does not inspect Tinyproxy or the HA peer.
+
+Your inputs and open dialogs remain on the current page. Navigation and new write requests are held while the console is unavailable. Recovery does not reload the page or repeat actions. If a write response was lost, check the current rules or settings before repeating the action: the server may already have applied it. Existing revision checks still protect concurrent changes.
+
+Keep the tab open to retain unsaved input. This is connection recovery for an already loaded page, not offline administration. Opening or reloading a page still needs the server; credentials and management data are not stored in an offline cache.

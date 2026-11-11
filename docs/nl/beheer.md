@@ -122,3 +122,11 @@ kunt inloggen en of het proxyverkeer werkt.
 - De HA-proef bevestigt VIP-failover in het WSL-lab. Valideer de volledige
   installatie, hostuitval, netwerkpartitionering en herstel op de beoogde
   afzonderlijke hosts. [Uitgevoerde tests](verification.md)
+
+## Verbindingsverlies
+
+Elke geopende pagina controleert of de beheerconsole bereikbaar is. De verbindingsmelding maakt onderscheid tussen een browser zonder netwerkverbinding en een onbereikbare console. De melding verschijnt ook boven open dialoogvensters, ondersteunt beide thema’s en probeert tijdens een storing iedere vijf seconden opnieuw verbinding te maken. Deze controle zegt niets over Tinyproxy of de HA-peer.
+
+Je invoer en open dialoogvensters blijven op de huidige pagina staan. Navigeren en nieuwe schrijfverzoeken worden tegengehouden zolang de console onbereikbaar is. Bij herstel wordt de pagina niet herladen en worden acties niet herhaald. Als het antwoord op een schrijfverzoek verloren ging, controleer dan de actuele regels of instellingen voordat je de actie herhaalt: de server kan die al verwerkt hebben. De bestaande revisiecontroles blijven gelijktijdige wijzigingen bewaken.
+
+Houd het tabblad open om niet-opgeslagen invoer te behouden. Dit herstelt de verbinding voor een al geopende pagina; het biedt geen offline beheer. Een pagina openen of herladen vereist nog steeds een bereikbare server. Inloggegevens en beheergegevens worden niet in een offline cache opgeslagen.

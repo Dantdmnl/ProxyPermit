@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/console.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/signin.css', v=app_version) }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
 <body class="signin-page">
 <main class="signin-card privacy-card">
@@ -27,4 +29,5 @@
     {% if privacy_policy_url %}<p><a href="{{ privacy_policy_url }}" rel="noopener noreferrer">{{ _('Privacybeleid van de organisatie') }}</a></p>{% endif %}
     <a href="/">{{ _('Naar de beheerconsole') }}</a>
 </main>
+    {% include "_connectivity.html" %}
 </body></html>

@@ -128,11 +128,9 @@ let autoScrollInterval = null;
 let searchQuery = '';
 let loadEntriesTimer = null;
 let isLoadingEntries = false;
-let networkOnline = navigator.onLine;
 let consecutiveFailures = 0;
 let manualSyncPollTimer = null;
 let isAuthenticated = !authEnabled;
-let vipFailoverAttempted = false;
 let lastWhitelistMtime;
 
 // Init
@@ -160,12 +158,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 8000);
     }
 
-    // Network status monitoring
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    // Initial network check
-    updateNetworkStatus();
 });
 
 async function startAuthenticatedSession() {
@@ -178,43 +170,6 @@ async function startAuthenticatedSession() {
     loadEntries();
     refreshStatus();
     initManualSyncStatus();
-}
-
-// Network status handlers
-function handleOnline() {
-    networkOnline = true;
-    consecutiveFailures = 0;
-    updateNetworkStatus();
-    showToast('success', I18n.t('Verbinding hersteld'), I18n.t('Je bent weer online'));
-    // Reload data
-    loadEntriesDebounced(500);
-    refreshStatus();
-}
-
-function handleOffline() {
-    networkOnline = false;
-    updateNetworkStatus();
-    showToast('warning', I18n.t('Geen verbinding'), I18n.t('Je bent offline. Sommige functies werken niet.'));
-}
-
-function updateNetworkStatus() {
-    const statusEl = document.getElementById('connectionStatus');
-    const dotEl = document.getElementById('connectionDot');
-    const textEl = document.getElementById('connectionText');
-
-    if (!networkOnline) {
-        statusEl.style.display = 'flex';
-        dotEl.style.background = '#dc3545';
-        textEl.style.color = '#dc3545';
-        textEl.textContent = 'Offline';
-    } else if (consecutiveFailures >= 3) {
-        statusEl.style.display = 'flex';
-        dotEl.style.background = '#ffc107';
-        textEl.style.color = '#ffc107';
-        textEl.textContent = I18n.t('Verbindingsproblemen');
-    } else {
-        statusEl.style.display = 'none';
-    }
 }
 
 async function getAuthTransferToken() {
@@ -1487,7 +1442,6 @@ async function loadEntries() {
 
             // Reset failure counter on success
             consecutiveFailures = 0;
-            updateNetworkStatus();
 
             // Clear error indicator als die er zou zijn
             const alertContainer = document.getElementById('alertContainer');
@@ -1496,14 +1450,14 @@ async function loadEntries() {
             }
         } else {
             consecutiveFailures++;
-            updateNetworkStatus();
+
             const errorMsg = result.error || (result.data && result.data.error) || I18n.t('Onbekende fout');
             console.error('[Entries Load Error]', result);
             showAlert('danger', I18n.msg`Fout bij laden entries: ${errorMsg}. Check authenticatie instellingen in Settings.`);
         }
     } catch (error) {
         consecutiveFailures++;
-        updateNetworkStatus();
+
         handleApiError(error, I18n.t('entries laden'));
         showAlert('danger', I18n.t('Kan entries niet laden. Probeer opnieuw.'));
     } finally {
@@ -2629,6 +2583,8 @@ async function apiRequest(url, options = {}, config = {}) {
         retries = Math.max(4, retries); // Min 4 retries voor directe nodes
     }
 
+    // A lost response may hide a committed write. Never replay mutations.
+    if (!['GET', 'HEAD', 'OPTIONS'].includes((options.method || 'GET').toUpperCase())) retries = 0;
     const retryDelayMs = config.retryDelayMs || 600;
 
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -2662,15 +2618,12 @@ async function apiRequest(url, options = {}, config = {}) {
 
             // Success - reset failure counter
             consecutiveFailures = 0;
-            updateNetworkStatus();
-            hideOfflineScreen();
 
             return { ok: true, status: response.status, data };
         } catch (error) {
             const errorMsg = error.message || error.toString();
 
             if (errorMsg.toLowerCase().includes('authenticatie vereist')) {
-                updateNetworkStatus();
                 return { ok: false, status: 401, data: null };
             }
 
@@ -2692,24 +2645,9 @@ async function apiRequest(url, options = {}, config = {}) {
                         consecutiveFailures,
                         lastError: errorMsg
                     });
-                    if (consecutiveFailures >= 3) {
-                        attemptVipFailover(I18n.t('Directe node niet bereikbaar, probeer VIP'));
-                    }
                 }
             }
 
-            updateNetworkStatus();
-
-            // Show offline screen na 10+ consecutive failures (geef meer retries)
-            if (consecutiveFailures >= 10) {
-                showOfflineScreen();
-                // Auto-retry every 5 seconds
-                if (!window.offlineRetryInterval) {
-                    window.offlineRetryInterval = setInterval(() => {
-                        retryConnection();
-                    }, 5000);
-                }
-            }
 
             // Delay before retry (exponential backoff)
             if (attempt < retries) {
@@ -3024,40 +2962,7 @@ document.getElementById('copyImportErrorsButton').addEventListener('click', asyn
     }
 });
 
-// ===== OFFLINE SCREEN & MODALS =====
-
-// Offline screen handling
-function showOfflineScreen() {
-    document.getElementById('offlineScreen').style.display = 'flex';
-}
-
-function hideOfflineScreen() {
-    document.getElementById('offlineScreen').style.display = 'none';
-}
-
-async function retryConnection() {
-    try {
-        const result = await apiRequest('/health', {}, { timeoutSeconds: 3, retries: 0 });
-        if (result.ok) {
-            // Connection restored!
-            hideOfflineScreen();
-            if (window.offlineRetryInterval) {
-                clearInterval(window.offlineRetryInterval);
-                window.offlineRetryInterval = null;
-            }
-            consecutiveFailures = 0;
-            updateNetworkStatus();
-
-            // Reload data
-            loadEntries();
-            refreshStatus();
-            showToast('success', I18n.t('Verbonden'), 'Herverbonden met service');
-        }
-    } catch (error) {
-        // Still offline
-        showToast('error', I18n.t('Nog niet bereikbaar'), I18n.t('Service reageert nog niet'));
-    }
-}
+// ===== MODALS =====
 
 // Settings Modal
 
@@ -3120,25 +3025,6 @@ function updateConnectionStatus() {
     if (dropdownEl) {
         dropdownEl.value = mode;
     }
-}
-
-function attemptVipFailover(reason) {
-    if (appConfig.deploymentMode === 'standalone' || appConfig.managedHa) return;
-    if (vipFailoverAttempted) return;
-    let vipOrigin = '';
-    try {
-        vipOrigin = new URL(vipUrl).origin;
-    } catch (error) {
-        vipOrigin = '';
-    }
-
-    if (!vipOrigin || vipOrigin === window.location.origin) {
-        return;
-    }
-
-    vipFailoverAttempted = true;
-    showToast('warning', 'Overstap naar VIP', reason || I18n.t('Directe node niet bereikbaar'));
-    window.location.href = vipOrigin;
 }
 
 // Settings Management

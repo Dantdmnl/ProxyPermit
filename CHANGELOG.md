@@ -4,6 +4,10 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+### Changed
+
+- Show shared, accessible connection notices on every page, preserve drafts during outages, and verify recovery without reloading or replaying writes.
+
 ## [1.1.0] - 2026-11-11
 
 ### Added

@@ -1138,5 +1138,13 @@
   "The start date must be before the end date and within the retention period.": "The start date must be before the end date and within the retention period.",
   "Use a search query of at most 256 characters.": "Use a search query of at most 256 characters.",
   "Cannot read logs. Check the service configuration.": "Cannot read logs. Check the service configuration.",
-  "Deze Tinyproxy-bestandslogs gebruiken een afzonderlijk rotatie- en bewaarbeleid van de beheerder.": "These Tinyproxy file logs use a separate rotation and retention policy controlled by the administrator."
+  "Deze Tinyproxy-bestandslogs gebruiken een afzonderlijk rotatie- en bewaarbeleid van de beheerder.": "These Tinyproxy file logs use a separate rotation and retention policy controlled by the administrator.",
+  "Geen netwerkverbinding": "No network connection",
+  "Beheerconsole niet bereikbaar": "Management console unavailable",
+  "Verbinding controleren…": "Checking connection…",
+  "Opnieuw proberen": "Try again",
+  "Je invoer blijft op deze pagina staan. We proberen automatisch opnieuw verbinding te maken. Dit zegt niets over de status van de proxy.": "Your input stays on this page. We automatically retry the connection. This does not indicate the status of the proxy.",
+  "Je kunt verder werken. Controleer de actuele gegevens voordat je opnieuw opslaat.": "You can continue working. Check the current data before saving again.",
+  "Het is niet zeker of je laatste actie is verwerkt. Controleer het resultaat voordat je de actie herhaalt.": "Your last action may have been processed. Check the result before repeating it.",
+  "Controleer je laatste actie": "Check your last action"
 }

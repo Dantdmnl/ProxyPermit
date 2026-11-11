@@ -69,6 +69,16 @@ for (const link of languageLinks) {
             }
             buttonLabel = localized.getElementById('loginButton').textContent;
             button.textContent = buttonLabel;
+            const connection = document.getElementById('connectivityNotice');
+            const translatedConnection = localized.getElementById('connectivityNotice');
+            for (const key of ['offline', 'unavailable', 'restored', 'uncertain', 'checking', 'retry']) {
+                connection.dataset[key] = translatedConnection.dataset[key];
+            }
+            for (const selector of ['[data-connection-detail]', '[data-connection-restored]',
+                '[data-connection-uncertain]', '[data-connection-retry]', '[data-connection-dismiss]']) {
+                connection.querySelector(selector).textContent = translatedConnection.querySelector(selector).textContent;
+            }
+            window.dispatchEvent(new Event('proxypermit:locale'));
             document.documentElement.lang = link.lang;
             document.title = localized.title;
             languageLinks.forEach(item => item.removeAttribute('aria-current'));

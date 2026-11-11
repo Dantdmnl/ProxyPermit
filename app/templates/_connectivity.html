@@ -1,0 +1,18 @@
+<section id="connectivityNotice" class="connectivity-notice" popover="manual" aria-labelledby="connectivityTitle"
+         data-offline="{{ _('Geen netwerkverbinding') }}"
+         data-unavailable="{{ _('Beheerconsole niet bereikbaar') }}"
+         data-restored="{{ _('Verbinding hersteld') }}"
+         data-uncertain="{{ _('Controleer je laatste actie') }}"
+         data-checking="{{ _('Verbinding controleren…') }}"
+         data-retry="{{ _('Opnieuw proberen') }}">
+    <div role="status" aria-live="polite" aria-atomic="true">
+        <strong id="connectivityTitle"></strong>
+        <p data-connection-detail>{{ _('Je invoer blijft op deze pagina staan. We proberen automatisch opnieuw verbinding te maken. Dit zegt niets over de status van de proxy.') }}</p>
+        <p data-connection-restored hidden>{{ _('Je kunt verder werken. Controleer de actuele gegevens voordat je opnieuw opslaat.') }}</p>
+        <p data-connection-uncertain hidden>{{ _('Het is niet zeker of je laatste actie is verwerkt. Controleer het resultaat voordat je de actie herhaalt.') }}</p>
+    </div>
+    <div class="connectivity-actions">
+        <button type="button" data-connection-retry>{{ _('Opnieuw proberen') }}</button>
+        <button type="button" data-connection-dismiss hidden>{{ _('Sluiten') }}</button>
+    </div>
+</section>

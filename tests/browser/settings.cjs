@@ -21,6 +21,95 @@ async function fixturePort() {
     return port;
 }
 
+async function checkConnectivity(page, base, signedIn) {
+    const context = page.context();
+    const routes = signedIn ? ['/', '/proxy', '/settings', '/privacy'] : ['/'];
+    for (const language of ['en', 'nl']) {
+        for (const route of routes) {
+            await page.goto(`${base}${route}?lang=${language}`);
+            await page.locator('#connectivityNotice').waitFor({ state: 'attached' });
+            for (const theme of ['light', 'dark']) {
+                await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+                await page.setViewportSize({ width: 320, height: 568 });
+                const input = page.locator('input:not([type=hidden]):not([type=checkbox])').first();
+                const editable = await input.count() && await input.isVisible() && await input.isEditable();
+                const previous = editable ? await input.inputValue() : null;
+                if (editable) await input.fill('offline draft');
+                await context.setOffline(true);
+                const notice = page.locator('#connectivityNotice');
+                await notice.locator('strong').filter({ hasText: language === 'en' ? 'No network connection' : 'Geen netwerkverbinding' }).waitFor();
+                assert.equal(await notice.isVisible(), true);
+                assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+                if (editable) assert.equal(await input.inputValue(), 'offline draft');
+                const url = page.url();
+                await page.evaluate(() => [...document.querySelectorAll('a[href]')].find(link => {
+                    const url = new URL(link.href);
+                    return url.origin === location.origin && (url.pathname !== location.pathname || url.search !== location.search);
+                })?.click());
+                assert.equal(page.url(), url);
+                await context.setOffline(false);
+                await notice.locator('[data-connection-dismiss]').waitFor();
+                assert.equal(page.url(), url);
+                if (editable) {
+                    assert.equal(await input.inputValue(), 'offline draft');
+                    await input.fill(previous);
+                }
+                await notice.locator('[data-connection-dismiss]').focus();
+                await page.keyboard.press('Enter');
+                assert.equal(await notice.isVisible(), false);
+            }
+        }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`${base}/?lang=en`);
+    // A server outage with the browser still online needs a different message.
+    await page.route('**/connection', route => route.abort('failed'));
+    await page.evaluate(() => fetch('/connection').catch(() => {}));
+    const notice = page.locator('#connectivityNotice');
+    await notice.locator('strong').filter({ hasText: 'Management console unavailable' }).waitFor();
+    assert.equal(await page.evaluate(() => navigator.onLine), true);
+    await page.unroute('**/connection');
+    await notice.locator('[data-connection-retry]').evaluate(button => button.click());
+    await notice.locator('[data-connection-dismiss]').click();
+    for (const status of [401, 403, 429, 500]) {
+        await page.route('**/api/connectivity-read', route => route.fulfill({ status, body: '{}' }));
+        await page.evaluate(() => fetch('/api/connectivity-read'));
+        await wait(100);
+        assert.equal(await notice.isVisible(), false, `An isolated HTTP ${status} is not a connectivity outage`);
+        await page.unroute('**/api/connectivity-read');
+    }
+    await page.route('**/api/validate', route => route.abort('failed'));
+    await page.evaluate(() => fetch('/api/validate', { method: 'POST' }).catch(() => {}));
+    await wait(200);
+    assert.equal(await notice.isVisible(), false, 'A failed validation has not saved any changes');
+    await page.unroute('**/api/validate');
+    // A lost write response must never lead to an automatic resubmission.
+    let mutations = 0;
+    await page.route('**/api/connectivity-test', route => { mutations++; return route.abort('failed'); });
+    await page.evaluate(() => fetch('/api/connectivity-test', { method: 'POST' }).catch(() => {}));
+    await notice.locator('[data-connection-uncertain]').waitFor();
+    await wait(200);
+    assert.equal(mutations, 1);
+    await notice.locator('[data-connection-dismiss]').click();
+    await page.unroute('**/api/connectivity-test');
+    if (signedIn) {
+        await page.getByRole('button', { name: 'New rule' }).click();
+        const draft = page.locator('#ruleDialog input[type=text]').first();
+        await draft.fill('offline.example');
+        await draft.focus();
+        await context.setOffline(true);
+        await notice.locator('strong').filter({ hasText: 'No network connection' }).waitFor();
+        assert.equal(await page.locator('#ruleDialog').evaluate(dialog => dialog.open), true);
+        assert.equal(await draft.inputValue(), 'offline.example');
+        assert.equal(await draft.evaluate(input => document.activeElement === input), true);
+        assert.equal(await notice.evaluate(element => element.matches(':popover-open')), true);
+        await context.setOffline(false);
+        await notice.locator('[data-connection-dismiss]').click();
+        // Leave the fixture draft without publishing it.
+        await page.goto(`${base}/?lang=en`);
+    }
+}
+
 async function main() {
     const state = mkdtempSync(path.join(os.tmpdir(), 'proxypermit-playwright-'));
     let processHandle, browser;
@@ -53,6 +142,7 @@ async function main() {
         }
         browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
         const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        await checkConnectivity(page, base, false);
         async function checkBrand() {
             const mark = page.locator('.shell-brand img');
             assert.equal(await mark.evaluate(async image => {
@@ -142,6 +232,7 @@ async function main() {
         }
         await page.locator('#workspace').waitFor();
         assert.equal(loginRequests, 1);
+        await checkConnectivity(page, base, true);
         await checkBrand();
         const remove = page.locator('.entry-item .button-danger').first();
         for (const mode of ['light','dark']) {

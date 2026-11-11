@@ -10,6 +10,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/theme.css', v=app_version) }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/signin.css', v=app_version) }}">
     <script defer src="{{ url_for('static', filename='js/signin.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
 <body class="signin-page">
     <main class="signin-card" aria-labelledby="signinTitle">
@@ -59,5 +61,6 @@
         <p class="signin-privacy">{{ _('Aanmeldingen en beheeracties worden gelogd voor beveiliging en beheer.') }}
             <a href="{{ url_for('privacy_notice') }}" target="_blank" rel="noopener">{{ _('Privacy en logging') }}</a></p>
     </main>
+    {% include "_connectivity.html" %}
 </body>
 </html>

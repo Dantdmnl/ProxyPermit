@@ -10,6 +10,17 @@ from app.web import manager as main
 
 
 class RemotePreviewSecurityTests(unittest.TestCase):
+    def test_connection_probe_is_public_private_and_session_independent(self):
+        client = main.app.test_client()
+        with patch.object(main.subprocess, 'run') as service_command:
+            response = client.get('/connection')
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.data, b'')
+        self.assertEqual(response.headers['X-ProxyPermit-Reachable'], '1')
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertNotIn('Set-Cookie', response.headers)
+        service_command.assert_not_called()
+
     def test_hsts_requires_https_and_defaults_to_the_current_host(self):
         with patch.object(main, 'ENABLE_HSTS', True), patch.object(main, 'HSTS_INCLUDE_SUBDOMAINS', False), \
                 patch.object(main, 'HSTS_PRELOAD', False):

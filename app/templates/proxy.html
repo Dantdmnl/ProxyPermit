@@ -16,6 +16,8 @@
     <script src="{{ url_for('static', filename='js/version.js', v=app_version) }}"></script>
     <script id="locale-data" type="application/json">{{ {'locale': locale, 'messages': locale_catalog} | tojson }}</script>
     <script src="{{ url_for('static', filename='js/i18n.js', v=app_version) }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
 <body>
 {% include "_shell.html" %}
@@ -97,5 +99,6 @@
         </div>
     </details>
 </main>
+    {% include "_connectivity.html" %}
 </body>
 </html>

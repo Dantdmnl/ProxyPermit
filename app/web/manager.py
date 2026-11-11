@@ -1449,6 +1449,12 @@ def requires_sync_auth(f):
     return decorated
 
 
+@app.route('/connection', methods=['GET'])
+def connection_check():
+    """Public liveness only: no session, configuration or service inspection."""
+    return '', 204, {'Cache-Control': 'no-store', 'X-ProxyPermit-Reachable': '1'}
+
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Return health information for monitoring."""

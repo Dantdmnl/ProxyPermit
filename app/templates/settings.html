@@ -17,6 +17,8 @@
     <script src="{{ url_for('static', filename='js/settings.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/ha-settings.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/ha-policy.js', v=app_version) }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
+    <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
 <body>
 {% include "_shell.html" %}
@@ -260,5 +262,6 @@
     {% endif %}
     {% endif %}
 </main>
+    {% include "_connectivity.html" %}
 </body>
 </html>
