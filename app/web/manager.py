@@ -15,6 +15,7 @@ import hashlib
 import ipaddress
 import stat
 import socket
+from app.core.listeners import tcp_listener
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple, List
@@ -1529,8 +1530,7 @@ def health_check():
         if tinyproxy_port_raw.isdigit():
             tinyproxy_port = int(tinyproxy_port_raw)
             try:
-                with socket.create_connection(('127.0.0.1', tinyproxy_port), timeout=2):
-                    checks['tinyproxy_port_open'] = True
+                checks['tinyproxy_port_open'] = tcp_listener(tinyproxy_port)
             except Exception:
                 checks['tinyproxy_port_open'] = False
 

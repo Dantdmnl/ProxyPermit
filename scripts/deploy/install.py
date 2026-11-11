@@ -41,9 +41,15 @@ HA_SETUP_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-setup')
 HA_SETUP_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start --no-block proxypermit-ha-setup.service\n'
 MAINTENANCE_DIRECTORY = Path('/run/proxypermit-maintenance')
 LEGACY_SYNC_SCRIPT = Path('/usr/local/bin/sync_whitelist_v2.py')
-KEEPALIVED_HEALTH_TEXT = (
+LEGACY_KEEPALIVED_HEALTH_TEXT = (
     '#!/usr/bin/python3\nimport socket\n'
     'with socket.create_connection(("127.0.0.1", 3128), timeout=0.5):\n    pass\n'
+)
+KEEPALIVED_HEALTH_TEXT = (
+    '#!/usr/bin/python3\n'
+    + (SOURCE / 'app/core/listeners.py').read_text(encoding='utf-8')
+    + '\ntry:\n    healthy = tcp_listener(3128)\nexcept OSError:\n    healthy = False\n'
+    + 'raise SystemExit(0 if healthy else 1)\n'
 )
 
 
@@ -189,6 +195,7 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
         notes.append('Repeat on the other host with the same cluster settings. Publish policy on each node.')
     if mode == 'ha' and values.get('PROXYPERMIT_MANAGED_HA') == 'true':
         plan['managedHa'] = True
+        steps.append('Upgrade the recognized empty-connect health helper to a traffic-free listener check; preserve custom helpers.')
     return plan
 
 
@@ -264,6 +271,20 @@ def require_trusted_path(path, *, directory):
     expected = stat.S_ISDIR if directory else stat.S_ISREG
     if not expected(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
         raise ValueError(f'Expected a root-owned path without group or public write access: {path}')
+
+
+def upgrade_health_helper(transaction, path=KEEPALIVED_HEALTH):
+    """Replace only our exact old helper, with rollback and existing permissions."""
+    if not path.exists() and not path.is_symlink():
+        return False
+    require_trusted_path(path.parent, directory=True)
+    require_trusted_path(path, directory=False)
+    expected = LEGACY_KEEPALIVED_HEALTH_TEXT.encode('utf-8')
+    if path.stat().st_size != len(expected) or path.read_bytes() != expected:
+        return False
+    transaction.track(path)
+    atomic_write(path, KEEPALIVED_HEALTH_TEXT, path.stat().st_mode & 0o777)
+    return True
 
 
 @contextmanager
@@ -765,6 +786,8 @@ def _apply_locked(plan, args):
             atomic_write(KEEPALIVED_HEALTH, KEEPALIVED_HEALTH_TEXT, 0o755)
             atomic_write(KEEPALIVED_CONFIG, keepalived_text(ha), 0o640)
             run('keepalived', '--config-test', '-f', str(KEEPALIVED_CONFIG))
+        elif plan['action'] == 'upgrade' and plan.get('managedHa'):
+            upgrade_health_helper(transaction)
             atomic_write(HA_RETIRE_UNIT, ha_retire_unit_text(str(base)), 0o644)
             atomic_write(HA_RETIRE_SUDOERS, HA_RETIRE_RULE, 0o440)
             run('visudo', '-cf', str(HA_RETIRE_SUDOERS))

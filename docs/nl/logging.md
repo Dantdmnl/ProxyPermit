@@ -142,3 +142,11 @@ onder deze timers gebracht. Controleer hun bestaande retentie afzonderlijk.
 De installer verwijdert niets uit het algemene hostjournal en behoudt zo de
 records van andere diensten. Handmatige en legacy-installaties vereisen eigen
 opslagretentie; de publieke melding geeft die onbeheerde toestand aan.
+
+## Lokale gezondheidscontroles en verbindingsruis
+
+Het `/health`-endpoint en de nieuw geïnstalleerde Keepalived-helper lezen de TCP-luistertabellen van Linux in plaats van clientverbindingen direct te openen en te sluiten. Zo ontstaan geen kunstmatige `closed socket before read`-fouten of periodieke lokale verbindingsregels. Zowel IPv4- als IPv6-luistersockets worden herkend. Deze controles bewaken de lokale luisterpoort; ze testen geen volledig proxyverzoek, authenticatie, filtering, capaciteit van de verbindingswachtrij of bereikbaarheid van upstreamservers. Blijf echt proxyverkeer apart testen.
+
+Bij upgrades van beheerde HA-installaties vervangt de installer alleen de exacte oude ProxyPermit-helper. De helper wordt geback-upt voor rollback, met behoud van rechten en eigenaar. Eigen helpers blijven ongewijzigd. Extra privileges of firewallregels zijn niet nodig; onleesbare kernelgegevens laten de HA-controle mislukken.
+
+Historische meldingen over gesloten sockets zijn niet betrouwbaar aan een gezondheidscontrole toe te schrijven. Ze blijven doorzoekbaar met hun oorspronkelijke ernstniveau en bestaande retentie. Vergelijkbare fouten van echte clients worden niet onderdrukt. Eenmalige netwerkcontroles vooraf en controles bij het uit bedrijf nemen van een peer blijven echte verbindingen testen.

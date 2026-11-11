@@ -10,6 +10,20 @@ from app.web import manager as main
 
 
 class RemotePreviewSecurityTests(unittest.TestCase):
+    def test_health_checks_listener_without_creating_a_proxy_client(self):
+        with patch.dict(main.os.environ, TINYPROXY_PORT='3128'), \
+                patch.object(main.sys, 'platform', 'linux'), \
+                patch.object(main.subprocess, 'run') as command, \
+                patch.object(main, 'tcp_listener', side_effect=[True, False]) as listener, \
+                patch.object(main.socket, 'create_connection') as connection:
+            command.return_value.returncode = 0
+            command.return_value.stdout = 'active'
+            self.assertTrue(self.client.get('/health').json['checks']['tinyproxy_port_open'])
+            self.assertFalse(self.client.get('/health').json['checks']['tinyproxy_port_open'])
+        self.assertEqual(listener.call_count, 2)
+        listener.assert_called_with(3128)
+        connection.assert_not_called()
+
     def test_connection_probe_is_public_private_and_session_independent(self):
         client = main.app.test_client()
         with patch.object(main.subprocess, 'run') as service_command:

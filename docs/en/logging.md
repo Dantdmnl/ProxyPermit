@@ -137,3 +137,11 @@ or brought under these timers. Review their existing retention separately.
 The installer never vacuums the default host journal. This preserves other
 services' records. Manually deployed/legacy installations must configure their
 own storage retention; the public notice identifies that unmanaged state.
+
+## Local health checks and connection noise
+
+The `/health` endpoint and newly installed Keepalived helper inspect Linux TCP listener tables instead of opening and immediately closing client sockets. This avoids generating fake `closed socket before read` errors or periodic loopback connection records. Both IPv4 and IPv6 listeners are recognized. These are local listener checks, not end-to-end traffic, authentication, filtering, backlog-capacity or upstream reachability tests. Continue testing real proxy traffic separately.
+
+On managed HA upgrades, the installer replaces only the exact old ProxyPermit helper, backs it up for rollback, and preserves its permissions and ownership. Custom helpers remain unchanged. No additional privileges or network firewall rules are needed; unreadable kernel state fails the HA check.
+
+Historical closed-socket records cannot reliably be attributed to a health check. They remain searchable, with their original severity and existing retention. Similar errors from real clients are not suppressed. One-off network preflight and peer-retirement tests still perform actual connection checks.

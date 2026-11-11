@@ -6,6 +6,8 @@ Historical deployments are not assigned retrospective release tags.
 
 ### Changed
 
+- Avoid recurring empty-client Tinyproxy health-check errors using traffic-free Linux listener checks; safely migrate recognized Keepalived helpers with rollback support.
+
 - Show shared, accessible connection notices on every page, preserve drafts during outages, and verify recovery without reloading or replaying writes.
 
 ## [1.1.0] - 2026-11-11

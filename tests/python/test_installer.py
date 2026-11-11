@@ -14,6 +14,24 @@ spec.loader.exec_module(installer)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_health_helper_upgrade_is_reversible_and_preserves_custom_helpers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'health'
+            transaction = installer.Transaction(Path(directory) / 'backup')
+            path.write_bytes(installer.LEGACY_KEEPALIVED_HEALTH_TEXT.encode('utf-8'))
+            path.chmod(0o755)
+            with patch.object(installer, 'require_trusted_path'):
+                self.assertTrue(installer.upgrade_health_helper(transaction, path))
+                self.assertEqual(path.read_text(), installer.KEEPALIVED_HEALTH_TEXT)
+                transaction.restore()
+                self.assertEqual(path.read_text(), installer.LEGACY_KEEPALIVED_HEALTH_TEXT)
+                path.write_text('#!/bin/sh\nexit 1\n', encoding='utf-8')
+                self.assertFalse(installer.upgrade_health_helper(transaction, path))
+                self.assertEqual(path.read_text(), '#!/bin/sh\nexit 1\n')
+                path.write_bytes(b'\x7fELF\xff')
+                self.assertFalse(installer.upgrade_health_helper(transaction, path))
+                self.assertEqual(path.read_bytes(), b'\x7fELF\xff')
+
     def test_recovery_removes_created_tls_directory_without_deleting_unknown_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
