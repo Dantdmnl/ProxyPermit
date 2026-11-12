@@ -60,7 +60,7 @@ python scripts/release.py archive
 ```
 
 Gebruik Linux/WSL voor shellcontroles en Gunicorn. De Windows-controle gebruikt
-Granian en vermeldt platformgebonden skips. Draai bij gewijzigde browserfuncties
+Granian en vermeldt platformgebonden overgeslagen tests. Draai bij gewijzigde browserfuncties
 `tests/browser/settings.cjs`, met Playwright beschikbaar voor Node. Controleer
 NL/EN, beide thema's en kleine schermen.
 

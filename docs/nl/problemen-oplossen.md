@@ -60,7 +60,7 @@ om de beperking te omzeilen. Lees [Hoge beschikbaarheid](hoge-beschikbaarheid.md
 
 ## De nodes tonen verschillende revisies of het VIP verhuist niet
 
-Een revisie herkent een beleidsversie. Geef B tijd voor de volgende ophaalronde.
+Een revisie is een kenmerk waarmee je een versie van het beleid herkent. Geef B tijd voor de volgende ophaalronde.
 Controleer daarna het laatste succesvolle contact en foutmeldingen op beide
 nodes. Controleer of de wijziging echt op A is gepubliceerd en de nodes nog gekoppeld zijn.
 
@@ -71,7 +71,7 @@ controleren met de [beheerdershandleiding](beheer.md).
 
 ## Oudere logs ontbreken
 
-Verklein de periode en controleer de gekozen bron. Standaard wordt audit-/beheerlogging
+Kies een kortere periode en controleer de gekozen bron. Standaard wordt audit-/beheerlogging
 maximaal 30 dagen bewaard en Tinyproxy-/verkeerslogging 7 dagen. Schijflimieten
 kunnen records eerder verwijderen. Exports, oude systeemlogs en eigen bestanden
 hebben afzonderlijk beleid. Lees een melding over onvolledige resultaten voordat

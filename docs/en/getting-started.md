@@ -3,7 +3,8 @@
 [Nederlands](../nl/eerste-stappen.md) · [Documentation](README.md)
 
 **For:** someone who has a console address and a user account.
-**Result:** you can sign in, find the correct node and make your first rule change.
+**Result:** you can sign in and identify your node. Proxy managers and system
+administrators can also add a first rule.
 If ProxyPermit is not installed yet, use [Installation](installation.md) first.
 
 ## 1. Get the right address
@@ -26,8 +27,8 @@ Never send passwords, setup QR codes or pairing codes in a support ticket.
 
 ## 3. Check where you are
 
-**Overview** shows the node and service status. One node is a single independent
-server. In a paired setup, shared rule changes belong on **node A**. **Node B**
+**Overview** shows the node and service status. A node is one server. In a paired setup, shared rule changes belong on
+**node A**. **Node B**
 receives those changes automatically and shows a read-only notice.
 
 The node handling traffic can change during a failure. That does not make B the
@@ -38,7 +39,9 @@ node where you edit shared rules. See [High availability](high-availability.md).
 This requires **Proxy manager** or **System administrator** rights. Monitors can
 view the rules. See [Users and roles](roles.md).
 
-First find out whether this installation uses an **allowlist** or a **blocklist**:
+Check the active mode under **Proxy configuration → Allowlist or blocklist**.
+Monitors cannot open this page; ask a proxy manager if unsure. The mode determines
+what a rule does:
 
 - An allowlist permits matching destinations and blocks the rest.
 - A blocklist blocks matching destinations and permits the rest.
@@ -49,10 +52,13 @@ A rule therefore has a different effect depending on the active mode.
 2. Choose **Domain name** and enter a real test destination you control.
 3. Add a description explaining why the rule is needed.
 4. Wait for validation. Keep **Restart Tinyproxy after saving** selected if you
-   intend to apply this change now, then choose **Save rule**.
+   intend to apply this change now, then choose **Save rule**. Wait for the save
+   and restart results. A restart can interrupt active connections.
 5. Test from a device that actually uses the proxy. Check one allowed and one
    blocked destination. Being able to open the console does not test proxy traffic.
-6. With HA, check that B has applied the same policy revision under **Settings**.
+6. For paired HA, open **Settings → High availability (HA) → Policy synchronization**
+   and check that B has applied the revision published on A. Synchronization can
+   take a little time.
 
 A plain domain such as `example.com` matches that domain. `*.example.com` also
 includes its subdomains. These are examples, not websites you must permit.

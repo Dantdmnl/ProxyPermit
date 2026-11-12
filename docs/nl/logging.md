@@ -26,12 +26,12 @@ opslaglimieten, met behoud van de nieuwste volledige records.
 Journalopslag is persistent. Segmenten roteren minimaal ieder uur. Een timer
 roteert en verwijdert ieder uur uitsluitend gegevens in de twee eigen
 namespaces. Verwijdering gebeurt per bestand, waardoor fysieke verwijdering
-kan achterlopen tot de volgende rotatie/opruiming. De GUI past de termijn per
+kan achterlopen tot de volgende rotatie/opruiming. De webinterface past de termijn per
 record toe. Na uitgeschakeld te zijn geweest haalt de host de opruiming bij
 via de persistente timer. Zie de [journalinstellingen](https://manpages.ubuntu.com/manpages/noble/man5/journald%40.conf.5.html).
 
 Nieuwe installaties gebruiken Tinyproxy `LogLevel Warning`: verzoeken en
-verbindingen worden standaard niet gelogd. Bestaande native configuratie blijft
+verbindingen worden standaard niet gelogd. De bestaande Tinyproxy-configuratie blijft
 bij een upgrade behouden. `Connect`, `Info` en `Debug` kunnen client-IP's,
 bestemmingen en andere persoonsgegevens vastleggen. Maskering in de interface
 verwijdert deze oorspronkelijke records niet.
@@ -56,8 +56,8 @@ is niet het totale aantal records in alle bewaarde geschiedenis.
 De lezer ondersteunt ook het standaardbestand
 `/var/log/tinyproxy/tinyproxy.log` met genummerde en gzip-archieven. Bestandslogs
 hebben hun eigen logrotatebeleid van de beheerder of het pakket; de
-namespacepolicy verwijdert deze bestanden niet. Andere aangepaste paden worden
-niet via de GUI ontsloten en vereisen eigen lees- en retentievoorzieningen.
+namespacepolicy verwijdert deze bestanden niet. Logs op andere locaties zijn niet via de webinterface beschikbaar. Regel
+hiervoor zelf hoe ze worden gelezen en hoelang ze worden bewaard.
 Laat niet meerdere rotatietaken hetzelfde bestand beheren. Vermijd
 `copytruncate` voor auditlogs: [logrotate beschrijft het mogelijke gegevensverlies](https://man7.org/linux/man-pages/man5/logrotate.conf.5.html).
 

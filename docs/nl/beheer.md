@@ -125,7 +125,7 @@ kunt inloggen en of het proxyverkeer werkt.
 
 ## Verbindingsverlies
 
-Elke geopende pagina controleert of de beheerconsole bereikbaar is. De verbindingsmelding maakt onderscheid tussen een browser zonder netwerkverbinding en een onbereikbare console. De melding verschijnt ook boven open dialoogvensters, ondersteunt beide thema’s en probeert tijdens een storing iedere vijf seconden opnieuw verbinding te maken. Deze controle zegt niets over Tinyproxy of de HA-peer.
+Elke geopende pagina controleert of de beheerconsole bereikbaar is. De verbindingsmelding maakt onderscheid tussen een browser zonder netwerkverbinding en een onbereikbare console. De melding verschijnt ook boven open dialoogvensters, ondersteunt beide thema’s en probeert tijdens een storing iedere vijf seconden opnieuw verbinding te maken. Deze controle zegt niets over Tinyproxy of de andere HA-node.
 
 Je invoer en open dialoogvensters blijven op de huidige pagina staan. Navigeren en nieuwe schrijfverzoeken worden tegengehouden zolang de console onbereikbaar is. Bij herstel wordt de pagina niet herladen en worden acties niet herhaald. Als het antwoord op een schrijfverzoek verloren ging, controleer dan de actuele regels of instellingen voordat je de actie herhaalt: de server kan die al verwerkt hebben. De bestaande revisiecontroles blijven gelijktijdige wijzigingen bewaken.
 
@@ -146,12 +146,12 @@ sudo bash install.sh --upgrade --install-dir /opt/proxypermit \
 
 Controleer het plan en herhaal met `--apply`. CIDR- en poortargumenten mogen
 herhaald worden. Zonder bestaand profiel of expliciet netwerk kan de installer
-de SSH-peer als enkele beheerbron gebruiken. Lokale onbeheerde installaties
+het adres van de SSH-verbinding als enige beheerbron gebruiken. Lokale onbeheerde installaties
 zonder beide blijven zichtbaar ongeconfigureerd. Gebruik nooit `0.0.0.0/0` of
 `::/0`. De interactieve installer vraagt het vertrouwde netwerk en de echte webpoort.
 
 Het profiel `/etc/proxypermit/access-safety.json` is eigendom van root. Het
-serviceaccount kan het lezen, maar de GUI kan het niet herschrijven. Toegevoegde
+serviceaccount kan het lezen, maar de webinterface kan het niet herschrijven. Toegevoegde
 UFW-regels heten `ProxyPermit SAFETY IN - ...` en worden voor gewone regels
 geplaatst. Eerst worden alle regels droog getest. Activering en standaardbeleid
 van UFW blijven behouden. Bestaande toestandsafhankelijke retourregels verzorgen
@@ -159,15 +159,16 @@ antwoorden; er komt geen brede OUT-uitzondering bij. Configuratie, profiel en
 firewallbestanden worden voor herstel geback-upt.
 
 Het lokale Allow-blok valt buiten gedeeld HA-beleid en de bijbehorende
-conflictbaseline. Revisies voor native bewerkingen bewaken wel het hele bestand.
-Een backup behoudt eigen beheertoegang wanneer A clientregels publiceert.
+conflictbaseline. Bij het bewerken van de oorspronkelijke configuratie controleert ProxyPermit
+wel de revisie van het volledige bestand.
+Een back-upnode behoudt zijn eigen beheertoegang wanneer A clientregels publiceert.
 Herstart, rollback en conceptopslag blijven afzonderlijke stappen. De server
 controleert de vaste uitzonderingen, poorten en luisterbindingen, ook bij
 inkomend gedeeld beleid.
 
-De GUI kan een bestaand profiel niet veranderen. Installerargumenten voegen
+De webinterface kan een bestaand profiel niet veranderen. Installeropties voegen
 beheerbronnen en poorten toe zonder bestaande bescherming te verwijderen.
-Verwijder oude uitzonderingen bewust via onafhankelijke OS-beheertoegang, met gezamenlijke controle van profiel, native Allow-blok en
+Verwijder oude uitzonderingen bewust via onafhankelijke OS-beheertoegang, en controleer daarbij het profiel, het vaste Allow-blok en
 bijbehorende UFW-regels. Test een tweede beheersessie voordat je de eerste sluit.
 Dit beschermt wijzigingen via de utility, niet tegen root die zelf de firewall
 reset of het profiel verwijdert.

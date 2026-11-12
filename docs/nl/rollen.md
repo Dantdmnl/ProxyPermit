@@ -11,7 +11,7 @@ Accounts, wachtwoorden, 2FA en rollen worden niet naar de andere HA-node gekopie
 | Filterregels exporteren | Nee | Ja | Ja |
 | Eigen wachtwoord en optionele 2FA beheren | Ja | Ja | Ja |
 | Regels toevoegen, aanpassen, importeren, verwijderen of verplaatsen | Nee | Ja | Ja |
-| Native Tinyproxy-configuratie bekijken, aanpassen en publiceren | Nee | Ja | Ja |
+| Tinyproxy-configuratie bekijken en proxybeleid aanpassen en publiceren | Nee | Ja | Ja |
 | Tinyproxy herstarten | Nee | Ja | Ja |
 | Servicegebruiker/-groep, luisterbindingen of bestandspaden wijzigen | Nee | Nee | Ja |
 | HA aanmaken, een node koppelen of uit bedrijf nemen, of de koppeling intrekken | Nee | Nee | Ja |
@@ -21,9 +21,9 @@ Accounts, wachtwoorden, 2FA en rollen worden niet naar de andere HA-node gekopie
 Op een gekoppelde back-upnode blijft gedeeld beleid voor elke rol alleen-lezen.
 Publiceer wijzigingen op A. Een monitor kan bewaarde logs lezen; daarin kunnen
 bedrijfsgegevens en persoonsgegevens staan. Geef die rol dus alleen aan mensen
-die deze gegevens mogen inzien. De native configuratie kan proxywachtwoorden
+die deze gegevens mogen inzien. Het Tinyproxy-configuratiebestand kan proxywachtwoorden
 bevatten en is daarom alleen beschikbaar voor proxy- en systeembeheerders.
-Dit zijn rollen in de beheerinterface, geen Linux-gebruikersaccounts.
+Een proxybeheerder kan geen servicegebruiker, luisteradressen of bestandspaden wijzigen. Dit zijn rollen in de beheerinterface, geen Linux-gebruikersaccounts.
 
 ## Een account toevoegen
 

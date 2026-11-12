@@ -64,7 +64,7 @@ voor root. Voeg `--server granian` toe om Granian te testen.
 Na elke herstelstap controleert het script de login en het proxyverkeer.
 Gebruik de bronmap van de gewenste versie om ook een versiewissel te testen.
 
-Open de GUI vanaf je werkstation via SSH. Vervang gebruiker en adres.
+Open de webinterface vanaf je werkstation via SSH. Vervang gebruiker en adres.
 
 ```bash
 ssh -N -L 8100:127.0.0.1:8080 beheerder@10.77.0.11
@@ -122,7 +122,7 @@ op A **Node toevoegen**. Plak de code op B en kies **Deelnemen aan cluster**.
 Publiceer wijzigingen op A. B activeert de filterregels en gedeelde
 Tinyproxy-instellingen automatisch. Als een node onbereikbaar is, blijft de
 timer proberen en blijft B zijn laatst werkende configuratie gebruiken.
-Trek de koppeling op beide nodes in voor je een peer of TLS-certificaat vervangt.
+Trek de koppeling op beide nodes in voor je de andere node of een TLS-certificaat vervangt.
 
 1. Start op beide nodes in een eigen terminal
    `python3 scripts/dev/vm_lab.py origin`. Die HTTP-testserver luistert alleen
@@ -138,7 +138,7 @@ Trek de koppeling op beide nodes in voor je een peer of TLS-certificaat vervangt
    herhaal de clienttest met `proxy-b`. Gebruik de hypervisorconsole om
    desgewenst een volledige uitval van A te testen.
 4. Test het uit bedrijf nemen apart. Laat A aanstaan met Keepalived gestopt
-   en laat B het verkeer afhandelen. Open de GUI van A via een SSH-tunnel
+   en laat B het verkeer afhandelen. Open de webinterface van A via een SSH-tunnel
    naar zijn fysieke IP. Gebruik **Instellingen → Hoge beschikbaarheid
    (HA)** om A uit bedrijf te nemen.
 5. Controleer op A dat Keepalived en Tinyproxy gestopt zijn en dat de

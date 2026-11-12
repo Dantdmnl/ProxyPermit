@@ -338,7 +338,7 @@ zijn van de beheer-API op deze node.
 Een opgeslagen concept staat apart van de bestanden die Tinyproxy leest.
 Publiceren maakt een herstelpunt en past proxyconfiguratie en eventuele
 filterwijzigingen samen toe. Bij mislukte
-activatie worden die configuratie en eventuele native filterwijzigingen
+activatie worden die configuratie en eventuele wijzigingen in het filterbestand
 teruggezet, waarna Tinyproxy opnieuw wordt gestart. Als ook herstel faalt,
 meldt de interface dat de service op de server moet worden gecontroleerd.
 

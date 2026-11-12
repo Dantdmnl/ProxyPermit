@@ -133,7 +133,7 @@ De werkversie is gecontroleerd met de volledige projectchecks en afzonderlijke
 browserfixtures. De Windows-suite draait 144 Python-tests met 7 platformgebonden
 skips. De Linux-installer draait de volledige suite bij iedere labupgrade.
 Playwright controleert NL/EN, beide thema's, kleine schermen, toetsenbordbediening,
-schrijfblokkades op de backup en de bevestigde conceptworkflow voor filtermodi.
+schrijfblokkades op de back-upnode en de bevestigde conceptworkflow voor filtermodi.
 Documentatiescreenshots worden uit fixtures gemaakt met `PP_DOC_SCREENSHOTS=1`.
 
 In het draaiende VirtualBox-lab is de volgorde op A gewijzigd en zonder handmatig
@@ -142,7 +142,7 @@ op A is tijdelijk met SIGSTOP stilgezet terwijl Keepalived bleef draaien. B nam
 het VIP over, toonde de actieve rol en beantwoordde een clientverzoek via het VIP.
 Na hervatten kreeg A het voorkeurs-VIP terug en keerde de status van B terug naar
 standby. Een afzonderlijke hersteltimer verstuurde eveneens SIGCONT. De
-standalone-GUI activeerde de andere filtermodus en herstelde de oorspronkelijke
+webinterface van de zelfstandige node activeerde de andere filtermodus en herstelde de oorspronkelijke
 configuratie. De HA-koppeling en beleidssynchronisatie bleven werken.
 
 Dit bewijst geen productie-beschikbaarheid bij een fysieke netwerkonderbreking,
@@ -202,7 +202,7 @@ beheertoegang.
 De drie VirtualBox-nodes zijn bijgewerkt. Via de beveiligde API zijn tijdelijke
 monitoraccounts aangemaakt, van rol veranderd en weer verwijderd. Oude sessies
 werden ongeldig, terwijl het wachtwoord bruikbaar bleef. Monitors konden geen
-native configuratie lezen of Tinyproxy herstarten. Proxybeheerders konden de
+de oorspronkelijke Tinyproxy-configuratie lezen of Tinyproxy herstarten. Proxybeheerders konden de
 standalone-proxy herstarten, maar geen HA of accounts beheren. Gedeeld beleid
 bleef op de gekoppelde back-upnode alleen-lezen. Beide HA-statuspanelen bleven
 synchronisatie tonen. Een andere servicegebruiker instellen werd geweigerd zonder

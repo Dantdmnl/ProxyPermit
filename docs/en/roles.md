@@ -11,7 +11,7 @@ accounts, passwords, 2FA and roles are not copied to the other HA node.
 | Export filter rules | No | Yes | Yes |
 | Change own password and optional 2FA | Yes | Yes | Yes |
 | Add, edit, import, remove or reorder rules | No | Yes | Yes |
-| View/edit native Tinyproxy configuration and publish drafts | No | Yes | Yes |
+| View Tinyproxy configuration and edit/publish proxy policy | No | Yes | Yes |
 | Restart Tinyproxy | No | Yes | Yes |
 | Change service user/group, listener bindings or file paths | No | No | Yes |
 | Create/join/retire HA nodes or revoke pairing | No | No | Yes |

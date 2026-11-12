@@ -2,8 +2,10 @@
 
 [English](../en/getting-started.md) · [Documentatie](README.md)
 
-**Voor:** iemand met een adres voor de beheerinterface en een gebruikersaccount.
-**Resultaat:** je kunt inloggen en de juiste node herkennen. Met beheerrechten kun je ook een eerste regel aanpassen.
+**Voor wie:** je hebt een adres voor de beheerinterface en een gebruikersaccount.
+
+**Na deze uitleg:** je kunt inloggen en zien welke node je gebruikt. Als je
+proxybeheerder of systeembeheerder bent, kun je ook een regel toevoegen.
 Is ProxyPermit nog niet geïnstalleerd? Begin dan bij [Installeren](installatie.md).
 
 ## 1. Gebruik het juiste adres
@@ -26,9 +28,10 @@ Stuur wachtwoorden, QR-codes voor 2FA en koppelcodes nooit mee in een supporttic
 
 ## 3. Controleer op welke node je werkt
 
-**Overzicht** toont de node en servicestatus. Een node is één server. Bij een
-gekoppelde opstelling verander je gedeelde regels op **node A**. **Node B**
-ontvangt die wijzigingen automatisch en toont een melding dat je er niet kunt wijzigen.
+**Overzicht** toont de node en de status van Tinyproxy. Een node is één server.
+Heeft jouw installatie twee gekoppelde nodes? Dan pas je gedeelde regels aan op
+**node A**. **Node B** ontvangt de wijzigingen automatisch en toont dat de
+regels daar alleen-lezen zijn. Bij één zelfstandige node werk je op die node.
 
 Bij een storing kan een andere node het verkeer overnemen. Dat maakt B niet de
 node waarop je gedeelde regels aanpast. Lees [Hoge beschikbaarheid](hoge-beschikbaarheid.md).
@@ -38,24 +41,30 @@ node waarop je gedeelde regels aanpast. Lees [Hoge beschikbaarheid](hoge-beschik
 Hiervoor heb je de rol **Proxybeheerder** of **Systeembeheerder** nodig.
 Met de rol **Monitor** kun je regels bekijken. Lees meer over [rollen](rollen.md).
 
-Controleer eerst of de installatie een **allowlist** of **blocklist** gebruikt:
+Controleer eerst onder **Proxyconfiguratie → Allowlist of blocklist** welke
+filtermodus actief is. Een monitor kan deze pagina niet openen; vraag bij
+twijfel een proxybeheerder. De gekozen modus bepaalt wat een regel doet:
 
-- Een allowlist laat passende bestemmingen toe en blokkeert de rest.
-- Een blocklist blokkeert passende bestemmingen en laat de rest toe.
+- Een allowlist laat overeenkomende bestemmingen toe en blokkeert de rest.
+- Een blocklist blokkeert overeenkomende bestemmingen en laat de rest toe.
 
 Het effect van een regel hangt dus af van de actieve filtermodus.
 
 1. Kies op de zelfstandige node of op A voor **Nieuwe regel**.
 2. Kies **Domeinnaam** en vul een echte testbestemming in die je beheert.
 3. Beschrijf waarom de regel nodig is.
-4. Wacht op de validatie. Laat **Tinyproxy herstarten na opslaan** aanstaan als je
-   de wijziging nu wilt toepassen en kies **Regel opslaan**.
+4. Controleer de melding onder het invoerveld. Laat **Tinyproxy na het opslaan
+   herstarten** aangevinkt als je de wijziging nu wilt toepassen en kies
+   **Regel opslaan**. Wacht op de melding dat de regel is opgeslagen en de
+   herstart is voltooid. Een herstart kan actieve verbindingen onderbreken.
 5. Test vanaf een apparaat dat de proxy daadwerkelijk gebruikt. Controleer een
    toegestane én een geblokkeerde bestemming. De beheerinterface openen is geen
    test van het proxyverkeer.
-6. Controleer bij HA onder **Instellingen** of B dezelfde beleidsrevisie heeft toegepast.
+6. Controleer bij gekoppelde HA-nodes onder **Instellingen → Hoge beschikbaarheid
+   (HA) → Beleid synchroniseren** of de gepubliceerde revisie op A overeenkomt
+   met de toegepaste revisie op B. Synchronisatie kan even duren.
 
-Een domein zoals `example.com` past op dat domein. `*.example.com` neemt ook de
+De regel `example.com` geldt voor dat domein. `*.example.com` neemt ook de
 subdomeinen mee. Dit zijn voorbeelden, geen websites die je moet toestaan.
 
 ## 5. Weet wat opslaan doet

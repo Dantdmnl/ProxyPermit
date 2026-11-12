@@ -27,11 +27,11 @@ Dat moet op één node werken. Een cluster gebruikt later dezelfde werkstroom.
 | Toegang | Clientnetwerken, proxyauthenticatie, toegestane CONNECT-poorten en bestemmingsfilters afzonderlijk beheren. Allowlist, blocklist en uitgeschakelde filtering zijn expliciete keuzes. |
 | Routering | Upstream-proxy's, directe uitzonderingen en geordende bestemmingsregels beheren. Reverse-proxymappings krijgen een eigen werkruimte zodra de geïnstalleerde build ze ondersteunt. |
 | Netwerk en verkeer | Luister- en bronadressen, capaciteit, time-outs, HTTP-headers en logging instellen. |
-| Wijzigingen | Concept en actieve versie vergelijken, valideren, publiceren en terugzetten. Het native configuratiebestand blijft beschikbaar voor geavanceerd beheer en migratie. |
+| Wijzigingen | Concept en actieve versie vergelijken, valideren, publiceren en terugzetten. Het oorspronkelijke Tinyproxy-configuratiebestand blijft beschikbaar voor geavanceerd beheer en migratie. |
 | Nodes | De actieve versie en gezondheid per node zien, één versie gecontroleerd uitrollen en de status van de virtuele IP-overname volgen. |
 
-Dit zijn productdoelen. De huidige configuratiepagina heeft al native
-configuratiebewerking, filterbewerking en validatie. Veel opties vragen nog
+Dit zijn productdoelen. De huidige configuratiepagina biedt al editors voor het oorspronkelijke
+configuratiebestand en de filterregels, met controles op de invoer. Veel opties vragen nog
 kennis van de Tinyproxy-syntaxis. Welke opties beschikbaar zijn, hangt mede af
 van de geïnstalleerde versie en build. Bij HTTPS via CONNECT gelden
 host- en poortkeuzes voor de tunnel. HTTP-paden en headers binnen de tunnel
@@ -46,7 +46,7 @@ zijn voor Tinyproxy niet zichtbaar. Zie de [Tinyproxy-documentatie](https://tiny
    proxybeleid apart, zodat een software-rollback nieuwere regels kan behouden.
 2. **Toegang en routering.** Bied formulieren voor clientnetwerken,
    bestemmingsbeleid en upstreams. Bewaar bestaande opmerkingen en regelvolgorde,
-   laat de native diff zien en scherm referenties met inloggegevens af in
+   laat de verschillen met het oorspronkelijke bestand zien en scherm referenties met inloggegevens af in
    schermen, logs en exports die bedoeld zijn om te delen.
 3. **Meerdere nodes.** Publiceer vanuit één beheerbron, met een versie en
    uitrolstatus per node. Valideer en activeer eerst op één node en ga pas verder

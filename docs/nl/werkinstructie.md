@@ -138,7 +138,7 @@ is geen bewijs dat een node nog werkt.
 Keepalived controleert lokale HTTP-antwoorden van Tinyproxy met een tijdslimiet
 en wisselt VRRP-berichten uit. Daarmee kan ook een proxy worden afgekeurd die nog
 een luisterpoort heeft, maar niet meer antwoordt. Dit test geen externe DNS,
-upstreamservers, iedere clientregel of volledige proxyverzoeken. Test die apart.
+achterliggende proxyservers, elke toegangsregel of volledige proxyverzoeken. Test die apart.
 
 Gebruik voor een geplande overnametest het [VM-testlab](vm-lab.md). Noteer
 VIP-eigenaar, clientresultaat en beleidsrevisies voor en na de test. VRRP met twee
@@ -193,22 +193,22 @@ Geplande verbeteringen staan bij [Vervolgwerk](vervolgwerk.md).
 Het paneel **Jouw concept** laat zien of werk nog niet is opgeslagen, is opgeslagen
 maar nog niet actief is, of gelijk is aan de actieve configuratie. Rode minregels
 verdwijnen; groene plusregels worden toegevoegd. Ook een andere regelvolgorde in
-de native configuratie wordt zichtbaar. Wachtwoordhoudende instellingen worden
-in deze vergelijking afgeschermd. Controleer grote bestanden in de native editor.
+het Tinyproxy-configuratiebestand wordt zichtbaar. Wachtwoordhoudende instellingen worden
+in deze vergelijking afgeschermd. Controleer grote bestanden in de editor voor het configuratiebestand.
 
 ![De werkversie controleren](../assets/nl/draft.png)
 
 Gebruik de zichtbare actie om het betreffende concept op te slaan, te publiceren
 of te verwerpen. Een opgeslagen configuratieconcept blijft na herladen bestaan;
 niet-opgeslagen editortekst niet. Een filterconcept wordt afzonderlijk aangegeven
-en kan afzonderlijk worden verworpen. De backup blijft alleen-lezen, ook wanneer
+en kan afzonderlijk worden verworpen. De back-upnode blijft alleen-lezen, ook wanneer
 die het VIP bedient.
 
 ## Anti-lockoutbescherming
 
 Onder **Instellingen → Anti-lockout** zie je de vertrouwde beheernetwerken en de
 beschermde SSH-, web- en proxypoorten. Een OS-beheerder zet het profiel via de
-installer vast. De GUI kan het vaste Allow-beheerblok niet verwijderen en kan de
+installer vast. De webinterface kan het vaste Allow-beheerblok niet verwijderen en kan de
 beschermde proxypoort of luisterbinding niet beperken. Deze lokale uitzonderingen
 worden niet door HA-beleid vervangen. Bij HA-verwijdering blijven de aparte
 UFW-beheerregels behouden.

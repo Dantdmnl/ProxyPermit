@@ -4,6 +4,12 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+### Changed
+
+- Clarify first sign-in and rule changes for each role in both languages.
+
+- Clarify Dutch operator instructions and explain the proxy manager’s configuration limits in both languages.
+
 ## [1.2.0] - 2026-11-12
 
 ### Added

@@ -49,7 +49,7 @@ voegt gerichte HA-regels toe en opent geen onbeperkt uitgaand internetverkeer.
 
 1. Open op **A**: **Instellingen → Hoge beschikbaarheid → HA instellen** en kies
    **Nieuw HA-cluster maken**.
-2. Selecteer de gevonden HA-verbinding. Controleer alle ingevulde gegevens, vul
+2. Selecteer de gedetecteerde HA-verbinding. Controleer alle ingevulde gegevens, vul
    het vaste adres van B in en controleer het VIP en clientnetwerk.
 3. Bekijk het plan en de firewallregels. Bevestig met je huidige wachtwoord en,
    indien ingesteld, je authenticatorcode. Wacht op afronding en log opnieuw in
@@ -57,7 +57,7 @@ voegt gerichte HA-regels toe en opent geen onbeperkt uitgaand internetverkeer.
 4. Kies op A **Node toevoegen** en kopieer de koppelcode. Deze verloopt na tien
    minuten. Behandel de code als een wachtwoord; plaats hem niet in logs of tickets.
 5. Kies op **B**: **HA instellen → Aansluiten met koppelcode**. Plak de code,
-   selecteer de eigen HA-verbinding van B, controleer de wijzigingen en bevestig.
+   selecteer de HA-verbinding van B, controleer de wijzigingen en bevestig.
 6. Wacht op afronding en log opnieuw in op B.
 
 Vóór de omzetting wordt een herstelback-up gemaakt. Mislukt de omzetting? Lees
@@ -81,7 +81,7 @@ Controleer beide. Lees [Problemen oplossen](problemen-oplossen.md) bij een afwij
 ## Een node zorgvuldig verwijderen
 
 De koppeling intrekken stopt de synchronisatie. Een node uit HA nemen stopt de
-lokale HA- en proxydiensten. Dat zijn verschillende acties. Controleer vóór het
-uit HA nemen of de andere node al verkeer via het VIP afhandelt. Volg
+lokale HA- en proxydiensten. Dat zijn verschillende acties. Controleer voordat je de node
+uit HA neemt of de andere node al verkeer via het VIP afhandelt. Volg
 [Een HA-node uit gebruik nemen](installatie.md). De beheerinterface blijft
 beschikbaar en de aparte UFW-regels voor anti-lockout blijven behouden.
