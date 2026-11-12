@@ -2,10 +2,15 @@
 
 [Nederlands](../nl/eerste-stappen.md) · [Documentation](README.md)
 
-**For:** someone who has a console address and a user account.
-**Result:** you can sign in and identify your node. Proxy managers and system
-administrators can also add a first rule.
-If ProxyPermit is not installed yet, use [Installation](installation.md) first.
+This guide explains how to sign in for the first time and choose the correct
+node. You need the management console address and a user account, supplied by
+your system administrator.
+
+A **Monitor** can view status, rules and logs. **Proxy managers** and
+**System administrators** can also add and change rules.
+
+If you still need to install ProxyPermit, follow the
+[installation guide](installation.md) first.
 
 ## 1. Get the right address
 

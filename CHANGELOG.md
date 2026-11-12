@@ -6,6 +6,8 @@ Historical deployments are not assigned retrospective release tags.
 
 ### Changed
 
+- Improve command blocks and inline code styling in the documentation for both themes and small screens.
+
 - Clarify first sign-in and rule changes for each role in both languages.
 
 - Clarify Dutch operator instructions and explain the proxy manager’s configuration limits in both languages.

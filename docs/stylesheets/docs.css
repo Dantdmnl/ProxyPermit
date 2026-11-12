@@ -8,3 +8,62 @@
 .md-typeset table:not([class]) { line-height:1.6; }
 .md-typeset code { overflow-wrap:anywhere; }
 [data-md-color-scheme="slate"] .md-typeset :not(pre) > code { color:#e8eef2; background:#223039; }
+
+/* Commands stay selectable and scroll inside their own panel on narrow screens. */
+.md-typeset pre {
+  border:1px solid var(--md-default-fg-color--lightest);
+  border-left:3px solid var(--md-accent-fg-color);
+  border-radius:8px;
+  margin-block:1.1em 1.5em;
+  background:var(--md-code-bg-color);
+  box-shadow:0 2px 8px #00000008;
+}
+.md-typeset pre > code {
+  display:block;
+  padding:1rem 3rem 1rem 1.1rem;
+  font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;
+  font-size:.82rem;
+  line-height:1.75;
+  white-space:pre;
+  overflow-x:auto;
+  overflow-wrap:normal;
+  word-break:normal;
+  tab-size:4;
+  border-radius:5px;
+}
+.md-typeset :not(pre) > code {
+  padding:.15em .4em;
+  border:1px solid var(--md-default-fg-color--lightest);
+  border-radius:4px;
+  font-size:.85em;
+  box-decoration-break:clone;
+  -webkit-box-decoration-break:clone;
+}
+.md-typeset .md-code__button { color:var(--md-default-fg-color--light); }
+.md-typeset .md-code__button:hover { color:var(--md-accent-fg-color); }
+.md-typeset .md-code__button:focus-visible { outline:2px solid var(--md-accent-fg-color); outline-offset:2px; }
+@media (max-width:600px) {
+  .md-typeset pre > code { font-size:.75rem; padding:1rem 2.5rem 1rem .8rem; }
+}
+
+/* Syntax colors: shell text, strings, variables, numbers and comments. */
+[data-md-color-scheme="default"] {
+  --pp-code-command:#175e50; --pp-code-string:#8a4215;
+  --pp-code-variable:#7141a1; --pp-code-number:#175f9c;
+  --pp-code-comment:#566d63; --pp-code-keyword:#95345f;
+}
+[data-md-color-scheme="slate"] {
+  --pp-code-command:#a2dec9; --pp-code-string:#f0c38b;
+  --pp-code-variable:#d3b5fa; --pp-code-number:#91caff;
+  --pp-code-comment:#a8b9af; --pp-code-keyword:#f5abc9;
+}
+.md-typeset :is(.language-bash,.language-sh,.language-shell,.language-powershell) pre > code { color:var(--pp-code-command); }
+.md-typeset .highlight :is(.s,.s1,.s2,.sb,.sc,.sd,.se,.sh,.si,.sr,.ss) { color:var(--pp-code-string); }
+.md-typeset .highlight :is(.nv,.vc,.vg,.vi) { color:var(--pp-code-variable); }
+.md-typeset .highlight :is(.m,.mi,.mf,.mh,.mo) { color:var(--pp-code-number); }
+.md-typeset .highlight :is(.c,.c1,.cm,.cp,.cs) { color:var(--pp-code-comment); font-style:normal; }
+.md-typeset .highlight :is(.k,.kc,.kd,.kn,.kp,.kr,.kt,.nb,.nf) { color:var(--pp-code-keyword); }
+
+[data-md-color-scheme="default"] { --pp-code-bg:#f3f6f5; }
+[data-md-color-scheme="slate"] { --pp-code-bg:#14212a; }
+.md-typeset .highlight pre, .md-typeset .highlight pre > code { background:var(--pp-code-bg); }

@@ -2,11 +2,15 @@
 
 [English](../en/getting-started.md) · [Documentatie](README.md)
 
-**Voor wie:** je hebt een adres voor de beheerinterface en een gebruikersaccount.
+Hier lees je hoe je voor het eerst inlogt en de juiste node kiest. Je hebt het
+adres van de beheerinterface en een gebruikersaccount nodig. Die krijg je van
+je systeembeheerder.
 
-**Na deze uitleg:** je kunt inloggen en zien welke node je gebruikt. Als je
-proxybeheerder of systeembeheerder bent, kun je ook een regel toevoegen.
-Is ProxyPermit nog niet geïnstalleerd? Begin dan bij [Installeren](installatie.md).
+Met de rol **Monitor** kun je status, regels en logs bekijken. Als
+**Proxybeheerder** of **Systeembeheerder** kun je ook regels toevoegen en wijzigen.
+
+Moet je ProxyPermit nog installeren? Volg dan eerst de
+[installatiehandleiding](installatie.md).
 
 ## 1. Gebruik het juiste adres
 
