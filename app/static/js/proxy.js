@@ -14,6 +14,7 @@
         ReverseBaseURL: ['"https://proxy.example.com/"', 'Extern bereikbaar basisadres voor redirects.'], LogLevel: ['Connect', 'Critical, Error, Warning, Notice, Connect of Info.'],
         Timeout: ['600', 'Maximale inactiviteit in seconden.'], MaxClients: ['100', 'Maximum gelijktijdige clients.'], ErrorFile: ['403 "/usr/share/tinyproxy/403.html"', 'HTML-pagina voor een HTTP-foutcode.']
     };
+    let activeContent = '';
     let schema = [], revision = '', original = '', csrf = document.querySelector('meta[name="csrf-token"]').content;
     let busy = false, filterRevision = '', filterOriginal = '';
     let canActivate = false, canEdit = false, staged = false, filterStaged = false;
@@ -26,19 +27,64 @@
         feedback.textContent = I18n.t(text);
         feedback.classList.toggle('error', error);
     }
+    function renderDraft() {
+        if (!$('draft-diff')) return;
+        const changed = dirty() || filterDirty();
+        const pending = staged || filterStaged;
+        $('draft-state').textContent = I18n.t(changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
+        $('draft-panel').dataset.state = changed ? 'dirty' : pending ? 'staged' : 'idle';
+        $('draft-description').textContent = I18n.t(changed ? 'Je bewerkt een concept. Dit is nog niet opgeslagen of actief.' : pending
+            ? 'Dit concept is opgeslagen. De proxy gebruikt nog de actieve versie totdat je publiceert.'
+            : 'Er is geen conceptwijziging. De editor toont de actieve configuratie.');
+        $('draft-filter-note').hidden = !(filterStaged || filterDirty());
+        const left = activeContent.split('\n'), right = $('config').value.split('\n');
+        const output = $('draft-diff'); output.replaceChildren();
+        const line = (value, added) => {
+            const element = document.createElement('span');
+            element.className = added ? 'draft-added' : 'draft-removed';
+            const safe = /^\s*(BasicAuth|Upstream)\b/i.test(value) ? value.trim().split(/\s+/)[0] + ' [redacted]' : value;
+            element.textContent = (added ? '+ ' : '- ') + safe + '\n'; output.append(element);
+        };
+        if (left.join('\n') === right.join('\n')) output.textContent = I18n.t('Geen configuratieverschillen.');
+        else if (left.length > 400 || right.length > 400) output.textContent = I18n.t('Groot configuratiebestand: controleer de volledige werkversie onder Native configuratie.');
+        else {
+            const matrix = Array.from({ length: left.length + 1 }, () => new Uint16Array(right.length + 1));
+            for (let i = left.length - 1; i >= 0; i--) for (let j = right.length - 1; j >= 0; j--)
+                matrix[i][j] = left[i] === right[j] ? 1 + matrix[i + 1][j + 1] : Math.max(matrix[i + 1][j], matrix[i][j + 1]);
+            let i = 0, j = 0;
+            while (i < left.length || j < right.length) {
+                if (i < left.length && j < right.length && left[i] === right[j]) { i++; j++; }
+                else if (j < right.length && (i === left.length || matrix[i][j + 1] >= matrix[i + 1][j])) line(right[j++], true);
+                else line(left[i++], false);
+            }
+        }
+    }
+    function draftFilterMode() {
+        const settings = [...$('config').value.matchAll(/^\s*FilterDefaultDeny\s+(Yes|No|On|Off)\b/gim)];
+        return /^(yes|on)$/i.test(settings.at(-1)?.[1] || 'No') ? 'allowlist' : 'blocklist';
+    }
     function markDirty() {
         const changed = dirty() || filterDirty();
+        renderDraft();
         const pending = staged || filterStaged;
         $('dirty').dataset.state = changed ? 'dirty' : pending ? 'staged' : 'idle';
         $('dirty').textContent = I18n.t(!revision ? 'Geen configuratie geladen' : changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
         $('config').readOnly = busy || !canEdit;
         $('filter').readOnly = busy || !canEdit || !filterRevision;
         $('insert').disabled = busy || !canEdit;
+        $('filter-policy-review').disabled = busy || !canEdit || (!/^\s*Filter\s+\S/im.test($('config').value) || draftFilterMode() === $('filter-policy-mode').value);
+        $('filter-policy-mode').disabled = busy || !canEdit;
         $('validate').disabled = busy || !revision;
         $('save').disabled = busy || !canEdit || !dirty();
         $('activate').disabled = busy || !canActivate || filterDirty() || !(dirty() || staged || filterStaged);
         $('filter-save').disabled = busy || !canEdit || !filterRevision || !filterDirty();
         $('publish-hint').hidden = !filterDirty();
+        $('draft-save').disabled = $('save').disabled;
+        $('draft-publish').disabled = $('activate').disabled;
+        $('draft-discard').disabled = busy || !canEdit || !staged;
+        $('draft-discard').hidden = !staged;
+        $('draft-filter-discard').hidden = !filterStaged;
+        $('draft-filter-discard').disabled = busy || !canEdit;
     }
     function statusList(title, items, style) {
         if (!items.length) return;
@@ -106,6 +152,8 @@
     }
     async function load() {
         const result = await request('/api/proxy/config');
+        activeContent = result.activeContent ?? result.content;
+        $('access-safety-notice').textContent = I18n.t(result.accessSafety ? (result.accessSafetyValid ? 'Anti-lockout actief: vaste beheerregels en netwerkbindingen blijven beschermd.' : 'Het actieve bestand wijkt af van het beheerprofiel. Controleer de fouten en herstel de vaste beheerregels.') : 'Anti-lockout is nog niet ingesteld. Laat het beheerprofiel via de installer vastzetten.');
         csrf = result.csrfToken; schema = result.schema; revision = result.revision; original = result.content;
         canActivate = result.canActivate; canEdit = result.canEdit;
         staged = result.staged; filterStaged = result.filterStaged;
@@ -117,6 +165,11 @@
         $('summary').replaceChildren();
         const modes = { allowlist: 'Allowlist', blocklist: 'Blocklist', disabled: 'Uitgeschakeld' };
         const filtering = result.summary.filterMode !== 'disabled';
+        $('filter-policy-mode').value = filtering ? result.summary.filterMode : 'allowlist';
+        markDirty();
+        $('filter-policy-hint').textContent = I18n.t(!canEdit ? 'Publish shared proxy policy on the primary HA node.' : filtering
+            ? 'Wijzigingen zijn pas actief na publiceren. De bestaande regels worden niet gewist.'
+            : 'Kies eerst een filterbestand om een allowlist of blocklist te gebruiken.');
         [['Filtering', modes[result.summary.filterMode]],
             ['Patroontype', filtering ? result.summary.filterType.toUpperCase() : '—'],
             ['Filterdoel', filtering ? (result.summary.filterURLs ? 'HTTP-URL’s' : 'Domeinen') : '—']].forEach(([label, value]) => {
@@ -125,6 +178,27 @@
         });
         message(staged || filterStaged ? 'Er staat een opgeslagen concept klaar om te publiceren.' : 'Bestand geladen. Wijzigingen zijn pas actief na een geslaagde activatie.');
     }
+    $('filter-policy-mode').addEventListener('change', markDirty);
+    $('filter-policy-review').addEventListener('click', () => {
+        if (busy || !canEdit || !/^\s*Filter\s+\S/im.test($('config').value)) return;
+        $('filter-policy-dialog').returnValue = '';
+        $('filter-policy-confirm').checked = false;
+        $('filter-policy-impact').textContent = I18n.t($('filter-policy-mode').value === 'allowlist'
+            ? 'Je kiest allowlist: alleen bestemmingen die bij de regels passen, worden toegestaan.'
+            : 'Je kiest blocklist: bestemmingen die bij de regels passen, worden geblokkeerd.');
+        $('filter-policy-dialog').showModal();
+    });
+    $('filter-policy-cancel').addEventListener('click', () => $('filter-policy-dialog').close('cancel'));
+    $('filter-policy-dialog').addEventListener('close', () => {
+        if ($('filter-policy-dialog').returnValue !== 'apply' || !$('filter-policy-confirm').checked || !canEdit) return;
+        const value = $('filter-policy-mode').value === 'allowlist' ? 'Yes' : 'No';
+        const lines = $('config').value.split('\n').filter(line => !/^\s*FilterDefaultDeny\s+/i.test(line));
+        if (lines.at(-1) === '') lines.pop();
+        $('config').value = [...lines, 'FilterDefaultDeny ' + value, ''].join('\n');
+        markDirty();
+        message('Filtermodus aangepast in je concept. Controleer de regels en publiceer om te activeren.');
+        $('draft-panel').scrollIntoView({ block: 'center' });
+    });
     $('section').addEventListener('change', chooseSection); $('directive').addEventListener('change', chooseDirective);
     $('choice').addEventListener('change', updateUpstreamFields);
     $('config').addEventListener('input', markDirty);
@@ -170,6 +244,13 @@
         await load();
         message(activate ? 'Configuratie opgeslagen en Tinyproxy geactiveerd.' : 'Concept opgeslagen. De draaiende proxy blijft hetzelfde.');
     }); }
+    $('draft-save').addEventListener('click', () => $('save').click());
+    $('draft-publish').addEventListener('click', () => $('activate').click());
+    $('draft-discard').addEventListener('click', () => $('discard').click());
+    $('draft-filter-discard').addEventListener('click', async () => {
+        if (!filterRevision) await work(loadFilter);
+        if (filterRevision) $('filter-discard').click();
+    });
     $('save').addEventListener('click', () => save(false));
     $('activate').addEventListener('click', () => {
         if (window.confirm(I18n.t('Configuratie publiceren? Tinyproxy wordt herstart en actieve verbindingen kunnen worden onderbroken.'))) save(true);

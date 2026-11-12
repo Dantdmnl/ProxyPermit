@@ -5,6 +5,7 @@ import hashlib
 from pathlib import Path
 
 from .tinyproxy import ConfigError, parse, validate
+from .access_safety import read_profile, protect_configuration, ensure_access
 
 HA_SETUP_REQUEST = Path('/var/lib/proxypermit/ha-setup-request.json')
 HA_SETUP_RESULT = Path('/var/lib/proxypermit/ha-setup-result.json')
@@ -33,6 +34,10 @@ def ha_proxy_config(content, topology):
     checks = validate(updated)
     if not checks['valid']:
         raise ConfigError('\n'.join(checks['errors']))
+    profile = read_profile()
+    if profile:
+        updated = protect_configuration(updated, profile)
+        ensure_access(updated)
     return updated
 
 

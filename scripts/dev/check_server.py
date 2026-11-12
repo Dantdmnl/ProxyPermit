@@ -52,6 +52,7 @@ def main():
                    PROXYPERMIT_MANAGED_HA='true' if args.deployment == 'ha' else 'false',
                    WHITELIST_PATH=str(state / 'filter.txt'), TINYPROXY_CONFIG_PATH=str(state / 'tinyproxy.conf'),
                    SESSION_STATE_FILE=str(state / 'session.json'), AUDIT_LOG_PATH=str(state / 'audit.log'),
+                   PROXYPERMIT_ACCESS_SAFETY_FILE=str(state / 'access-safety.json'),
                    SYNC_SECRET_FILE=str(state / 'sync.key'), WHITELIST_ENTRY_LOG_PATH=str(state / 'entries.json'))
         opener = build_opener(ProxyHandler({}), HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
@@ -118,7 +119,7 @@ def main():
                     raise RuntimeError('Auditlog mist het account dat de wijziging heeft opgeslagen.')
                 request('/api/proxy/config', 'PUT', {'content': config, 'revision': loaded['revision']},
                         {'X-CSRF-Token': loaded['csrfToken']}, expected=409)
-                print(f'{args.backend}/{args.deployment}: HTTP, accounts, 2FA, audit en opslaan geslaagd (workers: {workers}).')
+                print(f'{args.backend}/{args.deployment}: HTTP, accounts, 2FA, audit and save checks passed (workers: {workers}).')
                 return 0
             finally:
                 try:

@@ -16,6 +16,7 @@ import ipaddress
 import stat
 import socket
 from app.core.listeners import tcp_listener
+from app.core.proxy_health import proxy_responsive
 import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple, List
@@ -33,13 +34,14 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 PYRAD_AVAILABLE = importlib.util.find_spec('pyrad') is not None
 
 from ..core.filters import WhitelistManager
-from ..core.accounts import account_for, consume_totp, load_accounts, matching_totp_step, verify_password
+from ..core.accounts import account_role, permits, account_for, consume_totp, load_accounts, matching_totp_step, verify_password
 from ..core.audit import SharedAuditHandler, bounded_setting
 from ..core.files import file_lock
 from ..core.tinyproxy import atomic_write
 from ..core.validators import WhitelistValidator
-from .proxy import PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, record_published_policy, register_proxy_api, validate_filter
+from .proxy import PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, paired_standby, record_published_policy, register_proxy_api, validate_filter
 from .settings import register_settings
+from .permissions import required_permission
 from ..i18n import register_i18n
 
 
@@ -204,6 +206,8 @@ def _preferred_sync_hash(info: Dict[str, Any]) -> str:
 @app.after_request
 def add_cors_headers(response):
     """Add CORS and security headers, granting cross-origin access to allowed peers."""
+    if request.path.startswith('/api/') or request.path == '/health':
+        response.headers['Cache-Control'] = 'no-store'
     origin = request.headers.get('Origin')
     allowed_origin = get_allowed_origin(origin)
     if allowed_origin:
@@ -323,6 +327,7 @@ def get_app_config(public_only: bool = False):
     full = {
         'deploymentMode': 'ha' if ha_enabled() else 'standalone',
         'managedHa': managed_ha(),
+        'canEditRules': permits(current_role(), 'proxy') and not paired_standby(),
         'vipAddress': vip_address,
         'nodeAddresses': node_addresses,
         'managerPort': manager_port,
@@ -333,6 +338,8 @@ def get_app_config(public_only: bool = False):
         'authMode': 'session',
         'peerHostnames': peer_hostnames,
         'demoMode': DEMO_MODE,
+        'role': current_role(),
+        'canManageProxy': permits(current_role(), 'proxy'),
         'logoUrl': logo_url,
         'logoAlt': logo_alt
     }
@@ -536,6 +543,7 @@ def _audit_event(event: str, level: str = 'info', **details) -> None:
         'ip': _format_ip_for_logs(_client_ip()) if from_request else '-',
         'path': request.path if from_request else '-',
         'method': request.method if from_request else '-',
+        'role': current_role() if from_request else 'system',
         'username': (session.get('user') or '-') if from_request else 'proxypermit-system'
     }
     for key, value in (details or {}).items():
@@ -829,8 +837,24 @@ def requires_auth(f):
         if not _is_authenticated_request():
             _auth_audit('auth_required_failed', level='warning', reason='invalid_session')
             return authenticate()
+        if not permits(current_role(), required_permission()):
+            _audit_event('permission_denied', level='warning', required=required_permission())
+            return jsonify(error='Your role does not permit this action.'), 403
         return f(*args, **kwargs)
+    decorated.requires_session = True
     return decorated
+
+
+def enforce_browser_permissions():
+    view = app.view_functions.get(request.endpoint)
+    if not ENABLE_AUTH or request.method == 'OPTIONS' or not getattr(view, 'requires_session', False):
+        return None
+    if not _is_authenticated_request():
+        return authenticate()
+    if not permits(current_role(), required_permission()):
+        _audit_event('permission_denied', level='warning', required=required_permission())
+        return jsonify(error='Your role does not permit this action.'), 403
+    return None
 
 
 def _read_session_state() -> Dict[str, Any]:
@@ -907,6 +931,19 @@ def _is_authenticated_request() -> bool:
         return user == AUTH_USERNAME
     account = account_for(AUTH_ACCOUNTS_FILE, user)
     return bool(account and session.get('account_revision') == account['revision'])
+
+
+def current_role():
+    if not ENABLE_AUTH or not AUTH_ACCOUNTS_FILE:
+        return 'admin'
+    return account_role(account_for(AUTH_ACCOUNTS_FILE, session.get('user')))
+
+
+@app.context_processor
+def permission_context():
+    role = current_role() if _is_authenticated_request() else None
+    return dict(current_role=role, permissions={name: permits(role, name) for name in ('read', 'proxy', 'admin', 'self')},
+                role_labels={'admin': 'Systeembeheerder', 'manager': 'Proxybeheerder', 'monitor': 'Monitor'})
 
 
 def get_allowed_origin(origin: Optional[str]) -> Optional[str]:
@@ -1050,7 +1087,7 @@ def merge_remote_preview():
 @app.route('/api/auth/me', methods=['GET'])
 def auth_me():
     authenticated = _is_authenticated_request()
-    response = jsonify(authenticated=authenticated, username=session.get('user') if authenticated else None)
+    response = jsonify(authenticated=authenticated, username=session.get('user') if authenticated else None, role=current_role() if authenticated else None)
     response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -1468,7 +1505,8 @@ def health_check():
         'keepalived_state': 'UNKNOWN',
         'vip_active': None,
         'tinyproxy_active': None,
-        'tinyproxy_port_open': None
+        'tinyproxy_port_open': None,
+        'tinyproxy_responsive': None
     }
 
     if sys.platform != 'win32':
@@ -1531,6 +1569,7 @@ def health_check():
             tinyproxy_port = int(tinyproxy_port_raw)
             try:
                 checks['tinyproxy_port_open'] = tcp_listener(tinyproxy_port)
+                checks['tinyproxy_responsive'] = proxy_responsive(os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf'))
             except Exception:
                 checks['tinyproxy_port_open'] = False
 
@@ -2342,13 +2381,17 @@ def get_entries():
                 'warning': f'Whitelist file not found at {WHITELIST_PATH}'
             })
         
-        entries = whitelist_manager.read_whitelist()
+        with file_lock(str(whitelist_manager.whitelist_path) + '.lock'):
+            entries = whitelist_manager.read_whitelist()
+            revision = hashlib.sha256(whitelist_manager.whitelist_path.read_bytes()).hexdigest()
         
         logger.debug(f"Successfully loaded {len(entries)} entries")
         return jsonify({
             'success': True,
             'entries': entries,
-            'count': len(entries)
+            'count': len(entries),
+            'revision': revision,
+            'canEditRules': permits(current_role(), 'proxy') and not paired_standby()
         })
     except FileNotFoundError as e:
         logger.warning(f"Whitelist file not found: {e}")
@@ -2466,7 +2509,7 @@ def add_entry():
 def get_status():
     """Return node role, virtual IP ownership, and Tinyproxy status."""
     try:
-        filter_metadata = {'whitelist_mtime': None, 'whitelist_size': None}
+        filter_metadata = {'whitelist_mtime': None, 'whitelist_size': None, 'canEditRules': permits(current_role(), 'proxy') and not paired_standby()}
         try:
             metadata = os.stat(WHITELIST_PATH)
             filter_metadata.update(whitelist_mtime=metadata.st_mtime, whitelist_size=metadata.st_size)
@@ -2500,11 +2543,12 @@ def get_status():
             keepalived = subprocess.run(['systemctl', 'is-active', '--quiet', 'keepalived.service'],
                                         check=False, timeout=2).returncode == 0
             service = whitelist_manager.get_service_status()
+            responsive = proxy_responsive(os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf'))
             return jsonify(configured_role='MASTER' if os.getenv('PROXYPERMIT_HA_NODE') == 'a' else 'BACKUP',
-                           current_state='FAULT' if not keepalived or not service['running'] else
+                           current_state='FAULT' if not keepalived or not service['running'] or not responsive else
                            'MASTER' if owns_vip else 'BACKUP',
                            hostname=socket.gethostname(), tinyproxy_active=service['running'],
-                           tinyproxy_check_status=service['status'], vip_active=owns_vip, vip_address=vip,
+                           tinyproxy_check_status=service['status'] if responsive else 'unresponsive', vip_active=owns_vip, vip_address=vip,
                            peer_address=None, peer_online=None, last_sync=None, split_brain_warning=False,
                            **filter_metadata)
         
@@ -3010,8 +3054,16 @@ def reorder_entries():
                 'error': 'entry_ids must be an array.'
             }), 400
         
-        # Herorden entries
-        success, error = whitelist_manager.reorder_entries(entry_ids)
+        # Order-only changes keep matching semantics, but must reach the peer too.
+        with file_lock(str(whitelist_manager.whitelist_path) + '.lock'):
+            if has_pending_changes(whitelist_manager.whitelist_path):
+                return jsonify(error=PENDING_CHANGES), 409
+            expected = data.get('revision')
+            if expected is not None and expected != hashlib.sha256(whitelist_manager.whitelist_path.read_bytes()).hexdigest():
+                return jsonify(error='The rules changed. Refresh the list before reordering.'), 409
+            success, error = whitelist_manager.reorder_entries(entry_ids)
+            if success:
+                record_published_policy(whitelist_manager.whitelist_path, logger)
         
         if not success:
             return jsonify({
@@ -3500,8 +3552,10 @@ def internal_error(e):
     return "Internal Server Error", 500
 
 
+app.extensions['has_permission'] = lambda permission: permits(current_role(), permission)
 register_i18n(app)
 app.before_request(protect_browser_mutations)
+app.before_request(enforce_browser_permissions)
 register_proxy_api(app, requires_auth, _is_authenticated_request, whitelist_manager, _audit_event)
 register_settings(app, requires_auth, _is_authenticated_request,
                   lambda: (Path(AUTH_ACCOUNTS_FILE) if ENABLE_AUTH and AUTH_ACCOUNTS_FILE else None,

@@ -127,3 +127,25 @@
     .change-bar { position: static; }
     .proxy-workspace { --anchor-offset: 16px; }
 }
+
+#filter-policy-panel { margin-bottom: 20px; }
+#filter-policy-panel select { max-width: 240px; margin: 8px 12px 8px 0; }
+#filter-policy-dialog .workspace-dialog-body { padding: 20px; overflow: auto; min-height: 0; }
+#filter-policy-dialog .workspace-dialog-body p { margin: 0 0 14px; }
+#filter-policy-dialog .workspace-dialog-footer { padding: 16px 20px; border-top: 1px solid var(--line); }
+
+#filter-policy-dialog label { display: flex; align-items: flex-start; gap: 10px; }
+#filter-policy-dialog input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; flex: none; margin: 3px 0; padding: 0; }
+
+.draft-panel { margin: 20px 0; border-left: 4px solid var(--line); }
+.draft-panel[data-state=dirty], .draft-panel[data-state=staged] { border-left-color: var(--warning, #a56a18); }
+.draft-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.draft-heading h2 { margin: 2px 0 12px; }
+#draft-diff { background: var(--field, #f5f8f9); border: 1px solid var(--line); border-radius: 6px; padding: 12px; max-height: 250px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.7 ui-monospace, monospace; }
+#draft-diff span { display: block; white-space: pre-wrap; }
+.draft-added { color: #185941; background: #dff1e7; }
+.draft-removed { color: #8c2525; background: #fce7e7; }
+[data-theme=dark] .draft-added { color: #a0e0c4; background: #203a32; }
+[data-theme=dark] .draft-removed { color: #ffb4a9; background: #3b2627; }
+
+#draft-panel { scroll-margin-top: var(--anchor-offset, 200px); }

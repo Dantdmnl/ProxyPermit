@@ -17,12 +17,13 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
     <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
-<body>
+<body data-role="{{ current_role }}">
 {% include "_shell.html" %}
     <!-- Toast notifications container -->
     <div class="toast-container" id="toastContainer"></div>
 
     <div class="container" id="workspace">
+        <p class="notice" id="rulesAccessNotice" role="status" hidden>{{ _('Deze backup ontvangt gedeeld beleid van node A. Voeg regels toe, wijzig, verwijder of verplaats ze op node A; ook wanneer deze node het VIP bedient.') }}</p>
         <!-- Header -->
         <div class="header">
             <div class="header-top">
@@ -34,8 +35,8 @@
                     </div>
                 </div>
                 <div class="header-actions">
-                    <a href="/proxy" class="button button-secondary">{{ _('Proxyconfiguratie') }}</a>
-                    <button type="button" class="button button-primary new-rule-button auth-required" id="openRuleDialog">
+                    <a href="/proxy" class="button button-secondary" {% if not permissions.proxy %}hidden{% endif %}>{{ _('Proxyconfiguratie') }}</a>
+                    <button type="button" class="button button-primary new-rule-button auth-required" id="openRuleDialog" {% if not permissions.proxy %}hidden{% endif %}>
                         <span aria-hidden="true">+</span> {{ _('Nieuwe regel') }}
                     </button>
                     <button id="logoutButton" class="button button-secondary" onclick="logout()" hidden>{{ _('Uitloggen') }}</button>
@@ -77,13 +78,13 @@
                         <span id="manualSyncSpinner" class="loading" style="display: none;"></span>
                         <span id="manualSyncLabel">{{ _('🔄 Handmatige sync') }}</span>
                     </button>
-                    <button class="button button-success" onclick="restartService()">
+                    <button class="button button-success" onclick="restartService()" {% if not permissions.proxy %}hidden{% endif %}>
                         {{ _('Herstart Service') }}
                     </button>
-                    <button class="button button-primary" onclick="openExportModal()" title="{{ _('Exporteer whitelist naar bestand') }}">
+                    <button class="button button-primary" onclick="openExportModal()" {% if not permissions.proxy %}hidden{% endif %} title="{{ _('Exporteer whitelist naar bestand') }}">
                         {{ _('📥 Exporteren') }}
                     </button>
-                    <button class="button button-primary" onclick="openImportModal()" title="{{ _('Importeer whitelist vanaf bestand') }}">
+                    <button class="button button-primary" onclick="openImportModal()" {% if not permissions.proxy %}hidden{% endif %} title="{{ _('Importeer whitelist vanaf bestand') }}">
                         {{ _('📤 Importeren') }}
                     </button>
 

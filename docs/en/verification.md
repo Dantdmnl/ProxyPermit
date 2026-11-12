@@ -87,3 +87,105 @@ control, and public notices. Playwright covers NL/EN, both themes, mobile logs,
 date-filter requests, history/live transitions, and destructive-button contrast.
 The deployment organization must still validate its own privacy notice,
 external logs, backup/export retention, network plan, and workload.
+
+## 12 November 2026: operator workflows and HA responsiveness
+
+The working build was checked with the full project checks and isolated browser
+fixtures. The Windows Python suite runs 144 tests with 7 platform-specific skips;
+the Linux installer runs the full suite during each lab upgrade. Playwright covers
+EN/NL, light/dark themes, small viewports, keyboard interaction, backup write
+blocking and the reviewed filter-mode draft workflow. Documentation screenshots
+are generated from isolated fixtures with `PP_DOC_SCREENSHOTS=1`.
+
+On the running VirtualBox lab, rule order was changed on A and verified in B's
+already-open page without manual reload, then restored. Tinyproxy on A was
+temporarily stopped with SIGSTOP while Keepalived stayed active. B acquired the
+VIP, its page reported the active role, and a client received an HTTP response
+through the VIP. A resumed automatically, recovered the preferred VIP and the
+backup display returned to standby. A separate rescue timer also sent SIGCONT.
+The standalone GUI activated the opposite filter mode and restored its original
+configuration. Both HA nodes remained paired and policy synchronization recovered.
+
+These checks do not establish production availability across a physical network
+partition, upstream outage or shared hypervisor failure. Account replication and
+granular roles were still separate work at this stage. The later [role implementation](roles.md) adds restricted local access.
+
+## 12 November 2026: anti-lockout and visible drafts
+
+The standalone and both HA lab nodes were upgraded with a reviewed single-host
+management source, their actual SSH/web ports and a root-owned safety profile
+(mode 0640, service-group readable). Existing firewall activation state was kept.
+The empty-firewall installation path exposed an invalid numeric insert position;
+it rolled back, and the corrected prepend operation passed on that same host.
+
+Authenticated API attempts to remove the protected Allow block, change the pinned
+proxy port or put a Deny before the management exceptions were rejected without
+changing the active file or creating a draft. A shared Timeout change was then
+published on A, reconciled on B with B's local safety block intact, and restored
+on both nodes. The complete real failover/recovery and rule-order checks passed
+again after the upgrades. Dedicated UFW safety rules are excluded from HA cleanup.
+
+Browser checks cover unsaved/saved/active draft states, the redacted difference
+view, save/discard actions and the existing theme/language/mobile matrix.
+The installer review and non-root handoff retain the explicit protected addresses
+and host-side ports. Windows checks run 144 Python tests with 7 platform skips.
+Destination filters and proxy authentication still apply: this protects the
+configured network access, not arbitrary routing or upstream policy changes.
+
+The final Linux run passed all 144 Python tests without skips, the shell checks,
+and isolated HTTP/account/2FA/audit/save checks with both Gunicorn and Granian
+(two workers each). The extra backend was installed in a separate test venv;
+the live deployment dependencies were kept intact.
+
+## Documentation website
+
+The Zensical site builds with `--clean --strict`, including link and anchor
+validation. The same build was checked from a generated release archive.
+Playwright checks cover English/Dutch guides, light/dark mode, desktop/mobile
+layout, translation links, real search results and keyboard closing. The local
+preview uses the `/ProxyPermit/` project prefix to check Pages-relative paths.
+Actionlint validates the Pages workflow. This prepares publication; it does not
+mean GitHub Pages has already been enabled or deployed.
+
+## 12 November 2026: local account roles
+
+The Windows suite passes 153 Python tests (7 platform-specific skips); the Linux
+installer runs all 153 without skips. The complete checks also pass for typing,
+Python quality, frontend contracts, shell syntax and isolated HTTP/account/2FA
+checks with Gunicorn and Granian. Browser coverage includes monitor and proxy
+manager interfaces, NL/EN, both themes, mobile layout, role selection and session
+revocation. Existing role-less accounts retain administrator access.
+
+The three VirtualBox nodes were upgraded. Temporary monitor accounts were
+created through the authenticated API, promoted and removed again. The old
+sessions became invalid while passwords remained usable. Monitors could not
+read native configuration or restart Tinyproxy; proxy managers could restart
+standalone Tinyproxy but could not administer HA or accounts. The paired backup
+kept shared policy read only, and both HA status panels remained synchronized.
+Attempts to change the service user were rejected without creating a draft or
+changing active files. Isolated tests also cover protected system drafts,
+optional monitor 2FA and last-administrator protection in the CLI.
+
+All three SSH connections report `10.0.2.2` as their source through VirtualBox
+NAT. The shared management-source display is therefore expected in this lab;
+it is not each node's own IP address. Source restrictions do not replace sign-in.
+
+Monitor rule-layout regression checks cover full-width text at 320, 390 and
+1440 pixels in both languages and themes. Filter exports are now reserved for
+proxy/system administrators; direct monitor export requests return 403. These
+checks passed on all three lab nodes using temporary accounts that were removed.
+
+## Release documentation and historical Actions cleanup
+
+The release instructions now separate preparation, CI, tagging, GitHub Release
+assets and Pages deployment. Account-migration examples explicitly create an
+admin before enabling local accounts. A strict documentation build is a required
+dependency of release packaging. Actionlint, version checks and clean/strict
+Zensical builds passed, including a build from the generated source archive.
+
+On 12 November 2026, 39 completed runs of the obsolete Pylint workflow were
+removed. A before/after inventory confirmed that all 46 current workflow runs
+and 61 current artifacts were retained. No current artifacts belonged to the
+obsolete runs. An old commit still resolved directly by SHA afterwards: Actions
+cleanup does not erase GitHub source history. These changes do not create a
+release, move a stable tag or establish a new remote CI result.

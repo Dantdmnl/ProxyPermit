@@ -18,6 +18,8 @@
     document.querySelectorAll('[data-action]').forEach(button => button.addEventListener('click', () => {
         action = button.dataset.action;
         target = button.dataset.username;
+        $('accountRoleGroup').hidden = !['create', 'role'].includes(action);
+        $('accountRole').value = button.dataset.role || 'monitor';
         form.reset();
         $('accountError').textContent = '';
         $('accountDialogTitle').textContent = button.textContent.trim();
@@ -51,13 +53,13 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf },
                 body: JSON.stringify({
-                    action, username: target || $('accountName').value.trim(),
+                    action, role: $('accountRole').value, username: target || $('accountName').value.trim(),
                     password: $('currentAccountPassword').value, newPassword: $('newAccountPassword').value,
                     otp: $('accountOtp').value.trim(), code: $('accountOtp').value.trim()
                 })
             });
             const result = await response.json();
-            if (!response.ok) throw new Error(result.error || I18n.t('Onbekende fout'));
+            if (!response.ok) throw new Error(I18n.t(result.error || 'Onbekende fout'));
             if (action === 'totp-start') {
                 action = 'totp-confirm';
                 $('currentAccountPassword').value = '';

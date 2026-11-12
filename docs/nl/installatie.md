@@ -2,6 +2,14 @@
 
 [English](../en/installation.md) · [Documentatie](README.md)
 
+**Voor:** de systeembeheerder die de server installeert of onderhoudt. Wil je een
+bestaande beheerinterface gebruiken? Begin bij [Eerste stappen](eerste-stappen.md).
+
+Zorg voor een ondersteunde Debian-/Ubuntu-host, root- of sudotoegang en een
+onafhankelijke manier om de server weer te bereiken. Haal de broncode op van de
+versie die je wilt installeren. Voer opdrachten uit vanuit de map met `install.sh`.
+De voorbeelden gebruiken documentatieadressen; vervang ze door je eigen netwerkgegevens.
+
 ## Kies je route
 
 - [Zelfstandige node installeren](#nieuwe-installatie-op-debian-of-ubuntu)
@@ -36,6 +44,20 @@ beheerderswachtwoord. Het installeert de benodigde pakketten, bouwt een release
 in een virtuele Python-omgeving en voert de tests uit. Een zelfstandige node
 gebruikt een eigen serviceaccount met een sudoers-regel voor het herstarten
 van Tinyproxy.
+
+### Beheertoegang beschermen
+
+De wizard vraagt naar het vertrouwde beheer-IP of netwerk en de echte SSH- en
+webpoorten op de host. Controleer deze gegevens in het overzicht. Vul het
+bronadres in dat de host daadwerkelijk ziet; NAT en een reverse proxy kunnen
+dit veranderen. Kies geen breed netwerk om de installatie makkelijker te maken.
+Een lokale installer kan het netwerk van een externe beheerder niet veilig raden.
+
+Gebruik bij automatisering of een bestaande installatie de expliciete opties
+`--management-cidr`, `--management-ssh-port` en `--management-web-port`.
+Bij het [anti-lockoutprofiel](beheer.md#anti-lockoutprofiel) staan een voorbeeld,
+herstelgedrag en beperkingen. De installer behoudt de activatiestatus van UFW
+en bestaande vaste uitzonderingen.
 
 ### Beheerconsole openen
 
@@ -132,6 +154,53 @@ in stand. Staat UFW uit, dan worden de regels opgeslagen voor wanneer je UFW
 activeert. Het herstelplan bevat de oorspronkelijke UFW-regelbestanden en
 weigert automatisch herstel als die bestanden intussen zijn gewijzigd.
 
+Gebruik twee schone Debian- of Ubuntu-hosts met systemd, vaste IPv4-adressen op
+hetzelfde netwerk en een vrij virtueel IP-adres. De hosts moeten unicast VRRP
+(IP-protocol 112) onderling kunnen uitwisselen. Sta TCP 3128 toe vanaf het
+gekozen clientnetwerk en kies een VRRP-ID die op dat netwerk vrij is.
+
+Kies in `sudo bash install.sh` voor **Two-node HA**. De wizard vraagt de
+clustergegevens uit, toont een samenvatting en wacht op bevestiging. Gebruik
+de pijltjestoetsen of cijfers in een geschikte terminal. In eenvoudige
+terminals werkt de genummerde invoer. Stoppen is de standaard bij het
+bevestigingsscherm.
+
+Voer dit op beide hosts uit. Gebruik op de tweede host `node=b` en vul per host
+de eigen netwerkinterface in. Vervang de voorbeeldadressen door je eigen adressen.
+
+```bash
+node=a
+iface=ens18
+cluster=(
+  --mode ha --ha-node "$node" --ha-interface "$iface"
+  --ha-node-a 192.0.2.11 --ha-node-b 192.0.2.12
+  --ha-vip 192.0.2.10/24 --ha-client-cidr 192.0.2.0/24 --ha-vrid 51
+)
+bash install.sh "${cluster[@]}" --plan        # Alleen het plan
+sudo bash install.sh "${cluster[@]}" --apply  # Installeer deze node
+```
+
+Clients gebruiken het virtuele IP op poort 3128. De beheerde Keepalived-controle test of Tinyproxy lokaal
+HTTP beantwoordt. Node A heeft voorrang en node B neemt over wanneer A uitvalt.
+De beheerconsole luistert per node op localhost. Gebruik per host een SSH-tunnel
+zoals bij een zelfstandige installatie. De installer begint met een lege
+allowlist. Koppel de nodes via **Instellingen → Hoge beschikbaarheid → Node toevoegen**.
+Publiceer het beleid op A en controleer vóór ingebruikname van het virtuele IP
+dat B dezelfde revisie heeft toegepast.
+
+Bij upgrades van bestaande clusters blijven de bestaande Keepalived- en
+sync-instellingen behouden. De installer weigert een wijziging van topologie
+tijdens een upgrade.
+
+Voor bestaande clusters met legacy-whitelistsync gebruiken de peers standaard
+HTTPS met certificaatcontrole. Gebruik peeradressen die op het certificaat
+staan en stel `SYNC_SCHEME=https`, `SYNC_VERIFY_CERT=true` en zo nodig
+`SYNC_PORT` in. Bij TLS-terminatie
+moet ProxyFix uitsluitend via de vertrouwde reverse proxy bereikbaar zijn.
+`SYNC_ALLOW_INSECURE_TRANSPORT=true` maakt een tijdelijke uitzondering mogelijk
+voor oude omgevingen. Nieuw ingerichte, gekoppelde HA-clusters synchroniseren
+gepubliceerd beleid automatisch van A naar B.
+
 ### Een HA-node uit bedrijf nemen
 
 Controleer tijdens een onderhoudsvenster dat de andere node het virtuele IP
@@ -156,74 +225,32 @@ pad dezelfde `--install-dir` als bij installatie. De actie is bedoeld voor
 beheerde nodes met een vastgelegde set UFW-regels. Voor oudere clusters is een
 afzonderlijke migratie nodig.
 
-Gebruik twee schone Debian- of Ubuntu-hosts met systemd, vaste IPv4-adressen op
-hetzelfde netwerk en een vrij virtueel IP-adres. De hosts moeten unicast VRRP
-(IP-protocol 112) onderling kunnen uitwisselen. Sta TCP 3128 toe vanaf het
-gekozen clientnetwerk en kies een VRRP-ID die op dat netwerk vrij is.
-
-Kies in `sudo bash install.sh` voor **Two-node HA**. De wizard vraagt de
-clustergegevens uit, toont een samenvatting en wacht op bevestiging. Gebruik
-de pijltjestoetsen of cijfers in een geschikte terminal. In eenvoudige
-terminals werkt de genummerde invoer. Stoppen is de standaard bij het
-bevestigingsscherm.
-
-Voer dit op beide hosts uit. Gebruik op de tweede host `node=b` en vul per host
-de eigen netwerkinterface in. Vervang de voorbeeldadressen door je eigen adressen.
-
-```bash
-node=a
-iface=ens18
-cluster=(
-  --mode ha --ha-node "$node" --ha-interface "$iface"
-  --ha-node-a 192.0.2.11 --ha-node-b 192.0.2.12
-  --ha-vip 192.0.2.10/24 --ha-client-cidr 192.0.2.0/24 --ha-vrid 51
-)
-bash install.sh "${cluster[@]}"               # Alleen het plan
-sudo bash install.sh "${cluster[@]}" --apply  # Installeer deze node
-```
-
-Clients gebruiken het virtuele IP op poort 3128. Keepalived bewaakt de lokale
-Tinyproxy-poort. Node A heeft voorrang en node B neemt over wanneer A uitvalt.
-De beheerconsole luistert per node op localhost. Gebruik per host een SSH-tunnel
-zoals bij een zelfstandige installatie. De installer begint met een lege
-allowlist. Koppel de nodes via **Instellingen → Hoge beschikbaarheid → Node toevoegen**.
-Publiceer het beleid op A en controleer vóór ingebruikname van het virtuele IP
-dat B dezelfde revisie heeft toegepast.
-
-Bij upgrades van bestaande clusters blijven de bestaande Keepalived- en
-sync-instellingen behouden. De installer weigert een wijziging van topologie
-tijdens een upgrade.
-
-Voor bestaande clusters met legacy-whitelistsync gebruiken de peers standaard
-HTTPS met certificaatcontrole. Gebruik peeradressen die op het certificaat
-staan en stel `SYNC_SCHEME=https`, `SYNC_VERIFY_CERT=true` en zo nodig
-`SYNC_PORT` in. Bij TLS-terminatie
-moet ProxyFix uitsluitend via de vertrouwde reverse proxy bereikbaar zijn.
-`SYNC_ALLOW_INSECURE_TRANSPORT=true` maakt een tijdelijke uitzondering mogelijk
-voor oude omgevingen. Nieuw ingerichte, gekoppelde HA-clusters synchroniseren
-gepubliceerd beleid automatisch van A naar B.
-
 ## Persoonlijke beheerdersaccounts en optionele 2FA
 
 Een nieuwe installatie maakt een persoonlijk beheeraccount aan. Onder
 **Instellingen** kun je accounts toevoegen of verwijderen, je wachtwoord wijzigen
-en optionele 2FA voor je eigen account instellen. Alle lokale accounts zijn
-beheerders. Voor wijzigingen bevestig je je wachtwoord en, als die actief is,
+en optionele 2FA voor je eigen account instellen. Het eerste account is systeembeheerder. Voor nieuwe accounts kies je een
+[passende rol](rollen.md). Voor wijzigingen bevestig je je wachtwoord en, als die actief is,
 een nieuwe authenticatorcode. De terminal blijft beschikbaar voor herstel.
 Gebruik HTTPS voor beheer op afstand. Lokaal beheer via loopback kan via HTTP.
 
 ```bash
 cd /opt/proxypermit/current
-sudo .venv/bin/python scripts/tools/accounts.py set alice --totp
-sudo .venv/bin/python scripts/tools/accounts.py set bob
+sudo .venv/bin/python scripts/tools/accounts.py set alice --role admin --totp
+sudo .venv/bin/python scripts/tools/accounts.py set bob --role manager
 sudo .venv/bin/python scripts/tools/accounts.py list
 ```
+
+Dit voorbeeld maakt expliciet een systeembeheerder en een proxybeheerder aan.
+Laat `--totp` weg als je tijdens deze stap geen optionele 2FA wilt instellen.
 
 Bij verlies van de authenticator kan de serverbeheerder een nieuwe sleutel
 registreren met `set GEBRUIKER --totp`. Gebruik `--no-totp` om 2FA voor dat
 account uit te schakelen. Een accountwijziging trekt de bestaande sessies voor
 dat account in. Bij een bestaande installatie kun je eerst accounts aanmaken en
-daarna `AUTH_ACCOUNTS_FILE=/var/lib/proxypermit/accounts.json` instellen en ProxyPermit
+controleer daarna met `list` of minstens één account de rol `admin` heeft. Nieuwe
+CLI-accounts krijgen standaard de rol `monitor` als je geen `--role` opgeeft. Stel
+vervolgens `AUTH_ACCOUNTS_FILE=/var/lib/proxypermit/accounts.json` instellen en ProxyPermit
 herstarten. Dit kiest lokale accounts in plaats van de oude enkele login of RADIUS.
 
 Op HA-nodes registreer je accounts en authenticatoren per node. Log op elke node
@@ -239,6 +266,14 @@ Voor een installatie die door dit installatieprogramma wordt beheerd, haal je
 eerst de gewenste release op en voer je vanuit die bronmap een upgrade uit.
 De opdracht gebruikt de broncode in die map. Gebruik bij een afwijkend
 installatiepad in alle opdrachten dezelfde `--install-dir`.
+
+Stem opgeslagen configuratieconcepten vóór de upgrade af met degene die eraan
+werkt. Publiceer of verwerp ze bewust; anti-lockout overschrijft een openstaand
+concept niet. Houd een herstelconsole beschikbaar en bewaar de back-upnaam.
+Wachtwoorden, 2FA en beheertoegang van bestaande accounts zonder rol blijven
+behouden. Controleer na bijwerken de [rollen](rollen.md), het beheerbronprofiel en
+de HA-beleidsstatus op beide nodes. Een monitor kan geen beleid exporteren;
+gebruik daarvoor vóór de upgrade een proxy- of systeembeheerder.
 
 ```bash
 sudo bash install.sh --upgrade --plan

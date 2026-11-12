@@ -586,6 +586,9 @@ class WhitelistManager:
         """Reorder filter rules without creating a backup."""
         current_entries = self.read_whitelist()
         
+        if any(type(identifier) is not int for identifier in entry_ids):
+            return False, 'Rule IDs must be integers.'
+
         # Require every ID to be valid and unique.
         if len(entry_ids) != len(current_entries):
             return False, 'The number of IDs must match the number of rules.'

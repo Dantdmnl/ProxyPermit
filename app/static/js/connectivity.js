@@ -77,7 +77,7 @@
         const method = (options?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
         const unsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(method);
         const validation = method === 'POST' && ['/api/validate', '/api/proxy/config/validate',
-            '/api/settings/ha/preview', '/api/merge/remote-preview'].includes(url.pathname);
+            '/api/settings/ha/preview', '/api/merge/remote-preview', '/api/proxy/ha-replication/status', '/api/proxy/ha-policy/status'].includes(url.pathname);
         const mutation = unsafeMethod && !validation;
         if (local && unsafeMethod && state !== 'online') {
             show();

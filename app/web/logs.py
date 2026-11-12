@@ -14,12 +14,64 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from ..core.tinyproxy import parse
+from ..core.proxy_health import HEALTH_PATH, probe_settings
 from ..core.audit import audit_lock, audit_paths, bounded_setting, open_audit, record_time
 
 SERVICES = ('manager', 'tinyproxy', 'proxy_traffic', 'keepalived', 'audit')
 UNITS = ('proxypermit.service', 'proxypermit-ha-policy.service', 'proxypermit-ha-tls.service',
          'proxypermit-ha-setup.service', 'proxypermit-ha-retire.service', 'tinyproxy.service', 'keepalived.service')
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+
+
+def identify_health_checks(records):
+    """Recognize complete, local probe connections before IP redaction.
+
+    Never suppress warnings/errors, remote requests or an unmatched descriptor.
+    Raw metadata stays private and is removed from the returned API objects.
+    """
+    try:
+        _, host = probe_settings(os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf'))
+    except (OSError, ValueError):
+        host = 'tinyproxy.stats'
+    connections, recent = {}, {}
+    for _, item in sorted(enumerate(records), key=lambda row: (row[1]['_time'], -row[0])):
+        if item['service'] not in ('tinyproxy', 'proxy_traffic'):
+            continue
+        raw = item.get('_raw', '')
+        process = (item.get('_origin'), item.get('_pid'))
+        if not isinstance(process[1], (str, int)) or not process[1]:
+            continue
+        connect = re.fullmatch(r'Connect \(file descriptor (\d+)\): (\S+)', raw)
+        if connect:
+            try:
+                local = ipaddress.ip_address(connect[2]).is_loopback
+            except ValueError:
+                local = False
+            connections[(*process, connect[1])] = (local, item)
+            recent.pop(process, None)
+            continue
+        request_line = re.fullmatch(r'Request \(file descriptor (\d+)\): GET (http://\S+) HTTP/1\.[01]', raw)
+        if request_line:
+            previous = connections.pop((*process, request_line[1]), None)
+            try:
+                target = urlsplit(request_line[2])
+                target_host = target.hostname
+            except ValueError:
+                recent.pop(process, None)
+                continue
+            if (previous and previous[0] and 0 <= item['_time'] - previous[1]['_time'] <= 1
+                    and target_host == host.lower() and target.path == HEALTH_PATH and not target.query
+                    and item['level'] in ('DEBUG', 'INFO') and previous[1]['level'] in ('DEBUG', 'INFO')):
+                item['healthCheck'] = previous[1]['healthCheck'] = True
+                recent[process] = item['_time']
+            else:
+                recent.pop(process, None)
+        elif raw in ('Request for the stathost.', f'Proxying refused on filtered domain "{host}"') and item['level'] in ('DEBUG', 'INFO'):
+            if 0 <= item['_time'] - recent.get(process, -10) <= 1:
+                item['healthCheck'] = True
+            recent.pop(process, None)
+        else:
+            recent.pop(process, None)
 
 
 def policy():
@@ -180,6 +232,7 @@ def journal_records(namespace, since, until, maximum):
             priority = int(item.get('PRIORITY', 6))
             level = 'ERROR' if priority <= 3 else 'WARNING' if priority == 4 else 'DEBUG' if priority == 7 else 'INFO'
             records.append(dict(timestamp=iso(timestamp), level=level, service=service, message=scrub_message(raw),
+                                _raw=raw, _pid=item.get('_PID'), _origin=namespace or 'host',
                                 _time=timestamp, _id=item['__CURSOR'] if isinstance(item.get('__CURSOR'), str) else hashlib.sha256(line.encode()).hexdigest()))
         except (ValueError, KeyError, TypeError, OverflowError, RecursionError):
             incomplete = True
@@ -250,6 +303,7 @@ def proxy_file_records(since, until, maximum):
                         level = match[1] if match[1] in LEVELS else 'ERROR' if match[1] == 'CRITICAL' else 'INFO'
                         records.append(dict(timestamp=iso(timestamp), level=level,
                             service='proxy_traffic' if traffic_message(match[3]) else 'tinyproxy', message=message,
+                            _raw=match[3], _pid=re.search(r'\[(\d+)\]', text)[1], _origin='tinyproxy-file',
                             _time=timestamp, _id=hashlib.sha256(line).hexdigest()))
                 finally:
                     if stream is not handle:
@@ -325,6 +379,9 @@ def query_logs(arguments, audit_path):
         except (OSError, ValueError, EOFError):
             errors.append('Tinyproxy file logging')
     configuration['externalFileLogging'] = external_file
+    identify_health_checks(records)
+    include_health = arguments.get('health') == 'include' or bool(query)
+    hidden_health = 0
     seen, filtered = set(), []
     for item in records:
         days = configuration['auditDays'] if item['service'] == 'audit' else configuration['trafficDays'] if item['service'] in ('tinyproxy', 'proxy_traffic') else configuration['managementDays']
@@ -334,13 +391,16 @@ def query_logs(arguments, audit_path):
             continue
         if query and query not in ' '.join(str(item.get(key, '')) for key in ('message', 'timestamp', 'level', 'service', 'audit')).casefold():
             continue
+        if item.get('healthCheck') and not include_health:
+            hidden_health += 1
+            continue
         if item['_id'] in seen:
             continue
         seen.add(item['_id'])
         filtered.append(item)
     filtered.sort(key=lambda item: (item['_time'], item['_id']), reverse=True)
     page = [{key: value for key, value in item.items() if not key.startswith('_')} for item in filtered[offset:offset + limit]]
-    return dict(success=True, logs=page, pagination=dict(offset=offset, limit=limit, total=len(filtered), returned=len(page),
+    return dict(success=True, logs=page, healthChecksHidden=hidden_health, pagination=dict(offset=offset, limit=limit, total=len(filtered), returned=len(page),
                 hasMore=offset + len(page) < len(filtered), query=query, anchor=iso(until), truncated=truncated),
                 serviceCounts={name: sum(item['service'] == name for item in filtered) for name in SERVICES},
                 coverage=dict(since=iso(since), until=iso(until), incomplete=bool(truncated or errors or malformed),

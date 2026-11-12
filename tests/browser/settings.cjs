@@ -1,7 +1,7 @@
 // Run with Playwright installed on NODE_PATH and the project's Python virtualenv.
 const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
-const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -110,6 +110,83 @@ async function checkConnectivity(page, base, signedIn) {
     }
 }
 
+async function checkBackupAndStatus(page, base) {
+    for (const endpoint of ['entries', 'status']) await page.route('**/api/' + endpoint, async route => {
+        const response = await route.fetch();
+        await route.fulfill({ response, json: { ...await response.json(), canEditRules: false,
+            ...(endpoint === 'status' ? { current_state: 'MASTER', configured_role: 'BACKUP', vip_active: true, vip_address: '192.0.2.10' } : {}) } });
+    });
+    let writes = 0;
+    const observe = request => { if (/\/api\/entries/.test(request.url()) && request.method() !== 'GET') writes++; };
+    page.on('request', observe);
+    for (const locale of ['en', 'nl']) {
+        await page.goto(base + '/?lang=' + locale);
+        await page.locator('#rulesAccessNotice:not([hidden])').waitFor();
+        const card = page.locator('.entry-item').first();
+        assert.equal(await card.getAttribute('draggable'), 'false');
+        await card.locator('.button-danger').click({ force: true });
+        await wait(1200);
+        assert.equal(await page.locator('#rulesAccessNotice').isVisible(), true);
+        assert.match(await page.locator('#rulesAccessNotice').textContent(), /node A/);
+        assert.equal(await page.locator('#confirmModal').isVisible().catch(() => false), false);
+    }
+    assert.equal(writes, 0);
+    page.off('request', observe);
+    for (const endpoint of ['entries', 'status']) await page.unroute('**/api/' + endpoint);
+    await page.goto(base + '/?lang=en');
+}
+
+async function checkModeAndCapture(page, base) {
+    for (const locale of ['en', 'nl']) {
+        await page.goto(base + '/proxy?lang=' + locale);
+        await page.locator('#filter-policy-mode:not([disabled])').waitFor();
+        const original = await page.locator('#config').inputValue();
+        await page.locator('#filter-policy-mode').selectOption('allowlist');
+        await page.locator('#filter-policy-review').click();
+        const dialog = page.locator('#filter-policy-dialog');
+        await dialog.waitFor();
+        if (process.env.PP_DOC_SCREENSHOTS) {
+            const directory = path.join(root, 'docs/assets', locale);
+            mkdirSync(directory, { recursive: true });
+            await page.setViewportSize({ width: 1360, height: 900 });
+            await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+            await dialog.screenshot({ path: path.join(directory, 'filter-mode.png') });
+        }
+        await dialog.locator('button[value=apply]').click();
+        assert.equal(await dialog.evaluate(value => value.open), true);
+        await page.locator('#filter-policy-confirm').check();
+        await dialog.locator('button[value=apply]').click();
+        await page.locator('#draft-panel[data-state=dirty]').waitFor();
+        assert.match(await page.locator('#config').inputValue(), /FilterDefaultDeny Yes/);
+        assert.equal(await page.locator('#draft-panel').getAttribute('data-state'), 'dirty');
+        assert.match(await page.locator('#draft-diff').textContent(), /\+ FilterDefaultDeny Yes/);
+        if (process.env.PP_DOC_SCREENSHOTS) await page.locator('#draft-panel').screenshot({ path: path.join(root, 'docs/assets', locale, 'draft.png') });
+        const saved = await (await page.request.get(base + '/api/proxy/config')).json();
+        assert.equal(saved.content, original, 'Mode selection must not save or activate automatically');
+        await page.locator('#draft-save').click();
+        await page.locator('#draft-panel[data-state=staged]').waitFor();
+        assert.match(await page.locator('#draft-diff').textContent(), /\+ FilterDefaultDeny Yes/);
+        const persisted = await (await page.request.get(base + '/api/proxy/config')).json();
+        assert.equal(persisted.activeContent, original);
+        assert.equal(persisted.staged, true);
+        page.once('dialog', dialog => dialog.accept());
+        await page.locator('#draft-discard').click();
+        await page.locator('#draft-panel[data-state=idle]').waitFor();
+        await page.locator('#config').evaluate((input, value) => { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); }, original);
+        if (process.env.PP_DOC_SCREENSHOTS) {
+            await page.goto(base + '/?lang=' + locale);
+            await page.locator('.entry-item').first().waitFor();
+            await page.locator('#nodeHostname').evaluate(value => value.textContent = 'demo-node');
+            await page.screenshot({ path: path.join(root, 'docs/assets', locale, 'overview.png') });
+            await page.locator('#openRuleDialog').click();
+            await page.locator('#ruleDialog').screenshot({ path: path.join(root, 'docs/assets', locale, 'new-rule.png') });
+            await page.keyboard.press('Escape');
+        }
+    }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(base + '/?lang=en');
+}
+
 async function main() {
     const state = mkdtempSync(path.join(os.tmpdir(), 'proxypermit-playwright-'));
     let processHandle, browser;
@@ -132,7 +209,7 @@ async function main() {
                 MANAGER_SCHEME: 'http', DEPLOYMENT_MODE: 'standalone', DEMO_MODE: 'true',
                 WHITELIST_PATH: filter, TINYPROXY_CONFIG_PATH: config, SESSION_STATE_FILE: file('session.json'),
                 NONCE_STORE_FILE: file('nonces.json'), AUDIT_LOG_PATH: file('audit.log'),
-                WHITELIST_ENTRY_LOG_PATH: file('entries.json')
+                PROXYPERMIT_ACCESS_SAFETY_FILE: file('access-safety.json'), WHITELIST_ENTRY_LOG_PATH: file('entries.json')
             }
         });
         for (let attempt = 0; ; attempt++) {
@@ -155,7 +232,7 @@ async function main() {
         }
         const openSettings = async () => {
             await page.getByRole('link', { name: 'Settings' }).click();
-            await page.getByRole('heading', { name: 'Administrators' }).waitFor();
+            await page.getByRole('heading', { name: 'Users and roles' }).waitFor();
         };
         await page.goto(base + '/?lang=en');
         for (const route of ['/', '/proxy', '/settings', '/missing']) {
@@ -233,6 +310,8 @@ async function main() {
         await page.locator('#workspace').waitFor();
         assert.equal(loginRequests, 1);
         await checkConnectivity(page, base, true);
+        await checkBackupAndStatus(page, base);
+        await checkModeAndCapture(page, base);
         await checkBrand();
         const remove = page.locator('.entry-item .button-danger').first();
         for (const mode of ['light','dark']) {
@@ -264,6 +343,7 @@ async function main() {
         assert.equal(await page.locator('.shell-label').first().evaluate(label => getComputedStyle(label).fontSize), '12px');
         const rulesLink = page.getByRole('link', { name: 'Filter rules' });
         await rulesLink.click();
+        await page.locator('.shell-nav a[aria-current=location]').waitFor();
         assert.equal(await rulesLink.getAttribute('aria-current'), 'location');
         assert.equal(new URL(page.url()).hash, '#filter-rules');
         await page.getByRole('button', { name: 'New rule' }).click();
@@ -572,6 +652,53 @@ async function main() {
         await page.getByText('reviewer', { exact: true }).waitFor();
         const other = await browser.newContext();
         assert.equal((await other.request.post(base + '/api/auth/login', { data: { username: 'reviewer', password: secondPassword } })).status(), 200);
+        const monitorPage = await other.newPage();
+        await monitorPage.goto(base + '/?lang=en');
+        await monitorPage.locator('#rulesAccessNotice:not([hidden])').waitFor();
+        assert.match(await monitorPage.locator('#rulesAccessNotice').textContent(), /monitor role/);
+        assert.equal(await monitorPage.locator('#openRuleDialog').isVisible(), false);
+        assert.equal(await monitorPage.locator('.shell-nav a[href="/proxy"]').count(), 0);
+        assert.equal(await monitorPage.locator('.entry-item[draggable="true"]').count(), 0);
+        for (const locale of ['en', 'nl']) {
+            await monitorPage.goto(base + '/settings?lang=' + locale);
+            for (const mode of ['light', 'dark']) {
+                await monitorPage.locator('#themePreference').selectOption(mode);
+                await monitorPage.setViewportSize({ width: 390, height: 844 });
+                assert.equal(await monitorPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+                assert.equal(await monitorPage.locator('[data-action="password"]').isVisible(), true);
+                assert.equal(await monitorPage.locator('[data-action="totp-start"]').isVisible(), true);
+                assert.equal(await monitorPage.locator('#accounts-title').count(), 0);
+                assert.equal(await monitorPage.locator('#haPreviewForm').count(), 0);
+                await monitorPage.goto(base + '/?lang=' + locale);
+                await monitorPage.locator('.rule-card .rule-body').first().waitFor();
+                assert.equal(await monitorPage.locator('button[onclick="openExportModal()"]').isVisible(), false);
+                assert.equal((await other.request.get(base + '/api/export')).status(), 403);
+                for (const width of [320, 390, 1440]) {
+                    await monitorPage.setViewportSize({ width, height: 900 });
+                    const geometry = await monitorPage.locator('.rule-card').first().evaluate(card => ({
+                        card: card.getBoundingClientRect().width,
+                        text: card.querySelector('.rule-body').getBoundingClientRect().width,
+                        overflow: document.documentElement.scrollWidth > innerWidth
+                    }));
+                    assert.ok(geometry.text >= geometry.card - 26, JSON.stringify({ locale, mode, width, ...geometry }));
+                    assert.equal(geometry.overflow, false);
+                }
+                await monitorPage.goto(base + '/settings?lang=' + locale);
+
+            }
+        }
+        await page.getByRole('button', { name: 'Change role reviewer' }).click();
+        await page.locator('#accountRole').selectOption('manager');
+        await page.locator('#currentAccountPassword').fill(password);
+        await page.locator('#accountSubmit').click();
+        await page.locator('[data-action=role][data-username=reviewer][data-role=manager]').waitFor();
+        assert.equal((await other.request.get(base + '/api/config')).status(), 401);
+        assert.equal((await other.request.post(base + '/api/auth/login', { data: { username: 'reviewer', password: secondPassword } })).status(), 200);
+        await monitorPage.goto(base + '/proxy?lang=en');
+        await monitorPage.locator('#validate:not([disabled])').waitFor();
+        assert.equal((await other.request.get(base + '/api/proxy/config')).status(), 200);
+        assert.equal((await other.request.post(base + '/api/auth/force-logout', { data: {} })).status(), 403);
+        await monitorPage.close();
         await page.getByRole('button', { name: 'Remove account reviewer' }).click();
         await page.locator('#currentAccountPassword').fill(password);
         await page.locator('#accountSubmit').click();

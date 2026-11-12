@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -45,12 +46,20 @@ LEGACY_KEEPALIVED_HEALTH_TEXT = (
     '#!/usr/bin/python3\nimport socket\n'
     'with socket.create_connection(("127.0.0.1", 3128), timeout=0.5):\n    pass\n'
 )
-KEEPALIVED_HEALTH_TEXT = (
+LISTENER_KEEPALIVED_HEALTH_TEXT = (
     '#!/usr/bin/python3\n'
     + (SOURCE / 'app/core/listeners.py').read_text(encoding='utf-8')
     + '\ntry:\n    healthy = tcp_listener(3128)\nexcept OSError:\n    healthy = False\n'
     + 'raise SystemExit(0 if healthy else 1)\n'
 )
+
+
+def health_helper_text(configuration=Path('/etc/tinyproxy/tinyproxy.conf')):
+    return ('#!/usr/bin/python3\n' + (SOURCE / 'app/core/proxy_health.py').read_text(encoding='utf-8')
+            + '\nraise SystemExit(0 if proxy_responsive(' + repr(str(configuration)) + ') else 1)\n')
+
+
+KEEPALIVED_HEALTH_TEXT = health_helper_text()
 
 
 def keepalived_text(ha):
@@ -63,8 +72,9 @@ global_defs {{
 }}
 vrrp_script proxypermit_health {{
     script "{KEEPALIVED_HEALTH}"
+    user proxypermit
     interval 2
-    timeout 1
+    timeout 2
     fall 2
     rise 2
 }}
@@ -168,7 +178,7 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
     steps = [
         'Check Debian or Ubuntu, root permissions, and existing configuration',
         'Back up configuration, secrets, services, and the current release link',
-        'Install Python venv, Tinyproxy, sudo, and logrotate with apt',
+        'Install Python venv, Tinyproxy, sudo, UFW, and logrotate with apt',
         'Build a new release in a dedicated virtual environment and run the tests',
         'Preserve the existing environment, filter rules, Tinyproxy configuration, and HA settings',
         'Create an administrator and configure an allowlist for a fresh installation',
@@ -195,7 +205,7 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
         notes.append('Repeat on the other host with the same cluster settings. Publish policy on each node.')
     if mode == 'ha' and values.get('PROXYPERMIT_MANAGED_HA') == 'true':
         plan['managedHa'] = True
-        steps.append('Upgrade the recognized empty-connect health helper to a traffic-free listener check; preserve custom helpers.')
+        steps.append('Upgrade the recognized empty-connect health helper to a bounded local HTTP responsiveness check; preserve custom helpers.')
     return plan
 
 
@@ -273,17 +283,17 @@ def require_trusted_path(path, *, directory):
         raise ValueError(f'Expected a root-owned path without group or public write access: {path}')
 
 
-def upgrade_health_helper(transaction, path=KEEPALIVED_HEALTH):
+def upgrade_health_helper(transaction, path=KEEPALIVED_HEALTH, content=None):
     """Replace only our exact old helper, with rollback and existing permissions."""
     if not path.exists() and not path.is_symlink():
         return False
     require_trusted_path(path.parent, directory=True)
     require_trusted_path(path, directory=False)
-    expected = LEGACY_KEEPALIVED_HEALTH_TEXT.encode('utf-8')
-    if path.stat().st_size != len(expected) or path.read_bytes() != expected:
+    expected = [text.encode('utf-8') for text in (LEGACY_KEEPALIVED_HEALTH_TEXT, LISTENER_KEEPALIVED_HEALTH_TEXT)]
+    if path.stat().st_size not in [len(value) for value in expected] or path.read_bytes() not in expected:
         return False
     transaction.track(path)
-    atomic_write(path, KEEPALIVED_HEALTH_TEXT, path.stat().st_mode & 0o777)
+    atomic_write(path, content or KEEPALIVED_HEALTH_TEXT, path.stat().st_mode & 0o777)
     return True
 
 
@@ -402,10 +412,13 @@ def remove_owned_ha_firewall(owned):
     existing_comments = {shlex.split(line)[-1] for line in existing}
     if any(shlex.split(line)[-1] in existing_comments for line in missing):
         raise ValueError('A managed HA firewall rule was edited. Review it before retiring this node.')
+    commands = []
     for line in sorted(present):
         argv = shlex.split(line)
         if argv[:2] != ['ufw', 'allow'] or argv[-2] != 'comment' or not argv[-1].startswith('ProxyPermit HA '):
             raise ValueError('The managed HA firewall rule record is invalid.')
+        commands.append(argv)
+    for argv in commands:
         run('ufw', '--force', 'delete', *argv[1:])
     if ufw_added_rules() != existing - present:
         raise ValueError('The firewall changed unexpectedly while removing the HA rules.')
@@ -536,10 +549,27 @@ def apply(plan, args):
         if args.upgrade:
             installed_deployment('/', plan['installDir'])
             verify_live_manager(plan['installDir'])
-        _apply_locked(plan, args)
+        directory = Path(plan['configPath']).parent
+        managed = plan['mode'] == 'standalone' or plan.get('ha') or plan.get('managedHa')
+        if managed and directory.exists():
+            from scripts.deploy.ha_setup import frozen_proxy_directory
+            original = directory.stat()
+            try:
+                with frozen_proxy_directory(directory, Path(plan['whitelistPath'] + '.lock')):
+                    for path in (Path(plan['configPath']), Path(plan['whitelistPath'])):
+                        if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_nlink != 1)):
+                            raise ValueError('Managed proxy configuration requires regular, unlinked files.')
+                    _apply_locked(plan, args, frozen=True)
+            except BaseException:
+                if os.name != 'nt':
+                    os.chown(directory, original.st_uid, original.st_gid)  # pylint: disable=no-member
+                raise
+            os.chmod(directory, 0o775)
+        else:
+            _apply_locked(plan, args)
 
 
-def _apply_locked(plan, args):
+def _apply_locked(plan, args, frozen=False):
     ha = plan.get('ha')
     managed = plan['mode'] == 'standalone' or ha or plan.get('managedHa')
     base = Path(plan['installDir'])
@@ -623,9 +653,9 @@ def _apply_locked(plan, args):
             raise ValueError('Use a password of at least 12 characters.')
     try:
         run('apt-get', 'update')
-        packages = ['python3-venv', 'tinyproxy', 'sudo', 'logrotate']
+        packages = ['python3-venv', 'tinyproxy', 'sudo', 'logrotate', 'ufw']
         if ha:
-            packages.extend(('keepalived', 'ufw'))
+            packages.append('keepalived')
         run('apt-get', 'install', '-y', *packages)
         if ha:
             for path in UFW_RULE_FILES:
@@ -750,10 +780,22 @@ def _apply_locked(plan, args):
         if not filter_path.exists():
             atomic_write(filter_path, '# Add allowed domains in ProxyPermit.\n', 0o644)
         if managed:
+            from scripts.deploy import access_safety
+            if access_safety.requested(args) or access_safety.PROFILE.exists():
+                touched_service = True
+                if plan['action'] == 'upgrade':
+                    run('systemctl', 'stop', 'proxypermit.service')
+                if plan.get('managedHa') and auxiliary.get('proxypermit-ha-policy.timer', {}).get('active'):
+                    run('systemctl', 'stop', 'proxypermit-ha-policy.timer')
+                touched_ufw = True
+                if access_safety.configure(SimpleNamespace(run=run, require_trusted_path=require_trusted_path, chown=chown, UFW_RULE_FILES=UFW_RULE_FILES), transaction, config_path, filter_path, args, values, gid):
+                    service_snapshot['ufw'] = True
+                    atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
+        if managed:
             # Parent write permission is needed for atomic replacement. Do not
             # recursively change arbitrary administrator-owned subdirectories.
             chown(config_path.parent, 0, gid)
-            os.chmod(config_path.parent, 0o775)
+            os.chmod(config_path.parent, 0o755 if frozen else 0o775)
             chown(config_path, 0, gid)
             os.chmod(config_path, 0o640)
             backup_dir = filter_path.parent / '.backups'
@@ -783,14 +825,25 @@ def _apply_locked(plan, args):
             atomic_write('/etc/sudoers.d/proxypermit', f'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl restart {service}\n', 0o440)
             run('visudo', '-cf', '/etc/sudoers.d/proxypermit')
         if ha:
-            atomic_write(KEEPALIVED_HEALTH, KEEPALIVED_HEALTH_TEXT, 0o755)
+            atomic_write(KEEPALIVED_HEALTH, health_helper_text(config_path), 0o755)
             atomic_write(KEEPALIVED_CONFIG, keepalived_text(ha), 0o640)
             run('keepalived', '--config-test', '-f', str(KEEPALIVED_CONFIG))
-        elif plan['action'] == 'upgrade' and plan.get('managedHa'):
-            upgrade_health_helper(transaction)
             atomic_write(HA_RETIRE_UNIT, ha_retire_unit_text(str(base)), 0o644)
             atomic_write(HA_RETIRE_SUDOERS, HA_RETIRE_RULE, 0o440)
             run('visudo', '-cf', str(HA_RETIRE_SUDOERS))
+        elif plan['action'] == 'upgrade' and plan.get('managedHa'):
+            topology = ha_topology(legacy_values['PROXYPERMIT_HA_NODE'], legacy_values['PROXYPERMIT_HA_INTERFACE'],
+                legacy_values['NODE0_ADDRESS'], legacy_values['NODE1_ADDRESS'],
+                legacy_values['VIP_ADDRESS'] + '/' + legacy_values['HA_VIP_PREFIX'],
+                legacy_values['HA_CLIENT_CIDR'], int(legacy_values['HA_VRID']))
+            require_trusted_path(KEEPALIVED_CONFIG, directory=False)
+            current_health_config = KEEPALIVED_CONFIG.read_text(encoding='utf-8')
+            expected_health_config = keepalived_text(topology).replace('    user proxypermit\n', '').replace('    timeout 2\n', '    timeout 1\n')
+            if current_health_config == expected_health_config:
+                transaction.track(KEEPALIVED_CONFIG)
+                if upgrade_health_helper(transaction, content=health_helper_text(config_path)):
+                    atomic_write(KEEPALIVED_CONFIG, keepalived_text(topology), KEEPALIVED_CONFIG.stat().st_mode & 0o777)
+                    run('keepalived', '--config-test', '-f', str(KEEPALIVED_CONFIG))
         if managed:
             atomic_write(HA_SETUP_UNIT, ha_setup_unit_text(str(base)), 0o644)
             atomic_write(HA_SETUP_SUDOERS, HA_SETUP_RULE, 0o440)
@@ -853,11 +906,17 @@ def _apply_locked(plan, args):
             # apt may already have started the package default configuration.
             run('systemctl', 'restart', 'tinyproxy.service')
             run('systemctl', 'is-active', '--quiet', 'tinyproxy.service')
+        if plan.get('managedHa') and auxiliary.get('proxypermit-ha-policy.timer', {}).get('active'):
+            run('systemctl', 'start', 'proxypermit-ha-policy.timer')
         if ha:
             start_ha()
         if update_legacy_sync:
             atomic_write(LEGACY_SYNC_SCRIPT, (release / 'legacy/sync_whitelist_v2.py').read_text(encoding='utf-8'), 0o755)
         atomic_write(base / 'installed.json', json.dumps(dict(release=str(release), mode=plan['mode'], backup=str(transaction.directory)), indent=2))
+        if touched_ufw:
+            service_snapshot['ufw'] = True
+            service_snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
+            atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
         print('Upgrade complete. The existing management listener was preserved.' if plan['action'] == 'upgrade'
               else f'Installation complete. Management console: http://127.0.0.1:{args.manager_port}/')
         if ha:
@@ -1071,14 +1130,14 @@ def rollback_install(base, stamp, execute=False):
 
 
 def wizard_ha(ui, args):
-    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A · preferred', 'Node B · standby'))]
+    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A Â· preferred', 'Node B Â· standby'))]
     fields = (
         ('Network interface on this host', None),
         ('Static IPv4 address of node A', None),
         ('Static IPv4 address of node B', None),
         ('Virtual IPv4 address with subnet prefix, for example 192.0.2.10/24', None),
         ('Allowed client network with subnet prefix, for example 192.0.2.0/24', None),
-        ('Available VRRP ID on this network (1–255)', '51'),
+        ('Available VRRP ID on this network (1â€“255)', '51'),
     )
     defaults = [default for _, default in fields]
     while True:
@@ -1106,7 +1165,7 @@ def run_wizard(args):
         args.mode = detected['mode']
         print(f'  Existing installation found ({args.mode}). The wizard will prepare an upgrade plan.')
     else:
-        modes = ('Standalone node · one server', 'Two-node HA · shared proxy address through Keepalived')
+        modes = ('Standalone node Â· one server', 'Two-node HA Â· shared proxy address through Keepalived')
         args.mode = ('standalone', 'ha')[ui.choose('How do you want to deploy ProxyPermit?', modes)]
     ha = wizard_ha(ui, args) if args.mode == 'ha' and detected['action'] == 'install' else None
     ui.heading('02  Configure the management console')
@@ -1116,6 +1175,11 @@ def run_wizard(args):
     if detected['action'] == 'install':
         args.admin_user = ui.ask('Administrator username', args.admin_user, admin_username)
         args.manager_port = ui.ask('Local management port', str(args.manager_port), manager_port)
+        from scripts.deploy.access_safety import network, port
+        peer = os.getenv('SSH_CONNECTION', '').split()
+        args.management_cidr = [ui.ask('Trusted management IP or CIDR (anti-lockout)', peer[0] if len(peer) == 4 else None, network)]
+        args.management_ssh_port = [ui.ask('Host SSH-management port', peer[3] if len(peer) == 4 else '22', port)]
+        args.management_web_port = [ui.ask('Host web-management port (including reverse proxy or relay)', str(args.manager_port), port)]
     plan = build_plan('/', args.install_dir, args.mode, args.server, ha)
     ui.review(plan, args)
     action = ui.choose('What would you like to do?', ('Exit without installing', 'Apply plan'))
@@ -1128,6 +1192,9 @@ def run_wizard(args):
         command = ['sudo', 'bash', 'install.sh', '--mode', args.mode, '--server', args.server, '--apply']
         if plan['action'] == 'install':
             command.extend(['--admin-user', args.admin_user, '--manager-port', str(args.manager_port)])
+        for name in ('management_cidr', 'management_ssh_port', 'management_web_port'):
+            for value in getattr(args, name, None) or []:
+                command.extend(['--' + name.replace('_', '-'), str(value)])
         if ha:
             for name in ('node', 'interface', 'node_a', 'node_b', 'vip', 'client_cidr', 'vrid'):
                 command.extend(['--ha-' + name.replace('_', '-'), str(getattr(args, 'ha_' + name))])
@@ -1140,7 +1207,7 @@ def run_wizard(args):
 
 def admin_username(value):
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', value):
-        raise ValueError('Use 1–64 letters, digits, dots, underscores, or hyphens.')
+        raise ValueError('Use 1â€“64 letters, digits, dots, underscores, or hyphens.')
     return value
 
 
@@ -1165,6 +1232,9 @@ def main(argv=None):
     operation.add_argument('--configure-ha', action='store_true', help='Apply the approved local HA setup request through the privileged helper.')
     parser.add_argument('--root', default='/', help='Plan only: inspect an alternative system root.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
+    parser.add_argument('--management-cidr', action='append', help='Trusted management network for root-pinned web, SSH and proxy anti-lockout rules; repeat for multiple networks.')
+    parser.add_argument('--management-ssh-port', action='append', type=int, help='Actual host SSH port to protect; defaults to the installing SSH connection or 22.')
+    parser.add_argument('--management-web-port', action='append', type=int, help='Actual host web-management port to protect; specify reverse-proxy or relay ports explicitly.')
     parser.add_argument('--admin-user', default='admin')
     parser.add_argument('--admin-password-file')
     parser.add_argument('--manager-bind', default='127.0.0.1', choices=['127.0.0.1'])
@@ -1176,7 +1246,7 @@ def main(argv=None):
     cluster.add_argument('--ha-node-b', help='Static IPv4 address of node B.')
     cluster.add_argument('--ha-vip', help='Available virtual IPv4 address with its subnet prefix.')
     cluster.add_argument('--ha-client-cidr', help='IPv4 client network allowed to use Tinyproxy.')
-    cluster.add_argument('--ha-vrid', type=int, help='VRRP router ID (1–255), identical on both nodes.')
+    cluster.add_argument('--ha-vrid', type=int, help='VRRP router ID (1â€“255), identical on both nodes.')
     argv = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(argv)
     try:
@@ -1190,6 +1260,12 @@ def main(argv=None):
             raise ValueError('Use a dedicated absolute installation path without spaces.')
         admin_username(args.admin_user)
         manager_port(str(args.manager_port))
+        from scripts.deploy.access_safety import network
+        if args.management_cidr:
+            args.management_cidr = [network(value) for value in args.management_cidr]
+        for ports in (args.management_ssh_port, args.management_web_port):
+            if ports and any(not 1 <= value <= 65535 for value in ports):
+                raise ValueError('Management ports must be between 1 and 65535.')
         ha_args = (args.ha_node, args.ha_interface, args.ha_node_a, args.ha_node_b,
                    args.ha_vip, args.ha_client_cidr, args.ha_vrid)
         if args.apply and args.root != '/':
@@ -1227,6 +1303,7 @@ def main(argv=None):
         if args.upgrade:
             installed_deployment(args.root, args.install_dir)
         plan = build_plan(args.root, args.install_dir, args.mode, args.server, ha)
+        plan['accessSafety'] = {'managementNetworks': args.management_cidr or 'Existing profile or installing SSH peer', 'sshPorts': args.management_ssh_port, 'webPorts': args.management_web_port, 'note': 'Additive, root-pinned anti-lockout rules; existing firewall activation state is preserved.'}
         if args.upgrade and plan['action'] != 'upgrade':
             raise ValueError('Existing ProxyPermit configuration is required for an upgrade.')
         print(json.dumps(plan, indent=2, ensure_ascii=False))

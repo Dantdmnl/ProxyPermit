@@ -126,3 +126,113 @@ en de publieke melding. Playwright controleert NL/EN, beide thema's, mobiele
 logs, datumfilters, wisselen tussen historie/live en contrast van gevaarlijke
 acties. De organisatie moet haar eigen privacymelding, externe logs,
 back-up-/exportretentie, netwerkplan en belasting blijven valideren.
+
+## 12 november 2026: bediening en HA-responsiviteit
+
+De werkversie is gecontroleerd met de volledige projectchecks en afzonderlijke
+browserfixtures. De Windows-suite draait 144 Python-tests met 7 platformgebonden
+skips. De Linux-installer draait de volledige suite bij iedere labupgrade.
+Playwright controleert NL/EN, beide thema's, kleine schermen, toetsenbordbediening,
+schrijfblokkades op de backup en de bevestigde conceptworkflow voor filtermodi.
+Documentatiescreenshots worden uit fixtures gemaakt met `PP_DOC_SCREENSHOTS=1`.
+
+In het draaiende VirtualBox-lab is de volgorde op A gewijzigd en zonder handmatig
+herladen op de geopende pagina van B gecontroleerd en daarna teruggezet. Tinyproxy
+op A is tijdelijk met SIGSTOP stilgezet terwijl Keepalived bleef draaien. B nam
+het VIP over, toonde de actieve rol en beantwoordde een clientverzoek via het VIP.
+Na hervatten kreeg A het voorkeurs-VIP terug en keerde de status van B terug naar
+standby. Een afzonderlijke hersteltimer verstuurde eveneens SIGCONT. De
+standalone-GUI activeerde de andere filtermodus en herstelde de oorspronkelijke
+configuratie. De HA-koppeling en beleidssynchronisatie bleven werken.
+
+Dit bewijst geen productie-beschikbaarheid bij een fysieke netwerkonderbreking,
+upstreamstoring of uitval van de gedeelde hypervisor. Accountreplicatie en
+afzonderlijke rollen waren op dat moment nog vervolgwerk. De latere [rolimplementatie](rollen.md) voegt beperkte lokale toegang toe.
+
+## 12 november 2026: anti-lockout en zichtbare concepten
+
+De standalone en beide HA-labnodes zijn bijgewerkt met een gecontroleerd
+beheerbronadres, de echte SSH-/webpoorten en een veiligheidsprofiel van root
+(modus 0640, leesbaar voor de servicegroep). De bestaande activatiestatus van UFW
+bleef behouden. De proef met een lege firewall ontdekte een ongeldige numerieke
+invoegpositie. De installer draaide terug; de aangepaste prepend-opdracht werkte
+daarna op dezelfde host.
+
+Ingelogde API-verzoeken om het vaste Allow-blok te verwijderen, de vaste proxypoort
+te wijzigen of een Deny voor de beheeruitzonderingen te plaatsen werden geweigerd.
+Het actieve bestand bleef gelijk en er ontstond geen concept. Daarna is een
+Timeout-wijziging op A gepubliceerd, op B verwerkt met behoud van B's eigen
+beheerblok en op beide nodes teruggezet. De volledige overname-/herstelproef en
+regelvolgordecontrole slaagden opnieuw na de updates. De aparte UFW-beheerregels
+vallen buiten het opruimen van HA-regels.
+
+De browserchecks controleren niet-opgeslagen, opgeslagen en actieve conceptstatus,
+de afgeschermde verschillen, opslaan/verwerpen en de bestaande controles voor
+beide thema's, talen en mobiele schermen. Het installeroverzicht en de opdracht
+voor niet-rootgebruikers behouden de expliciete beschermde adressen en echte
+hostpoorten. De Windows-suite draait 144 Python-tests met 7 platformskips.
+Bestemmingsfilters en proxy-authenticatie blijven gelden: dit beschermt de
+vastgelegde netwerktoegang, niet willekeurige routerings- of upstreamwijzigingen.
+
+De definitieve Linux-run slaagde voor alle 144 Python-tests zonder skips, de
+shellchecks en afzonderlijke HTTP-/account-/2FA-/audit-/opslaantests met Gunicorn
+en Granian (elk twee workers). De extra backend is in een aparte test-venv
+geïnstalleerd; de dependencies van de draaiende installatie bleven intact.
+
+## Documentatiewebsite
+
+De Zensical-site bouwt met `--clean --strict`, inclusief controle op links en
+ankers. Dezelfde build is vanuit een gegenereerd releasearchief gecontroleerd.
+Playwright controleert Engelse/Nederlandse handleidingen, light/dark mode,
+desktop/mobiele opmaak, taalverwijzingen, echte zoekresultaten en sluiten via het
+toetsenbord. De lokale preview gebruikt `/ProxyPermit/` om relatieve Pages-paden
+te controleren. Actionlint controleert de Pages-workflow. Dit bereidt publicatie
+voor; het betekent niet dat GitHub Pages al is ingeschakeld of gepubliceerd.
+
+## 12 november 2026: lokale gebruikersrollen
+
+De Windows-suite slaagt voor 153 Python-tests (7 platformgebonden skips). De
+Linux-installer voert alle 153 tests zonder skips uit. Ook typecontroles,
+Python-codecontrole, frontendcontroles, shellsyntaxis en afzonderlijke HTTP-/
+account-/2FA-tests met Gunicorn en Granian slagen. De browsertests controleren
+monitor- en proxybeheerdersschermen, NL/EN, beide thema's, mobiele opmaak, rolkeuze
+en het ongeldig maken van sessies. Bestaande accounts zonder rol behouden hun
+beheertoegang.
+
+De drie VirtualBox-nodes zijn bijgewerkt. Via de beveiligde API zijn tijdelijke
+monitoraccounts aangemaakt, van rol veranderd en weer verwijderd. Oude sessies
+werden ongeldig, terwijl het wachtwoord bruikbaar bleef. Monitors konden geen
+native configuratie lezen of Tinyproxy herstarten. Proxybeheerders konden de
+standalone-proxy herstarten, maar geen HA of accounts beheren. Gedeeld beleid
+bleef op de gekoppelde back-upnode alleen-lezen. Beide HA-statuspanelen bleven
+synchronisatie tonen. Een andere servicegebruiker instellen werd geweigerd zonder
+concept of wijziging van actieve bestanden. Afzonderlijke tests controleren ook
+beschermde systeemconcepten, optionele 2FA voor monitors en bescherming van de
+laatste systeembeheerder in de CLI.
+
+Alle drie de SSH-verbindingen tonen door VirtualBox-NAT `10.0.2.2` als bronadres.
+De gelijke beheerbron is in dit lab dus te verwachten en is niet het eigen IP-adres
+van elke node. Bronbeperkingen vervangen inloggen niet.
+
+De regressiecontrole voor monitorregels controleert de volle tekstbreedte op
+320, 390 en 1440 pixels in beide talen en thema's. Alleen proxy- en systeembeheerders
+kunnen filterregels exporteren; een rechtstreeks exportverzoek van een monitor
+krijgt 403. Dit is op alle drie de labnodes gecontroleerd met tijdelijke accounts
+die na afloop zijn verwijderd.
+
+## Releasedocumentatie en oude Actions-runs
+
+De release-instructies maken nu onderscheid tussen voorbereiden, CI, taggen,
+GitHub Release-bestanden en Pages-publicatie. De voorbeelden voor accountmigratie
+maken expliciet een admin aan voordat lokale accounts worden ingeschakeld. Een
+strikte documentatiebuild is een verplichte voorwaarde voor het releasearchief.
+Actionlint, versiecontrole en schone/strikte Zensical-builds slaagden, ook bij
+bouwen vanuit het gegenereerde broncodearchief.
+
+Op 12 november 2026 zijn 39 afgeronde runs van de vervallen Pylint-workflow
+verwijderd. Een vergelijking vóór en na de actie bevestigde dat alle 46 huidige
+workflowruns en 61 huidige artefacten behouden bleven. Geen van die artefacten
+hoorde bij de oude runs. Een oude commit bleef daarna rechtstreeks via SHA
+bereikbaar: Actions opruimen wist de broncodegeschiedenis bij GitHub niet. Deze
+wijzigingen maken geen release, verplaatsen geen stabiele tag en bewijzen geen
+nieuwe geslaagde CI-run op GitHub.

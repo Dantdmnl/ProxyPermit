@@ -13,6 +13,9 @@ See the installation guide for migration from an existing HA deployment.
 
 | Documentation | English | Nederlands |
 | --- | --- | --- |
+| First steps / Eerste stappen | [Get started](docs/en/getting-started.md) | [Aan de slag](docs/nl/eerste-stappen.md) |
+| Use the console / De interface gebruiken | [User guide](docs/en/user-guide.md) | [Werkinstructie](docs/nl/werkinstructie.md) |
+| Users and roles / Gebruikers en rollen | [Permissions](docs/en/roles.md) | [Rechten](docs/nl/rollen.md) |
 | Start here / Begin hier | [Documentation](docs/en/README.md) | [Documentatie](docs/nl/README.md) |
 | Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/nl/installatie.md) |
 | Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/nl/beheer.md) |
@@ -41,3 +44,6 @@ traffic, upgrade, recovery, or two-node HA on disposable guests.
 Run `python -m pip install -r requirements/dev.txt` in a Python 3.11+ virtual
 environment, then run `python scripts/check.py`. The [verification report](docs/en/verification.md)
 lists the Linux and HA scenarios tested so far.
+
+The Zensical documentation site can be previewed locally and published with GitHub Pages;
+see [English](docs/en/documentation-site.md) / [Nederlands](docs/nl/documentatiewebsite.md).

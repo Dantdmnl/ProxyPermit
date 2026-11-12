@@ -95,6 +95,11 @@ class InstallTerminal:
         if plan['action'] == 'install':
             print(f'  Console         http://127.0.0.1:{args.manager_port}/')
             print(f'  Administrator   {args.admin_user}')
+        if getattr(args, 'management_cidr', None):
+            print(f"  Protected IPs   {', '.join(args.management_cidr)}")
+            print(f"  SSH ports       {', '.join(map(str, args.management_ssh_port or []))}")
+            print(f"  Web ports       {', '.join(map(str, args.management_web_port or []))}")
+            print('  Existing pinned exceptions are retained; firewall activation is unchanged.')
         if plan.get('ha'):
             ha = plan['ha']
             print(f"  Local node      {ha['node'].upper()} · {ha['local']} · {ha['interface']}")

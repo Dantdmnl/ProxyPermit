@@ -15,6 +15,42 @@ from scripts.deploy.logging_policy import assets
 
 
 class LoggingTests(unittest.TestCase):
+    def test_health_visibility_preserves_raw_history_search_and_redaction(self):
+        timestamp = time.time() - 1
+        records = [dict(timestamp=logs.iso(timestamp), level='INFO', service='proxy_traffic',
+                        message='recognized probe', healthCheck=True, _time=timestamp,
+                        _id='probe', _raw='private raw metadata'),
+                   dict(timestamp=logs.iso(timestamp), level='ERROR', service='tinyproxy',
+                        message='real client failure', _time=timestamp, _id='error')]
+        with patch.object(logs.sys, 'platform', 'linux'), \
+                patch.object(logs, 'journal_records', return_value=(records, False)), \
+                patch.object(logs, 'proxy_file_records', return_value=([], False, False)):
+            normal = logs.query_logs({'service': 'all'}, self.path)
+            included = logs.query_logs({'service': 'all', 'health': 'include'}, self.path)
+            searched = logs.query_logs({'service': 'all', 'q': 'recognized probe'}, self.path)
+        self.assertEqual([item['message'] for item in normal['logs']], ['real client failure'])
+        self.assertEqual(len(included['logs']), 2)
+        self.assertEqual(searched['logs'][0]['message'], 'recognized probe')
+        self.assertNotIn('_raw', included['logs'][0])
+        self.assertTrue(records[0]['healthCheck'])
+
+    def test_health_log_identification_requires_local_matching_connection_and_preserves_errors(self):
+        def row(raw, order, level='INFO', pid='42'):
+            return dict(message=logs.scrub_message(raw), _raw=raw, _time=100 + order / 100,
+                        level=level, service='proxy_traffic', _pid=pid, _origin='fixture')
+        local = row('Connect (file descriptor 5): 127.0.0.1', 0)
+        request = row('Request (file descriptor 5): GET http://tinyproxy.stats/__proxypermit_health__ HTTP/1.0', 1)
+        error = row('read_request_line: Client (file descriptor: 5) closed socket before read.', 2, 'ERROR')
+        remote = row('Connect (file descriptor 7): 198.51.100.1', 3)
+        remote_request = row('Request (file descriptor 7): GET http://tinyproxy.stats/__proxypermit_health__ HTTP/1.0', 4)
+        unrelated = row('Request (file descriptor 8): GET http://tinyproxy.stats/__proxypermit_health__ HTTP/1.0', 5)
+        with patch.dict(os.environ, TINYPROXY_CONFIG_PATH='/missing-example-configuration'):
+            logs.identify_health_checks([unrelated, remote_request, remote, error, request, local])
+        self.assertTrue(local['healthCheck'])
+        self.assertTrue(request['healthCheck'])
+        for item in (error, remote, remote_request, unrelated):
+            self.assertFalse(item.get('healthCheck', False))
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

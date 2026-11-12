@@ -4,11 +4,28 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-12
+
+### Added
+
+- Add system administrator, proxy manager and monitor roles with server-side permissions, session revocation on role changes and last-administrator protection.
+- Pin local management and proxy access with root-owned anti-lockout profiles and narrow, additive UFW exceptions that survive HA policy updates and retirement.
+- Add illustrated English/Dutch user guides and a searchable Zensical documentation site with GitHub Pages deployment.
+
 ### Changed
 
-- Avoid recurring empty-client Tinyproxy health-check errors using traffic-free Linux listener checks; safely migrate recognized Keepalived helpers with rollback support.
+- Check Tinyproxy HTTP responsiveness for HA failover and filter identifiable local health probes from the default log view while retaining explicit access to them.
+- Publish rule ordering with revision conflict checks and refresh an already-open backup rule list automatically.
+- Provide a reviewed allowlist/blocklist switch and a visible, redacted comparison between drafts and active configuration.
+- Improve privacy, retention and anti-lockout cards for both themes and small screens; explain NAT management source addresses.
+- Refresh bilingual release, upgrade and account-migration instructions; require a strict documentation build before CI release packaging.
 
-- Show shared, accessible connection notices on every page, preserve drafts during outages, and verify recovery without reloading or replaying writes.
+### Fixed
+
+- Keep paired backup policy read only with persistent translated guidance and preserve stale-order conflict checks.
+- Expire stale service/VIP status and distinguish the active traffic node from the shared-policy writer.
+- Preserve unsaved input during connection loss without replaying writes when connectivity returns.
+- Keep monitor rule text full width when editing controls are hidden and restrict filter exports to proxy and system administrators.
 
 ## [1.1.0] - 2026-11-11
 

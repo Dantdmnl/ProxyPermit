@@ -199,3 +199,6 @@ body>.container,body>main,.rules-workspace,.settings-layout,.settings-panel,.ent
     .rule-dialog-body { padding-block:10px; }
     .modal-content { padding-block:12px; }
 }
+
+body[data-role="monitor"] :is(.entry-actions,.entry-drag-handle) { display:none; }
+body[data-role="monitor"] .entries-list .rule-card { grid-template-columns:minmax(0,1fr); }

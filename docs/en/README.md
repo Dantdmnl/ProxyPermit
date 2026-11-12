@@ -1,32 +1,43 @@
-# Documentation
+# Start here
 
-[Nederlands](../nl/README.md) · [ProxyPermit](../../README.md)
+[Nederlands](../nl/README.md) · [ProxyPermit on GitHub](https://github.com/Dantdmnl/ProxyPermit)
 
-ProxyPermit is a web console for managing Tinyproxy. It covers client access,
-destination filtering, routing, configuration, and logs. Administrators can each
-use an individual account with optional two-factor authentication (2FA).
+ProxyPermit helps you manage a Tinyproxy server through a web interface. You
+choose which devices may use the proxy and which websites they may reach.
+You can also inspect logs and use two servers for automatic takeover.
 
-## Find your task
+## What do you want to do?
 
-| Task | Where to start |
+| Your situation | Start with |
 | --- | --- |
-| Install a standalone node | [Fresh installation](installation.md#install-on-debian-or-ubuntu) |
-| Set up two nodes with one proxy address | [New HA cluster](installation.md#new-two-node-ha-cluster) |
-| Upgrade, migrate, or recover | [Upgrade, migration, and recovery](installation.md#upgrade-migration-and-recovery) |
-| Remove the management console | [Remove the management console](installation.md#remove-the-management-console) |
-| Commission or troubleshoot a deployment | [Administrator guide](administration.md) |
-| Test installation, recovery, or HA failover | [VM test lab](vm-lab.md) |
+| I have a console address and an account | [First steps](getting-started.md) |
+| I want to add a website, import rules or change settings | [Using the console](user-guide.md) |
+| I want to install, update or remove ProxyPermit | [Installation](installation.md) |
+| I want two servers to take over from each other | [High availability](high-availability.md) |
+| Something is not working | [Troubleshooting](troubleshooting.md) |
+| I do not recognize a technical term | [Terms explained](glossary.md) |
 
-## Technical reference
+## For the administrator
 
-- [Architecture and HA](architecture.md) for components and design decisions.
-- [Logging and retention](logging.md) for search, privacy notices, and enforced retention.
-- [Verification report](verification.md) for test results and outstanding checks.
-- [Project layout](layout.md) for the source tree, development setup, and tests.
-- [Versions, releases, and CI](releases.md) for local checks and release preparation.
+After installation, use the [administrator guide](administration.md) to check
+access, test client traffic and prepare backups. The [logging guide](logging.md)
+explains what is recorded, how long it is kept and how to search it.
 
-## Archive
+The console address and the proxy address serve different purposes. Your browser
+opens the console to manage settings; client devices use the proxy address to
+reach websites. Creating a console account does not configure a client device.
 
-The [archived documentation](../legacy/) describes the original deployment.
-It includes the original administrator guide, operating instructions,
-environment variables, and audit in their original languages.
+## For contributors
+
+- [Try the VM lab](vm-lab.md) before changing a live installation.
+- [Architecture](architecture.md) and [source layout](layout.md) explain the code.
+- [Releases and CI](releases.md) covers checks and packaging.
+- [Documentation website](documentation-site.md) explains previewing and publishing.
+- [Verification](verification.md) records what has actually been tested.
+- [Planned work](planned-work.md) lists features that are not available yet.
+
+These pages follow `main`, including work that has not been released yet.
+Historical instructions are kept in the
+[archive](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
+
+[Users and roles](roles.md) explains which permissions each account needs.

@@ -1,0 +1,84 @@
+[project]
+site_name = "ProxyPermit Docs"
+site_description = "Practical guides for installing, using and maintaining ProxyPermit / Praktische handleidingen voor ProxyPermit."
+site_url = "https://dantdmnl.github.io/ProxyPermit/"
+repo_url = "https://github.com/Dantdmnl/ProxyPermit"
+repo_name = "Dantdmnl/ProxyPermit"
+docs_dir = "docs"
+site_dir = "site"
+exclude_docs = "legacy/"
+extra_css = ["stylesheets/docs.css"]
+nav = [
+  { "Start / Begin" = "README.md" },
+  { "English" = [
+    { "Start here" = "en/README.md" },
+    { "First steps" = "en/getting-started.md" },
+    { "Use the console" = "en/user-guide.md" },
+    { "Install and maintain" = [
+      { "Install, upgrade or remove" = "en/installation.md" },
+      { "Set up high availability" = "en/high-availability.md" },
+      { "Administrator guide" = "en/administration.md" },
+      { "Logs and privacy" = "en/logging.md" },
+      { "Users and roles" = "en/roles.md" },
+      { "Troubleshooting" = "en/troubleshooting.md" },
+      { "Terms explained" = "en/glossary.md" },
+    ] },
+    { "For contributors" = [
+      { "Test lab" = "en/vm-lab.md" },
+      { "Architecture" = "en/architecture.md" },
+      { "Source tree and checks" = "en/layout.md" },
+      { "Releases and CI" = "en/releases.md" },
+      { "Documentation website" = "en/documentation-site.md" },
+      { "Verification" = "en/verification.md" },
+      { "Planned work" = "en/planned-work.md" },
+    ] },
+  ] },
+  { "Nederlands" = [
+    { "Begin hier" = "nl/README.md" },
+    { "Eerste stappen" = "nl/eerste-stappen.md" },
+    { "De interface gebruiken" = "nl/werkinstructie.md" },
+    { "Installeren en beheren" = [
+      { "Installeren, bijwerken of verwijderen" = "nl/installatie.md" },
+      { "Hoge beschikbaarheid instellen" = "nl/hoge-beschikbaarheid.md" },
+      { "Beheerdershandleiding" = "nl/beheer.md" },
+      { "Logs en privacy" = "nl/logging.md" },
+      { "Gebruikers en rollen" = "nl/rollen.md" },
+      { "Problemen oplossen" = "nl/problemen-oplossen.md" },
+      { "Begrippen uitgelegd" = "nl/begrippen.md" },
+    ] },
+    { "Voor ontwikkelaars" = [
+      { "Testlab" = "nl/vm-lab.md" },
+      { "Architectuur" = "nl/architecture.md" },
+      { "Broncode en controles" = "nl/layout.md" },
+      { "Releases en CI" = "nl/releases.md" },
+      { "Documentatiewebsite" = "nl/documentatiewebsite.md" },
+      { "Verificatie" = "nl/verification.md" },
+      { "Vervolgwerk" = "nl/vervolgwerk.md" },
+    ] },
+  ] },
+]
+
+[project.theme]
+language = "en"
+font = false
+logo = "assets/brand/logo.svg"
+favicon = "assets/brand/logo.svg"
+features = ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "navigation.footer", "content.code.copy", "search.highlight"]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/moon"
+toggle.name = "Dark mode / Donkere modus"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/sun"
+toggle.name = "Light mode / Lichte modus"
+
+[project.validation]
+invalid_links = true
+invalid_link_anchors = true

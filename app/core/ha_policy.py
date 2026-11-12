@@ -7,6 +7,7 @@ import secrets
 import time
 
 from .tinyproxy import ConfigError, parse, revision
+from .access_safety import safety_lines, without_safety
 
 
 PORTABLE = frozenset({
@@ -17,12 +18,13 @@ MAX_TRANSFER = 4 * 1024 * 1024
 
 
 def baseline(config, filters):
-    return [revision(config), revision(filters)]
+    return [revision(without_safety(config)), revision(filters)]
 
 
 def portable_config(content):
     lines = content.splitlines()
-    return '\n'.join(lines[row['line'] - 1] for row in parse(content) if row['name'].lower() in PORTABLE)
+    protected = safety_lines(content)
+    return '\n'.join(lines[row['line'] - 1] for row in parse(content) if row['name'].lower() in PORTABLE and row['line'] not in protected)
 
 
 def merge_policy(local_config, portable):
@@ -31,11 +33,21 @@ def merge_policy(local_config, portable):
     if portable == portable_config(local_config):
         return local_config
     lines = local_config.splitlines()
-    positions = {row['line'] for row in parse(local_config) if row['name'].lower() in PORTABLE}
+    protected = safety_lines(local_config)
+    positions = {row['line'] for row in parse(local_config) if row['name'].lower() in PORTABLE and row['line'] not in protected}
     first = min(positions, default=len(lines) + 1)
     before = lines[:first - 1]
     after = [line for number, line in enumerate(lines[first - 1:], first) if number not in positions]
-    return '\n'.join(before + portable.splitlines() + after) + '\n'
+    merged = '\n'.join(before + portable.splitlines() + after) + '\n'
+    if protected:
+        # Shared settings can precede the original local block (for example
+        # Timeout). Keep the local ACL exception before the newly merged ACLs.
+        remaining = without_safety(merged).splitlines()
+        start = next((row['line'] - 1 for row in parse('\n'.join(remaining))
+                      if row['name'].lower() in ('allow', 'deny')), 0)
+        block = [line for number, line in enumerate(lines, 1) if number in protected]
+        merged = '\n'.join(remaining[:start] + block + remaining[start:]) + '\n'
+    return merged
 
 
 def issue_invite(cluster, current):

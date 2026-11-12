@@ -66,6 +66,7 @@
                             <button type="button" class="button button-secondary" id="logViewToggle" onclick="toggleLogCompactMode()">{{ _('🧭 Compact') }}</button>
                             <button type="button" class="button button-secondary" onclick="downloadLogs()">{{ _('💾 Download pagina') }}</button>
                         </div>
+                        <label><input type="checkbox" id="logHealthChecks" onchange="resetLogPagination(); refreshLogs('page')"> {{ _('Gezondheidscontroles tonen') }}</label>
                         <div id="logSummary" class="log-summary"></div>
                     </details>
                 </div>

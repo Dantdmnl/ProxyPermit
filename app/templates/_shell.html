@@ -18,10 +18,12 @@
             <svg class="shell-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16l-6 7v5l-4 2v-7z"/></svg>
             <span class="shell-label">{{ _('Filterregels') }}</span>
         </a>
+        {% if permissions.proxy %}
         <a href="/proxy" aria-label="{{ _('Proxyconfiguratie') }}" title="{{ _('Proxyconfiguratie') }}" {% if request.path == '/proxy' %}aria-current="page"{% endif %}>
             <svg class="shell-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h15m-4-4 4 4-4 4m5 4H5m4-4-4 4 4 4"/></svg>
             <span class="shell-label">{{ _('Proxyconfiguratie') }}</span>
         </a>
+        {% endif %}
         <a href="#live-logs" data-open-live-logs aria-haspopup="dialog" aria-controls="loggingModal" aria-label="{{ _('Live logs') }}" title="{{ _('Live logs') }}">
             <svg class="shell-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>
             <span class="shell-label">{{ _('Live logs') }}</span>

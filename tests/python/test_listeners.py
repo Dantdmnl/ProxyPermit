@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.core.listeners import tcp_listener
-from scripts.deploy.install import KEEPALIVED_HEALTH_TEXT
+from scripts.deploy.install import LISTENER_KEEPALIVED_HEALTH_TEXT
 
 
 class ListenerTests(unittest.TestCase):
@@ -52,7 +52,7 @@ class ListenerTests(unittest.TestCase):
             with patch.object(socket, 'create_connection') as connection:
                 self.assertTrue(tcp_listener(port))
                 connection.assert_not_called()
-            helper = KEEPALIVED_HEALTH_TEXT.replace('tcp_listener(3128)', f'tcp_listener({port})')
+            helper = LISTENER_KEEPALIVED_HEALTH_TEXT.replace('tcp_listener(3128)', f'tcp_listener({port})')
             self.assertEqual(subprocess.run([sys.executable, '-c', helper], check=False).returncode, 0)
             with self.assertRaises(BlockingIOError):
                 listener.accept()

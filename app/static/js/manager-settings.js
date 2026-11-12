@@ -59,6 +59,7 @@ let _exportModalEscHandler = null;
 
 // Open the export modal
 function openExportModal() {
+    if (appConfig.canManageProxy === false) { requireRulesWritable(); return; }
     const modal = document.getElementById('exportModal');
     if (modal) modal.classList.add('show');
     document.body.classList.add('modal-open');
@@ -82,6 +83,7 @@ function closeExportModal() {
 
 // Export with chosen format (regex or domain/wildcard)
 async function exportWhitelistWithFormat() {
+    if (appConfig.canManageProxy === false) { requireRulesWritable(); return; }
     const btn = document.getElementById('exportDownloadBtn');
     try {
         if (btn) { btn.disabled = true; btn.textContent = '⏳ Exporteren...'; }

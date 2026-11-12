@@ -16,8 +16,9 @@ import segno
 from flask import Blueprint, jsonify, render_template, request, session
 from werkzeug.security import generate_password_hash
 
-from ..core.accounts import consume_totp, load_accounts, matching_totp_step
+from ..core.accounts import ROLES, account_role, admin_count, consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
+from ..core.access_safety import read_profile
 from ..core.ha import HA_SETUP_ENV, HA_SETUP_REQUEST, HA_SETUP_RESULT, ha_firewall_rules, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from ..core.tinyproxy import ConfigError, atomic_write
 from .proxy import activation_supported, ha_enabled, has_pending_changes, managed_ha
@@ -90,13 +91,16 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         if not actor:
             return render_template('settings.html', sign_in=True), 403
         accounts = load_accounts(path) if path else {}
-        return render_template('settings.html', actor=actor, accounts=accounts,
+        can_admin = app.extensions['has_permission']('admin')
+        if not can_admin:
+            accounts = {actor: accounts[actor]} if actor in accounts else {}
+        return render_template('settings.html', access_safety=read_profile(), actor=actor, accounts=accounts, account_roles={name: account_role(account) for name, account in accounts.items()},
                                editable=bool(path and secure_access() and os.access(path.parent, os.W_OK)),
                                ha_enabled=ha_enabled(), managed_ha=managed_ha(),
                                ha_policy_role=os.getenv('PROXYPERMIT_HA_NODE') if managed_ha() and secure_access() and activation_supported() else None,
                                ha_policy_csrf=session.setdefault('proxy_csrf', secrets.token_urlsafe(32)) if managed_ha() else None,
-                               ha_retire_available=bool(path and secure_access() and ha_retirement_available()),
-                               ha_setup_available=bool(path and secure_access() and ha_setup_available()),
+                               ha_retire_available=bool(can_admin and path and secure_access() and ha_retirement_available()),
+                               ha_setup_available=bool(can_admin and path and secure_access() and ha_setup_available()),
                                csrf=session.setdefault('settings_csrf', secrets.token_urlsafe(32)))
 
     @settings.get('/api/settings/ha/network')
@@ -260,12 +264,15 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         if not isinstance(data, dict):
             return jsonify(error='Invalid input.'), 400
         action = data.get('action')
-        if action not in ('create', 'remove', 'password', 'totp-start', 'totp-confirm', 'totp-disable'):
+        if action not in ('create', 'remove', 'role', 'password', 'totp-start', 'totp-confirm', 'totp-disable'):
             return jsonify(error='Invalid input.'), 400
         pending = state.with_name('enroll-' + hashlib.sha256(actor.encode()).hexdigest() + '.json')
-        target = data.get('username') if action in ('create', 'remove') else actor
+        target = data.get('username') if action in ('create', 'remove', 'role') else actor
         if not isinstance(target, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', target):
             return jsonify(error='Enter a valid username.'), 400
+        requested_role = data.get('role', 'monitor')
+        if action in ('create', 'role') and (not isinstance(requested_role, str) or requested_role not in ROLES):
+            return jsonify(error='Choose a valid role.'), 400
         new_password = data.get('newPassword')
         if action in ('create', 'password') and (
             not isinstance(new_password, str) or not 12 <= len(new_password) <= 256
@@ -277,6 +284,9 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
                 current = accounts.get(actor)
                 if not current or current['revision'] != session.get('account_revision'):
                     return jsonify(error='Session expired. Reload the page.'), 401
+                if action in ('create', 'remove', 'role') and account_role(current) != 'admin':
+                    audit('permission_denied', required='admin', target_account=target)
+                    return jsonify(error='Your role does not permit this action.'), 403
                 step = None
                 if action != 'totp-confirm':
                     error, step = reauthenticate(actor, current, data.get('password'), data.get('otp'))
@@ -315,11 +325,17 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
                     if target in accounts:
                         return jsonify(error='This account already exists.'), 409
                     accounts[target] = {'password_hash': generate_password_hash(new_password),
-                                        'revision': secrets.token_hex(16)}
-                elif action == 'remove':
+                                        'revision': secrets.token_hex(16), 'role': requested_role}
+                elif action in ('remove', 'role'):
                     if target == actor or target not in accounts:
                         return jsonify(error='This account cannot be removed.'), 409
-                    del accounts[target]
+                    if account_role(accounts[target]) == 'admin' and admin_count(accounts) <= 1 and (action == 'remove' or requested_role != 'admin'):
+                        return jsonify(error='Keep at least one system administrator.'), 409
+                    if action == 'remove':
+                        del accounts[target]
+                    else:
+                        accounts[target]['role'] = requested_role
+                        accounts[target]['revision'] = secrets.token_hex(16)
                 else:
                     current['password_hash'] = generate_password_hash(new_password)
                 if target == actor:
@@ -337,7 +353,7 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         except (OSError, ValueError):
             app.logger.exception('Account update failed')
             return jsonify(error='The account change failed.'), 503
-        audit('account_' + action.replace('-', '_'), target_account=target)
+        audit('account_' + action.replace('-', '_'), target_account=target, target_role=requested_role if action in ('create', 'role') else None)
         return jsonify(success=True)
 
     app.register_blueprint(settings)

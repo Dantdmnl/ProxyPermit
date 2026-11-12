@@ -1,0 +1,2 @@
+# Documentation tooling only; not installed on proxy nodes.
+zensical==0.1.1

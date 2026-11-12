@@ -15,6 +15,7 @@ class RemotePreviewSecurityTests(unittest.TestCase):
                 patch.object(main.sys, 'platform', 'linux'), \
                 patch.object(main.subprocess, 'run') as command, \
                 patch.object(main, 'tcp_listener', side_effect=[True, False]) as listener, \
+                patch.object(main, 'proxy_responsive', return_value=True), \
                 patch.object(main.socket, 'create_connection') as connection:
             command.return_value.returncode = 0
             command.return_value.stdout = 'active'

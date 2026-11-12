@@ -27,8 +27,8 @@ naam van de back-up bij het wijzigingsverzoek.
    Beperk toegang tot het beheernetwerk. Gebruik bij HTTPS een Secure-sessiecookie
    en vertrouw forwarded headers uitsluitend achter je eigen reverse proxy.
    [OWASP-richtlijnen voor sessiebeheer](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
-2. Maak een persoonlijk account aan voor elke beheerder. Lokale accounts hebben
-   allemaal beheerdersrechten. Optionele 2FA stel je in onder **Instellingen**.
+2. Maak een persoonlijk account aan voor elke beheerder. Lokale accounts krijgen
+   een [rol die bij hun werk past](rollen.md). Optionele 2FA stel je in onder **Instellingen**.
    Controleer het inloggen en leg vast wie bij verlies van de authenticator via de
    server toegang kan herstellen.
 3. Beperk de clienttoegang in Tinyproxy tot de bedoelde netwerken. Controleer
@@ -115,8 +115,8 @@ kunt inloggen en of het proxyverkeer werkt.
 
 ## Grenzen van de huidige versie
 
-- Er is één lokaal beheerdersniveau. Een alleen-lezen rol en centrale
-  bedrijfsidentiteit zijn nog niet beschikbaar.
+- Er zijn drie lokale rollen. Centrale identiteitsvoorzieningen en
+  accountreplicatie vallen buiten het huidige lokale accountmodel.
 - Auditlogs staan lokaal. Leg voor bedrijfsgebruik vast hoe je ze centraal
   verzamelt en hoe lang je ze bewaart.
 - De HA-proef bevestigt VIP-failover in het WSL-lab. Valideer de volledige
@@ -130,3 +130,59 @@ Elke geopende pagina controleert of de beheerconsole bereikbaar is. De verbindin
 Je invoer en open dialoogvensters blijven op de huidige pagina staan. Navigeren en nieuwe schrijfverzoeken worden tegengehouden zolang de console onbereikbaar is. Bij herstel wordt de pagina niet herladen en worden acties niet herhaald. Als het antwoord op een schrijfverzoek verloren ging, controleer dan de actuele regels of instellingen voordat je de actie herhaalt: de server kan die al verwerkt hebben. De bestaande revisiecontroles blijven gelijktijdige wijzigingen bewaken.
 
 Houd het tabblad open om niet-opgeslagen invoer te behouden. Dit herstelt de verbinding voor een al geopende pagina; het biedt geen offline beheer. Een pagina openen of herladen vereist nog steeds een bereikbare server. Inloggegevens en beheergegevens worden niet in een offline cache opgeslagen.
+
+## Anti-lockoutprofiel
+
+Zet de echte vertrouwde beheerbronnen en de SSH-/webpoorten op de host vast.
+Gebruik de luisterpoort van de reverse proxy of relay, niet een afwijkende
+externe NAT-poort. Houd een onafhankelijke console en een tweede werkende
+beheersessie beschikbaar. Vervang voorbeeldadres en installatiepad:
+
+```sh
+sudo bash install.sh --upgrade --install-dir /opt/proxypermit \
+  --management-cidr 192.0.2.8/32 --management-ssh-port 22 \
+  --management-web-port 443 --plan
+```
+
+Controleer het plan en herhaal met `--apply`. CIDR- en poortargumenten mogen
+herhaald worden. Zonder bestaand profiel of expliciet netwerk kan de installer
+de SSH-peer als enkele beheerbron gebruiken. Lokale onbeheerde installaties
+zonder beide blijven zichtbaar ongeconfigureerd. Gebruik nooit `0.0.0.0/0` of
+`::/0`. De interactieve installer vraagt het vertrouwde netwerk en de echte webpoort.
+
+Het profiel `/etc/proxypermit/access-safety.json` is eigendom van root. Het
+serviceaccount kan het lezen, maar de GUI kan het niet herschrijven. Toegevoegde
+UFW-regels heten `ProxyPermit SAFETY IN - ...` en worden voor gewone regels
+geplaatst. Eerst worden alle regels droog getest. Activering en standaardbeleid
+van UFW blijven behouden. Bestaande toestandsafhankelijke retourregels verzorgen
+antwoorden; er komt geen brede OUT-uitzondering bij. Configuratie, profiel en
+firewallbestanden worden voor herstel geback-upt.
+
+Het lokale Allow-blok valt buiten gedeeld HA-beleid en de bijbehorende
+conflictbaseline. Revisies voor native bewerkingen bewaken wel het hele bestand.
+Een backup behoudt eigen beheertoegang wanneer A clientregels publiceert.
+Herstart, rollback en conceptopslag blijven afzonderlijke stappen. De server
+controleert de vaste uitzonderingen, poorten en luisterbindingen, ook bij
+inkomend gedeeld beleid.
+
+De GUI kan een bestaand profiel niet veranderen. Installerargumenten voegen
+beheerbronnen en poorten toe zonder bestaande bescherming te verwijderen.
+Verwijder oude uitzonderingen bewust via onafhankelijke OS-beheertoegang, met gezamenlijke controle van profiel, native Allow-blok en
+bijbehorende UFW-regels. Test een tweede beheersessie voordat je de eerste sluit.
+Dit beschermt wijzigingen via de utility, niet tegen root die zelf de firewall
+reset of het profiel verwijdert.
+
+De lokale uitzondering staat voor gedeelde ACL-regels omdat Tinyproxy stopt bij
+de eerste passende clienttoegangsregel. Upstream-routering heeft een andere
+volgorde. Zie de [ACL-implementatie van Tinyproxy](https://github.com/tinyproxy/tinyproxy/blob/master/src/acl.c).
+
+### Waarom meerdere nodes dezelfde beheerbron kunnen tonen
+
+Het profiel toont toegestane **bronadressen**, niet de eigen adressen van de node.
+In het VirtualBox-lab zien alle drie de afzonderlijke NAT-verbindingen een
+poortdoorgestuurde hostverbinding als afkomstig van `10.0.2.2`. Met `/32` wordt
+dat ene waargenomen bronadres toegestaan. Daarom kunnen de standalone en de
+HA-nodes terecht dezelfde waarde tonen. Hun HA-adressen en identiteit zijn
+verschillend. Moet je achter gedeelde NAT of een reverse proxy onderscheid
+maken tussen clients? Beperk de toegang dan ook op dat toegangspunt. De bronregel
+vervangt inloggen of HTTPS niet.

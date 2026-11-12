@@ -78,3 +78,7 @@ whitelist_entry_log.json
 .test-data/
 .proxypermit-config-backups/
 .backups/
+
+# Generated documentation
+site/
+.cache/zensical/

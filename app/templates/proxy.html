@@ -40,13 +40,43 @@
         <p class="hint" id="activation-hint" hidden>{{ _('Publiceren is beschikbaar op een Linux-installatie die lokaal proxybeleid beheert.') }}</p>
         <div id="validation" aria-live="polite"></div>
     </section>
+    <section class="card draft-panel" id="draft-panel" aria-labelledby="draft-title">
+        <p class="hint" id="access-safety-notice"></p>
+        <div class="draft-heading"><div><p class="eyebrow">{{ _('WERKVERSIE') }}</p><h2 id="draft-title">{{ _('Jouw concept') }}</h2></div><span id="draft-state" class="badge"></span></div>
+        <p id="draft-description" role="status"></p>
+        <p id="draft-filter-note" class="hint" hidden>{{ _('Er staat ook een filterconcept klaar. Sla wijzigingen aan de filterregels op voordat je het gezamenlijke concept publiceert.') }}</p>
+        <details id="draft-diff-details" open><summary>{{ _('Verschillen met de actieve configuratie') }}</summary><pre id="draft-diff" tabindex="0"></pre></details>
+        <p class="hint">{{ _('Rood met minteken verdwijnt; groen met plusteken wordt toegevoegd. Geheimen worden in dit overzicht afgeschermd. Alleen publiceren verandert de actieve proxy.') }}</p>
+        <div class="actions"><button type="button" id="draft-save" class="secondary">{{ _('Concept opslaan') }}</button><button type="button" id="draft-publish">{{ _('Publiceren en activeren') }}</button><button type="button" id="draft-filter-discard" class="danger">{{ _('Filterconcept verwerpen') }}</button><button type="button" id="draft-discard" class="danger">{{ _('Opgeslagen concept verwerpen') }}</button></div>
+    </section>
     <nav class="section-links" aria-label="{{ _('Op deze pagina') }}">
+        <a href="#draft-panel">{{ _('Jouw concept') }}</a>
         <a href="#settings">{{ _('Instellingen') }}</a>
         <a href="#filter-panel">{{ _('Filterbestand') }}</a>
         <a href="#native-config" id="native-link">{{ _('Native configuratie') }}</a>
         {% if managed_ha %}<a href="/settings#ha-policy">{{ _('Beleid synchroniseren') }}</a>{% endif %}
     </nav>
     <div class="summary" id="summary" aria-label="{{ _('Instellingen in de editor') }}"></div>
+    <section class="card" id="filter-policy-panel" aria-labelledby="filter-policy-title">
+        <h2 id="filter-policy-title">{{ _('Allowlist of blocklist') }}</h2>
+        <p>{{ _('Allowlist: alleen passende bestemmingen toestaan. Blocklist: passende bestemmingen blokkeren en de overige toestaan. Clienttoegang en CONNECT-poorten blijven apart gelden.') }}</p>
+        <label for="filter-policy-mode">{{ _('Gewenste filtermodus') }}</label>
+        <select id="filter-policy-mode"><option value="allowlist">{{ _('Allowlist') }}</option><option value="blocklist">{{ _('Blocklist') }}</option></select>
+        <button type="button" id="filter-policy-review">{{ _('Wijziging bekijken') }}</button>
+        <p class="hint" id="filter-policy-hint" role="status"></p>
+    </section>
+    <dialog id="filter-policy-dialog" class="workspace-dialog" aria-labelledby="filter-policy-dialog-title">
+        <form method="dialog" class="workspace-panel">
+            <header class="workspace-dialog-header"><h2 id="filter-policy-dialog-title">{{ _('Filtermodus wijzigen') }}</h2></header>
+            <div class="workspace-dialog-body">
+                <p id="filter-policy-impact"></p>
+                <p>{{ _('De bestaande regels blijven behouden en krijgen de tegenovergestelde betekenis. Een lege allowlist blokkeert alles; een lege blocklist blokkeert geen bestemmingen.') }}</p>
+                <p>{{ _('Dit wijzigt eerst je concept. Controleer de regels en test vóór en na publiceren. Na geslaagde activering wordt het gedeelde beleid automatisch naar de gekoppelde backup verstuurd.') }}</p>
+                <label><input type="checkbox" id="filter-policy-confirm" required> {{ _('Ik begrijp de gevolgen voor bestaande regels en toegang.') }}</label>
+            </div>
+            <footer class="workspace-dialog-footer actions"><button type="button" id="filter-policy-cancel" class="secondary">{{ _('Annuleren') }}</button><button value="apply" type="submit">{{ _('Toepassen op concept') }}</button></footer>
+        </form>
+    </dialog>
     <div class="settings-layout" id="settings">
     <section class="card task-list" aria-labelledby="quick-title">
         <h2 id="quick-title">{{ _('Wat wil je aanpassen?') }}</h2>
@@ -75,7 +105,7 @@
             <p class="hint">{{ _('Aanhalingstekens gebruiken bij waarden met spaties. Een bestaande enkele instelling wordt vervangen; herhaalbare regels worden achteraan toegevoegd.') }}</p>
             <details><summary>{{ _('Over filtering en HTTPS') }}</summary><p>{{ _('Een filterbestand werkt als allowlist of blocklist. De standaardactie geldt voor de hele lijst. HTTPS gebruikt CONNECT; paden en HTTP-headers in die tunnel zijn niet zichtbaar.') }}</p></details>
             <details><summary>{{ _('Over beschikbaarheid') }}</summary><p>{{ _('Opties kunnen afhankelijk zijn van de Tinyproxy-build op de server. De controle hier toetst de configuratiestructuur. Bij mislukte activatie wordt het vorige bestand teruggezet.') }}</p>
-                {% if managed_ha %}<p>{{ _('Publiceren geldt alleen voor deze node. Pas hetzelfde beleid ook toe op de andere node.') }}</p>
+                {% if managed_ha %}<p>{{ _('Publiceer op node A. Gekoppelde node B ontvangt het gedeelde beleid automatisch; accounts en nodegebonden instellingen blijven lokaal.') }}</p>
                 {% elif ha_enabled %}<p>{{ _('HA synchroniseert momenteel alleen de bestaande filterlijst. Proxyconfiguratie beheer je per node.') }}</p>{% endif %}
             </details>
         </section>
@@ -91,6 +121,7 @@
     <details class="card editor-card" id="native-config">
         <summary>{{ _('Native configuratie') }}</summary>
         <p>{{ _('Het oorspronkelijke bestand, met commentaar en regelvolgorde.') }}</p>
+        {% if not permissions.admin %}<p class="notice">{{ _('Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.') }}</p>{% endif %}
         <label for="config">{{ _('Configuratiebestand') }}</label>
         <textarea id="config" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
         <div class="actions">

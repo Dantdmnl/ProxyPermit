@@ -452,6 +452,7 @@ async function refreshLogs(reason = 'page') {
             Math.max(logScanLimitBase, logPageOffset + (logPageLimit * 5))
         );
         let url = `/api/logs?limit=${logPageLimit}&offset=${logPageOffset}&service=${encodeURIComponent(selectedService)}&scan_limit=${requestedScanLimit}`;
+        if (document.getElementById('logHealthChecks')?.checked) url += '&health=include';
         if (query) url += `&q=${encodeURIComponent(query)}`;
         if (selectedLevel) url += `&level=${encodeURIComponent(selectedLevel)}`;
         for (const [name,value] of Object.entries(logPeriod)) if (value) url += `&${name}=${encodeURIComponent(value)}`;

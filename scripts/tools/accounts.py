@@ -13,7 +13,7 @@ import pyotp
 from werkzeug.security import generate_password_hash
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from app.core.accounts import load_accounts, matching_totp_step
+from app.core.accounts import ROLES, account_role, admin_count, load_accounts, matching_totp_step
 from app.core.files import file_lock
 from app.core.tinyproxy import atomic_write
 
@@ -42,9 +42,13 @@ def main():
     actions = parser.add_subparsers(dest='action', required=True)
     edit = actions.add_parser('set', help='Create an account or change its password.')
     edit.add_argument('username')
+    edit.add_argument('--role', choices=sorted(ROLES), help='Role for a new account; defaults to monitor. Existing roles are preserved.')
     factor = edit.add_mutually_exclusive_group()
     factor.add_argument('--totp', action='store_true', help='Enroll a new authenticator.')
     factor.add_argument('--no-totp', action='store_true', help='Disable 2FA for this account.')
+    role_command = actions.add_parser('role', help='Change a role and revoke existing sessions.')
+    role_command.add_argument('username')
+    role_command.add_argument('role', choices=sorted(ROLES))
     actions.add_parser('list', help='List accounts and their 2FA status.')
     actions.add_parser('remove', help='Remove an account.').add_argument('username')
     args = parser.parse_args()
@@ -53,7 +57,7 @@ def main():
         accounts = read(path)
         if args.action == 'list':
             for username, account in sorted(accounts.items()):
-                print(f"{username}\t2FA {'enabled' if 'totp_secret' in account else 'disabled'}")
+                print(f"{username}\t{account_role(account) or 'invalid'}\t2FA {'enabled' if 'totp_secret' in account else 'disabled'}")
             return 0
         if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', args.username):
             raise ValueError('Enter a valid administrator username.')
@@ -63,8 +67,9 @@ def main():
         if args.action == 'set':
             password = getpass.getpass('New password: ')
             if not 12 <= len(password) <= 256 or password != getpass.getpass('Repeat password: '):
-                raise ValueError('Enter matching passwords of 12–256 characters.')
-            updated = dict(password_hash=generate_password_hash(password), revision=secrets.token_hex(16))
+                raise ValueError('Enter matching passwords of 12â€“256 characters.')
+            updated = dict(password_hash=generate_password_hash(password), revision=secrets.token_hex(16),
+                           role=args.role or (account_role(previous) if previous else 'monitor'))
             if args.totp:
                 updated['totp_secret'] = enroll(args.username)
             elif not args.no_totp and previous and 'totp_secret' in previous:
@@ -75,10 +80,16 @@ def main():
             if accounts.get(args.username) != previous:
                 raise ValueError('This account changed. Try again.')
             if args.action == 'remove':
-                if args.username not in accounts or len(accounts) == 1:
+                if args.username not in accounts or (account_role(accounts[args.username]) == 'admin' and admin_count(accounts) <= 1):
                     raise ValueError('The account is missing or is the last administrator.')
                 del accounts[args.username]
             else:
+                if args.action == 'role':
+                    if not previous:
+                        raise ValueError('The account does not exist.')
+                    updated = dict(previous, role=args.role, revision=secrets.token_hex(16))
+                if account_role(previous) == 'admin' and account_role(updated) != 'admin' and admin_count(accounts) <= 1:
+                    raise ValueError('Keep at least one system administrator.')
                 accounts[args.username] = updated
             # The service reads the default file as group proxypermit. Only
             # root can write it, and explicit test paths remain private.

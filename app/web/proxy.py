@@ -7,12 +7,14 @@ import time
 from stat import S_IMODE
 from pathlib import Path
 
-from flask import Blueprint, jsonify, render_template, request, session
+from flask import Blueprint, jsonify, render_template, request, session, redirect
 from ..core.files import file_lock
+from ..core.access_safety import ensure_access, read_profile
 from ..core.ha_policy import MAX_TRANSFER, baseline, issue_invite, merge_policy, parse_invite, sign_policy, verify_policy
 
-from ..core.tinyproxy import ConfigError, DIRECTIVES, RevisionConflict, TinyproxyConfigStore, atomic_write, summary, validate
+from ..core.tinyproxy import ConfigError, DIRECTIVES, RevisionConflict, TinyproxyConfigStore, atomic_write, summary, validate, revision as config_revision
 from . import ha_replication as replication
+from .permissions import POLICY_DIRECTIVES, PolicyPermissionError, ensure_policy_only
 
 PENDING_CHANGES = 'Configuration changes are pending. Activate them through Proxy configuration first.'
 
@@ -114,19 +116,32 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         headers = {'Cache-Control': 'no-store'}
         if not authenticated():
             return render_template('signin.html', destination='/proxy'), 401, headers
+        if not app.extensions['has_permission']('proxy'):
+            return redirect('/settings')
         return render_template('proxy.html', csrf_token=csrf_token(), ha_enabled=ha_enabled(), managed_ha=managed_ha()), 200, headers
 
     @routes.route('/api/proxy/config')
     @requires_auth
     def read_config():
         try:
-            result = config_store().read()
-            return jsonify(**result, csrfToken=csrf_token(), schema=list(DIRECTIVES.values()),
-                           deploymentMode='ha' if ha_enabled() else 'standalone',
-                           canEdit=(not ha_enabled() or managed_ha()) and not paired_standby(),
-                           canActivate=activation_supported() and (not ha_enabled() or managed_ha()) and not paired_standby(),
-                           filterStaged=is_staged(TinyproxyConfigStore(manager.whitelist_path)),
-                           summary=summary(result['content']))
+            with file_lock(str(manager.whitelist_path) + '.lock'):
+                result = config_store().read()
+                active_content = config_store().path.read_text(encoding='utf-8-sig') if config_store().path.exists() else ''
+                access_safety = read_profile()
+                access_valid = True
+                try:
+                    ensure_access(active_content)
+                    ensure_access(result['content'])
+                except ConfigError as exc:
+                    result['errors'].append(str(exc)); result['valid'] = False; access_valid = False
+                return jsonify(**result, csrfToken=csrf_token(), schema=[spec for key, spec in DIRECTIVES.items()
+                               if app.extensions['has_permission']('admin') or key in POLICY_DIRECTIVES],
+                               accessSafety=access_safety, accessSafetyValid=access_valid, activeContent=active_content,
+                               deploymentMode='ha' if ha_enabled() else 'standalone',
+                               canEdit=(not ha_enabled() or managed_ha()) and not paired_standby(),
+                               canActivate=activation_supported() and (not ha_enabled() or managed_ha()) and not paired_standby(),
+                               filterStaged=is_staged(TinyproxyConfigStore(manager.whitelist_path)),
+                               summary=summary(result['content']))
         except (OSError, ConfigError):
             return jsonify(error='Cannot read configuration. Check the path and file permissions.'), 500
 
@@ -136,7 +151,15 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         data = request.get_json(silent=True)
         if not isinstance(data, dict) or not isinstance(data.get('content'), str):
             return jsonify(error='content must be text.'), 400
-        return jsonify(**validate(data['content']))
+        result = validate(data['content'])
+        try:
+            ensure_access(data['content'])
+            if not app.extensions['has_permission']('admin'):
+                with file_lock(str(manager.whitelist_path) + '.lock'):
+                    ensure_policy_only(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
+        except (ConfigError, ValueError) as exc:
+            result['errors'].append(str(exc)); result['valid'] = False
+        return jsonify(**result)
 
     @routes.route('/api/proxy/config', methods=['PUT'])
     @requires_auth
@@ -152,8 +175,11 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         if ha_enabled() and not managed_ha():
             return jsonify(error='Manage HA proxy configuration on each node during maintenance.'), 409
         try:
+            ensure_access(data['content'])
             # Keep the managed filter stable through restart and recovery too.
             with file_lock(str(manager.whitelist_path) + '.lock'):
+                if not app.extensions['has_permission']('admin'):
+                    ensure_policy_only(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
                 filters = TinyproxyConfigStore(manager.whitelist_path, mode=0o644)
                 if activating and filters.draft_path.exists():
                     filters, _ = filter_store(data['content'])
@@ -177,6 +203,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             return jsonify(success=True, **result)
         except RevisionConflict as exc:
             return jsonify(error=str(exc)), 409
+        except PolicyPermissionError as exc:
+            return jsonify(error=str(exc)), 403
         except ConfigError as exc:
             return jsonify(error=str(exc)), 400
         except (OSError, TimeoutError):
@@ -192,9 +220,10 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                                     validator=lambda text: validate_filter(text, config['filterType'].lower()), mode=0o644), config
 
     def activate_shared_policy(store, filters, config, content, updated, rules):
+        ensure_access(updated)
         current = baseline(config, content)
         if current == baseline(updated, rules):
-            return dict(success=True, revision=current[0])
+            return dict(success=True, revision=config_revision(config))
         store.mode = S_IMODE(store.path.stat().st_mode)
         filters.mode = S_IMODE(filters.path.stat().st_mode)
         backup_name = 'ha-policy-' + secrets.token_hex(12) + '.json'
@@ -211,7 +240,7 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 filters.restore_pending()
             return manager.restart_tinyproxy()
 
-        result = store.save(updated, current[0], apply_and_recover)
+        result = store.save(updated, config_revision(config), apply_and_recover)
         filters.finish_activation()
         audit('ha_policy_activated', revision=result['revision'], policy_backup=backup_name)
         return dict(success=True, policyBackup=backup_name, **result)
@@ -424,10 +453,14 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         try:
             with file_lock(str(manager.whitelist_path) + '.lock'):
                 store = config_store() if kind == 'config' else TinyproxyConfigStore(manager.whitelist_path)
+                if kind == 'config' and not app.extensions['has_permission']('admin'):
+                    ensure_policy_only(store.path.read_text(encoding='utf-8-sig'), store.read()['content'])
                 store.discard_draft(data['revision'])
             return jsonify(success=True)
         except RevisionConflict as exc:
             return jsonify(error=str(exc)), 409
+        except PolicyPermissionError as exc:
+            return jsonify(error=str(exc)), 403
         except (OSError, TimeoutError):
             return jsonify(error='Save failed. Check file permissions and available disk space.'), 500
 

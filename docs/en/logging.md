@@ -140,8 +140,25 @@ own storage retention; the public notice identifies that unmanaged state.
 
 ## Local health checks and connection noise
 
-The `/health` endpoint and newly installed Keepalived helper inspect Linux TCP listener tables instead of opening and immediately closing client sockets. This avoids generating fake `closed socket before read` errors or periodic loopback connection records. Both IPv4 and IPv6 listeners are recognized. These are local listener checks, not end-to-end traffic, authentication, filtering, backlog-capacity or upstream reachability tests. Continue testing real proxy traffic separately.
+Managed HA now uses a bounded HTTP request to Tinyproxy's configured internal
+statistics host. The root-owned helper runs as the existing `proxypermit` account
+so it can read the protected native configuration; it sends no proxy passwords.
+A listening but non-responsive proxy fails the check. HTTP 401/403/407 responses
+still prove responsiveness when authentication or local ACLs restrict access.
+This does not prove upstream connectivity or correct end-to-end filtering.
 
-On managed HA upgrades, the installer replaces only the exact old ProxyPermit helper, backs it up for rollback, and preserves its permissions and ownership. Custom helpers remain unchanged. No additional privileges or network firewall rules are needed; unreadable kernel state fails the HA check.
+Successful, identifiable local probe traffic is hidden from the standard log
+query. Enable **Show health checks** or search explicitly to include it. Records
+remain retained under the existing 7-day traffic policy. Warnings, errors, remote
+clients and unmatched historical socket failures are never hidden by this rule.
+Correlation requires the unredacted loopback address, process and descriptor;
+redacted network prefixes alone cannot establish that a request was a probe.
 
-Historical closed-socket records cannot reliably be attributed to a health check. They remain searchable, with their original severity and existing retention. Similar errors from real clients are not suppressed. One-off network preflight and peer-retirement tests still perform actual connection checks.
+The installer migrates recognized old helpers and the exact managed Keepalived
+configuration together, preserving ownership, permissions and rollback snapshots.
+Custom helpers/configurations require operator review and are left unchanged.
+The source-only listener helper remains available for compatibility testing.
+Keepalived uses two failed checks before FAULT and two successful checks before
+recovery; actual timing also depends on VRRP and host scheduling. See the
+[Keepalived reference](https://keepalived.org/documentation/keepalived-conf/) and
+[Tinyproxy statistics-host documentation](https://tinyproxy.github.io/).

@@ -94,6 +94,7 @@
     }
 
     opener.addEventListener('click', () => {
+        if (!requireRulesWritable()) return;
         showType();
         dialog.showModal();
         inputFor[type.value].focus();

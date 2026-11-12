@@ -1,32 +1,45 @@
-# Documentatie
+# Begin hier
 
-[English](../en/README.md) · [ProxyPermit](../../README.md)
+[English](../en/README.md) · [ProxyPermit op GitHub](https://github.com/Dantdmnl/ProxyPermit)
 
-ProxyPermit is een webinterface voor het beheer van Tinyproxy. Je beheert
-clienttoegang, bestemmingsfilters, routering, configuratie en logboeken.
-Beheerders kunnen elk een eigen account met optionele tweefactorauthenticatie
-(2FA) gebruiken.
+Met ProxyPermit beheer je een Tinyproxy-server via een webinterface. Je bepaalt
+welke apparaten de proxy mogen gebruiken en welke websites zij mogen bereiken.
+Je kunt ook logs bekijken en twee servers gebruiken die elkaar bij uitval overnemen.
 
-## Ik wil…
+## Wat wil je doen?
 
-| Taak | Waar begin ik? |
+| Jouw situatie | Begin bij |
 | --- | --- |
-| Een zelfstandige node installeren | [Nieuwe installatie](installatie.md#nieuwe-installatie-op-debian-of-ubuntu) |
-| Twee nodes met één proxyadres opzetten | [Nieuw HA-cluster](installatie.md#nieuw-ha-cluster-met-twee-nodes) |
-| Bijwerken, migreren of herstellen | [Upgrade, migratie en herstel](installatie.md#upgrade-migratie-en-herstel) |
-| De beheerconsole verwijderen | [Beheerconsole verwijderen](installatie.md#beheerconsole-verwijderen) |
-| Een installatie controleren of een storing onderzoeken | [Beheerdershandleiding](beheer.md) |
-| Installatie, herstel of HA-failover oefenen | [VM-testlab](vm-lab.md) |
+| Ik heb een adres voor de beheerinterface en een account | [Eerste stappen](eerste-stappen.md) |
+| Ik wil een website toevoegen, regels importeren of instellingen wijzigen | [De interface gebruiken](werkinstructie.md) |
+| Ik wil ProxyPermit installeren, bijwerken of verwijderen | [Installeren](installatie.md) |
+| Ik wil twee servers die elkaar kunnen overnemen | [Hoge beschikbaarheid](hoge-beschikbaarheid.md) |
+| Iets werkt niet | [Problemen oplossen](problemen-oplossen.md) |
+| Ik begrijp een technische term niet | [Begrippen uitgelegd](begrippen.md) |
 
-## Technische achtergrond
+## Voor de systeembeheerder
 
-- [Architectuur en HA-keuzes](architecture.md) voor componenten en ontwerpbeslissingen.
-- [Logging en bewaartermijnen](logging.md) voor zoeken, privacymeldingen en afgedwongen bewaartermijnen.
-- [Verificatieverslag](verification.md) voor uitgevoerde tests en openstaande controles.
-- [Projectstructuur](layout.md) voor broncode, ontwikkelomgeving en tests.
-- [Versies, releases en CI](releases.md) voor lokale controles en releasevoorbereiding.
+Gebruik na installatie de [beheerdershandleiding](beheer.md) om toegang te
+controleren, verkeer te testen en back-ups voor te bereiden. De
+[logginghandleiding](logging.md) legt uit wat wordt vastgelegd, hoelang dat wordt
+bewaard en hoe je het terugvindt.
 
-## Archief
+Het beheeradres en het proxyadres hebben verschillende functies. In de
+beheerinterface pas je instellingen aan. Apparaten gebruiken het proxyadres om
+websites te bereiken. Een beheeraccount aanmaken stelt de proxy op een apparaat
+niet automatisch in.
 
-De [historische documentatie](../legacy/) beschrijft de oorspronkelijke installatie.
-Daar staan de oude beheerdershandleiding, werkinstructie, omgevingsvariabelen en audit.
+## Voor ontwikkelaars
+
+- Oefen veranderingen eerst in het [VM-testlab](vm-lab.md).
+- [Architectuur](architecture.md) en [projectstructuur](layout.md) leggen de broncode uit.
+- [Releases en CI](releases.md) beschrijft controles en het maken van releases.
+- [Documentatiewebsite](documentatiewebsite.md) legt lokaal bekijken en publiceren uit.
+- [Verificatie](verification.md) beschrijft wat daadwerkelijk is getest.
+- [Vervolgwerk](vervolgwerk.md) bevat functies die nog niet beschikbaar zijn.
+
+Deze pagina's volgen `main`, inclusief werk dat nog niet is uitgebracht.
+Oude instructies staan in het
+[archief](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
+
+[Gebruikers en rollen](rollen.md) legt uit welke rechten bij welk werk passen.

@@ -2,6 +2,14 @@
 
 [Nederlands](../nl/installatie.md) · [Documentation](README.md)
 
+**For:** the system administrator installing or maintaining the server. To use
+an existing console, start with [First steps](getting-started.md).
+
+Before you start, have a supported Debian/Ubuntu host, root or sudo access and
+an independent way back into the server. Obtain the source for the version you
+intend to install and run the commands from the directory containing `install.sh`.
+The examples use documentation addresses; replace them with your network values.
+
 ## Choose a path
 
 - [Install a standalone node](#install-on-debian-or-ubuntu)
@@ -35,6 +43,20 @@ A fresh install asks for an administrator password, installs system packages,
 builds a release in a dedicated Python virtual environment, and runs tests.
 Standalone uses a dedicated service account and a narrow sudoers rule for
 restarting Tinyproxy. Keepalived and the sync timer are omitted in this mode.
+
+### Protect management access
+
+The wizard asks for the trusted management IP/network and the real host-side
+SSH and web ports. Check these values in the review. Enter the source that the
+host actually sees; NAT and reverse proxies can change it. Do not enter a broad
+network just to make installation easier. A local installer cannot safely infer
+a remote administrator's network.
+
+For automation or an existing installation, use the explicit
+`--management-cidr`, `--management-ssh-port` and `--management-web-port` options.
+See the [anti-lockout profile](administration.md#anti-lockout-profile) for an
+example, recovery behavior and restrictions. The installer preserves UFW's
+activation state and existing pinned exceptions.
 
 ### Open the console
 
@@ -109,10 +131,9 @@ when exactly one detected address matches the pairing code.
 
 ### Install fresh hosts using the installer
 
-Under **Settings → High availability (HA)**, validate the addresses, network
-interface, and VRRP ID in advance. The console gives you a plan command for a
-fresh host. Run the installation on both hosts using the steps below. On an
-existing node, use this screen to validate settings in advance.
+Use this route to provision two fresh hosts directly with the installer. For
+existing standalone nodes, use the web-interface procedure above instead. The
+[HA guide](high-availability.md) explains the addresses and the role of each node.
 
 On a fresh HA installation, the installer adds three UFW rules. The comments
 start with **ProxyPermit HA IN** or **ProxyPermit HA OUT**.
@@ -127,6 +148,43 @@ The installer preserves the existing UFW activation state and default policies.
 If UFW is inactive, the rules are saved for when you enable it. The recovery
 backup includes the original UFW rule files. Automatic recovery stops if those
 files have changed since installation.
+
+Use two clean Debian or Ubuntu hosts with systemd, static IPv4 addresses on the
+same network, and an unused virtual IP address. Allow unicast VRRP (IP protocol
+112) between the hosts and TCP 3128 from the client network. Choose a VRRP ID
+that is unused on that network.
+
+In the wizard, select **Two-node HA**. Review and confirm the summary.
+The menu supports arrow keys in compatible terminals and numbered input in
+basic terminals. The confirmation defaults to stopping.
+
+Run the following on both hosts. Set `node=b` on the second host and use each
+host's interface name and your own addresses.
+
+```bash
+node=a
+iface=ens18
+cluster=(
+  --mode ha --ha-node "$node" --ha-interface "$iface"
+  --ha-node-a 192.0.2.11 --ha-node-b 192.0.2.12
+  --ha-vip 192.0.2.10/24 --ha-client-cidr 192.0.2.0/24 --ha-vrid 51
+)
+bash install.sh "${cluster[@]}" --plan
+sudo bash install.sh "${cluster[@]}" --apply
+```
+
+Clients use the virtual IP on port 3128. The managed Keepalived helper checks whether local Tinyproxy answers HTTP
+and gives node A priority. Use a separate SSH tunnel to each management
+console. Both nodes start with an empty allowlist. Pair them once through
+**Settings → High availability → Add node**. Publish the required policy on A
+and confirm that B has applied the same revision before putting the VIP into use.
+
+Upgrades preserve existing Keepalived and sync settings. Topology changes are
+rejected during an upgrade. For existing clusters with filter synchronization,
+use peer names that match their certificates. Set `SYNC_SCHEME=https`,
+`SYNC_VERIFY_CERT=true`, and `SYNC_PORT` if required. Restrict ProxyFix to the
+trusted reverse proxy if it terminates TLS. `SYNC_ALLOW_INSECURE_TRANSPORT=true`
+is a temporary compatibility option for older deployments.
 
 ### Retire an HA node
 
@@ -152,63 +210,30 @@ if it differs from the default. Retirement requires a managed node with a
 record of the installed UFW rules. Older deployments require a separate
 migration.
 
-Use two clean Debian or Ubuntu hosts with systemd, static IPv4 addresses on the
-same network, and an unused virtual IP address. Allow unicast VRRP (IP protocol
-112) between the hosts and TCP 3128 from the client network. Choose a VRRP ID
-that is unused on that network.
-
-In the wizard, select **Two-node HA**. Review and confirm the summary.
-The menu supports arrow keys in compatible terminals and numbered input in
-basic terminals. The confirmation defaults to stopping.
-
-Run the following on both hosts. Set `node=b` on the second host and use each
-host's interface name and your own addresses.
-
-```bash
-node=a
-iface=ens18
-cluster=(
-  --mode ha --ha-node "$node" --ha-interface "$iface"
-  --ha-node-a 192.0.2.11 --ha-node-b 192.0.2.12
-  --ha-vip 192.0.2.10/24 --ha-client-cidr 192.0.2.0/24 --ha-vrid 51
-)
-bash install.sh "${cluster[@]}"
-sudo bash install.sh "${cluster[@]}" --apply
-```
-
-Clients use the virtual IP on port 3128. Keepalived checks the local Tinyproxy
-port and gives node A priority. Use a separate SSH tunnel to each management
-console. Both nodes start with an empty allowlist. Pair them once through
-**Settings → High availability → Add node**. Publish the required policy on A
-and confirm that B has applied the same revision before putting the VIP into use.
-
-Upgrades preserve existing Keepalived and sync settings. Topology changes are
-rejected during an upgrade. For existing clusters with filter synchronization,
-use peer names that match their certificates. Set `SYNC_SCHEME=https`,
-`SYNC_VERIFY_CERT=true`, and `SYNC_PORT` if required. Restrict ProxyFix to the
-trusted reverse proxy if it terminates TLS. `SYNC_ALLOW_INSECURE_TRANSPORT=true`
-is a temporary compatibility option for older deployments.
-
 ## Administrator accounts and optional 2FA
 
 A fresh install creates a local administrator account. In **Settings**, add or
 remove accounts, change your password, or set up 2FA for your account using an
-authenticator app. Every local account has administrator privileges. Account
+authenticator app. The first account is a system administrator; new accounts can have a [restricted role](roles.md). Account
 changes require your password and a fresh authenticator code if 2FA is enabled.
 Use HTTPS for remote management. Loopback access can use HTTP.
 
 ```bash
 cd /opt/proxypermit/current
-sudo .venv/bin/python scripts/tools/accounts.py set alice --totp
-sudo .venv/bin/python scripts/tools/accounts.py set bob
+sudo .venv/bin/python scripts/tools/accounts.py set alice --role admin --totp
+sudo .venv/bin/python scripts/tools/accounts.py set bob --role manager
 sudo .venv/bin/python scripts/tools/accounts.py list
 ```
+
+The example explicitly creates an administrator and a proxy manager. Omit
+`--totp` if you do not want to enroll optional 2FA during this step.
 
 If an administrator loses access to their authenticator, a server administrator
 can issue a new secret with `set USER --totp` or disable 2FA with
 `set USER --no-totp`. An account change invalidates that account's existing
 sessions. To switch an existing deployment from a single login or RADIUS to
-local accounts, create the accounts first, set
+local accounts, create the accounts first and verify that `list` shows at least
+one `admin`. New CLI accounts default to monitor unless `--role` is supplied. Then set
 `AUTH_ACCOUNTS_FILE=/var/lib/proxypermit/accounts.json`, and restart ProxyPermit.
 
 On HA deployments, enroll accounts and authenticators on each node and sign in
@@ -223,6 +248,14 @@ For an installer-managed deployment, obtain the release you want and run the
 upgrade from that source directory. The installer uses the source in that
 directory. For a custom installation path, pass the same `--install-dir` to
 each command.
+
+Before applying an upgrade, coordinate any saved configuration drafts with their
+owner. Publish or discard them deliberately; anti-lockout configuration refuses
+to overwrite a pending draft. Keep a recovery console and record the backup name.
+Existing passwords, 2FA and role-less administrator access are preserved. After
+upgrading, review [roles](roles.md), the management-source profile and HA policy
+status on both nodes. A monitor cannot export policy; use a proxy manager or
+system administrator for a pre-upgrade export.
 
 ```bash
 sudo bash install.sh --upgrade --plan

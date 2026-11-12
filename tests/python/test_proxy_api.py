@@ -32,12 +32,73 @@ class ProxyApiTests(unittest.TestCase):
         data = self.client.get('/api/proxy/config').get_json()
         return {'X-CSRF-Token': data['csrfToken']}, data['revision']
 
+    def test_reorder_publishes_exact_order_and_rejects_a_stale_revision(self):
+        from app.web import ha_replication
+        self.filter.write_text('# first\n# second\n', encoding='utf-8')
+        self.config.write_text(f'Port 3128\nFilter "{self.filter.as_posix()}"\nFilterType ere\nFilterDefaultDeny Yes\n', encoding='utf-8')
+        with patch.dict(os.environ, DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true', PROXYPERMIT_HA_NODE='a',
+                        NODE0_ADDRESS='192.0.2.11', NODE1_ADDRESS='192.0.2.12', VIP_ADDRESS='192.0.2.10',
+                        SESSION_STATE_FILE=str(self.config.with_name('session.json'))), \
+                patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main, 'WHITELIST_PATH', str(self.filter)):
+            initial = self.client.get('/api/entries').json
+            result = self.client.post('/api/entries/reorder', json={'entry_ids': [1, 0], 'revision': initial['revision'], 'auto_restart': False})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(ha_replication.read_state('published-policy')['filters'], '# second\n# first\n')
+            self.assertEqual(self.client.post('/api/entries/reorder', json={'entry_ids': [1, 0], 'revision': initial['revision']}).status_code, 409)
+            self.assertEqual(self.filter.read_text(), '# second\n# first\n')
+            self.assertEqual(self.client.post('/api/entries/reorder', json={'entry_ids': [True, 0]}).status_code, 400)
+
+    def test_paired_backup_rejects_all_rule_writes_and_advertises_read_only(self):
+        from app.web import ha_replication
+        with patch.dict(os.environ, DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true', PROXYPERMIT_HA_NODE='b',
+                        SESSION_STATE_FILE=str(self.config.with_name('session.json'))):
+            ha_replication.write_state('peer', {})
+            self.assertFalse(main.get_app_config()['canEditRules'])
+            before = self.filter.read_bytes()
+            for method, url, body in [('DELETE', '/api/entries/0', None), ('PUT', '/api/entries/0', {}),
+                                      ('POST', '/api/entries', {}), ('POST', '/api/entries/reorder', {}), ('POST', '/api/import', {})]:
+                result = self.client.open(url + '?lang=en', method=method, json=body)
+                self.assertEqual(result.status_code, 409)
+                self.assertEqual(result.json['error'], 'Publish shared proxy policy on the primary HA node.')
+            self.assertEqual(before, self.filter.read_bytes())
+
     def test_editor_renders_and_assets_are_separate(self):
         result = self.client.get('/proxy')
         self.assertEqual(result.status_code, 200)
         self.assertIn(b'/static/js/proxy.js', result.data)
         with self.client.get('/static/css/proxy.css') as response:
             self.assertEqual(response.status_code, 200)
+
+    def test_saved_draft_exposes_the_separate_active_version(self):
+        active = self.config.read_text()
+        headers, revision = self.token_and_revision()
+        draft = active + 'Timeout 45\n'
+        response = self.client.put('/api/proxy/config', headers=headers, json={'content': draft, 'revision': revision})
+        self.assertEqual(response.status_code, 200)
+        loaded = self.client.get('/api/proxy/config').json
+        self.assertTrue(loaded['staged'])
+        self.assertEqual(loaded['activeContent'], active)
+        self.assertEqual(loaded['content'], draft)
+        self.assertEqual(self.config.read_text(), active)
+
+    def test_anti_lockout_is_enforced_on_validation_and_save(self):
+        import json
+        from app.core.access_safety import protect_configuration
+        profile = dict(version=1, managementNetworks=['192.0.2.8/32'], proxyNetworks=['192.0.2.8/32'],
+                       sshPorts=[22], webPorts=[443], proxyPort=3128, listeners=['0.0.0.0'])
+        location = self.config.with_name('safety.json')
+        location.write_text(json.dumps(profile), encoding='utf-8')
+        active = protect_configuration('Port 3128\nListen 0.0.0.0\nAllow 127.0.0.1\n', profile)
+        self.config.write_text(active, encoding='utf-8')
+        with patch.dict(os.environ, PROXYPERMIT_ACCESS_SAFETY_FILE=str(location)):
+            headers, revision = self.token_and_revision()
+            unsafe = 'Port 4000\nAllow 127.0.0.1\n'
+            preview = self.client.post('/api/proxy/config/validate', headers=headers, json={'content': unsafe})
+            self.assertFalse(preview.json['valid'])
+            result = self.client.put('/api/proxy/config', headers=headers, json={'content': unsafe, 'revision': revision})
+            self.assertEqual(result.status_code, 400)
+            self.assertEqual(self.config.read_text(), active)
 
     def test_config_requires_login(self):
         with patch.object(main, 'ENABLE_AUTH', True):

@@ -11,6 +11,7 @@ import ssl
 from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
+from app.core.access_safety import profile_path, read_profile, protect_configuration, ensure_access
 
 from app.core.ha import HA_SETUP_REQUEST, HA_SETUP_RESULT, HA_SETUP_ENV, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from app.core.tinyproxy import TinyproxyConfigStore, atomic_write
@@ -203,9 +204,16 @@ def _configure_locked(base, request, topology):
                 remote = enrolled.get('topology')
                 if not isinstance(remote, dict) or any(remote.get(name) != topology[name] for name in ('nodeA', 'nodeB', 'vip', 'clients', 'vrid')):
                     raise ValueError('The primary HA topology differs from the reviewed pairing code.')
+            profile = read_profile()
+            if profile:
+                updated = protect_configuration(updated, profile)
+                ensure_access(updated)
+                transaction.track(profile_path())
+                profile['listeners'] = ['0.0.0.0']
+                atomic_write(profile_path(), json.dumps(profile), profile_path().stat().st_mode & 0o777)
             atomic_write(config, updated, config.stat().st_mode & 0o777)
             atomic_write(deploy.KEEPALIVED_CONFIG, deploy.keepalived_text(topology), 0o640)
-            atomic_write(deploy.KEEPALIVED_HEALTH, deploy.KEEPALIVED_HEALTH_TEXT, 0o755)
+            atomic_write(deploy.KEEPALIVED_HEALTH, deploy.health_helper_text(config), 0o755)
             deploy.run('keepalived', '--config-test', '-f', str(deploy.KEEPALIVED_CONFIG))
             additions = dict(DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true', PROXYPERMIT_HA_NODE=topology['node'],
                              NODE0_ADDRESS=topology['nodeA'], NODE1_ADDRESS=topology['nodeB'],

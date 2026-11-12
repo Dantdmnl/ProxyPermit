@@ -101,7 +101,7 @@ def archive(root=ROOT, output=None):
     target = output / (name + '.tar.gz')
     roots = ('app', 'deploy', 'docs', 'legacy', 'scripts', 'tests', 'requirements')
     files = [root / item for item in ('VERSION', 'CHANGELOG.md', 'README.md', 'LICENSE', 'Makefile',
-                                     'install.sh', 'wsgi.py', '.env.example', 'pyproject.toml', 'AGENTS.md')]
+                                     'install.sh', 'wsgi.py', '.env.example', 'pyproject.toml', 'AGENTS.md', 'zensical.toml')]
     for directory in roots:
         files.extend((root / directory).rglob('*'))
     records = {}

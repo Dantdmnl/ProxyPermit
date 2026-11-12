@@ -43,7 +43,7 @@
                 checked.dateTime = time.toISOString();
                 checked.textContent = new Intl.DateTimeFormat(I18n.tag, { dateStyle: 'short', timeStyle: 'medium' }).format(time);
             }
-            disconnect.hidden = !result.paired;
+            if (disconnect) disconnect.hidden = !result.paired;
             const join = document.getElementById('ha-policy-join');
             if (join) join.hidden = result.paired;
             const invite = panel.querySelector('[data-ha-policy="invite"]');
@@ -57,17 +57,28 @@
             status.textContent = I18n.t('Synchronisatiestatus kon niet worden geladen.');
         }
     }
+    let vipSequence = 0, vipExpiry;
     async function refreshVip() {
+        const sequence = ++vipSequence;
         const target = document.getElementById('ha-policy-vip');
         try {
             const response = await fetch('/api/status', { signal: AbortSignal.timeout(5000) });
-            if (!response.ok) return;
+            if (!response.ok) throw new Error();
             const node = await response.json();
+            if (sequence !== vipSequence) return;
+            clearTimeout(vipExpiry);
+            vipExpiry = setTimeout(() => { target.textContent = I18n.t('VIP-status niet bevestigd'); }, 12000);
             target.textContent = I18n.t(node.vip_active ? 'Virtueel IP actief op deze node.' : 'Virtueel IP niet actief op deze node.');
         } catch {
-            target.textContent = '';
+            if (sequence !== vipSequence) return;
+            target.textContent = I18n.t('VIP-status niet bevestigd');
         }
     }
+
+    window.addEventListener('proxypermit:connection', event => {
+        if (event.detail.state !== 'online') { vipSequence++; document.getElementById('ha-policy-vip').textContent = I18n.t('VIP-status niet bevestigd'); }
+        else refreshVip();
+    });
 
     async function perform(action) {
         if (pending) return;
@@ -96,7 +107,7 @@
             perform(button.dataset.haPolicy);
         }
     });
-    disconnectDialog.addEventListener('close', () => {
+    disconnectDialog?.addEventListener('close', () => {
         if (disconnectDialog.returnValue === 'disconnect') perform('disconnect');
     });
     refresh();

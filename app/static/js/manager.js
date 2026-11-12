@@ -122,6 +122,43 @@ let entries = [];
 let filteredEntries = [];
 let currentEditId = null;
 let currentEditType = null;
+let entriesRevision = null;
+let statusPending = false;
+let statusExpiry;
+let nodeStatusEpoch = 0;
+let lastStatusAt = 0;
+function rulesWritable() {
+    const writable = appConfig.canEditRules !== false;
+    const notice = document.getElementById('rulesAccessNotice');
+    if (notice) {
+        notice.hidden = writable;
+        notice.textContent = I18n.t(appConfig.canManageProxy === false ? 'Je monitorrol geeft alleen leesrechten. Je kunt status, regels en logs bekijken.' : 'Deze backup ontvangt gedeeld beleid van node A. Voeg regels toe, wijzig, verwijder of verplaats ze op node A; ook wanneer deze node het VIP bedient.');
+    }
+    return writable;
+}
+function requireRulesWritable() {
+    if (rulesWritable()) return true;
+    document.getElementById('rulesAccessNotice')?.scrollIntoView({ block: 'nearest' });
+    showToast('warning', I18n.t('Alleen lezen'), I18n.t(appConfig.canManageProxy === false ? 'Je rol staat deze actie niet toe.' : 'Publish shared proxy policy on the primary HA node.'));
+    return false;
+}
+function markNodeStatusUnknown() {
+    if (appConfig.deploymentMode !== 'standalone') {
+        document.getElementById('vipStatusText').textContent = I18n.t('VIP-status niet bevestigd');
+        document.getElementById('vipStatusDot').className = 'status-dot unknown';
+    }
+    document.getElementById('tinyproxyStatusText').textContent = I18n.t('Servicestatus niet bevestigd');
+    document.getElementById('tinyproxyStatusDot').className = 'status-dot unknown';
+    document.getElementById('nodeRoleBadge').className = 'node-badge unknown';
+    document.getElementById('nodeRoleBadge').textContent = I18n.t('Status niet bevestigd');
+}
+window.addEventListener('proxypermit:connection', event => {
+    if (event.detail.state !== 'online') { nodeStatusEpoch++; markNodeStatusUnknown(); }
+    else { refreshStatus(); loadEntriesDebounced(0); }
+});
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastStatusAt > 12000) { markNodeStatusUnknown(); refreshStatus(); }
+});
 let draggedEntryId = null;
 let isSavingOrder = false;
 let autoScrollInterval = null;
@@ -364,6 +401,7 @@ async function checkSyncConflicts() {
 // Merge modal
 let _mergeModalEscHandler = null;
 function openMergeModal() {
+    if (!requireRulesWritable()) return;
     const modal = document.getElementById('mergeModal');
     if (!modal) return;
     modal.classList.add('show');
@@ -1132,6 +1170,7 @@ async function loadMergeData() {
 
 
 async function applyMerge() {
+    if (!requireRulesWritable()) return;
     const listEl = document.getElementById('mergeList');
     const applyBtn = document.getElementById('mergeApplyButton');
     const pushPeer = !!document.getElementById('mergePushPeer')?.checked;
@@ -1266,20 +1305,33 @@ async function refreshStatus() {
         return;
     }
     try {
-        const result = await apiRequest('/api/status', {}, { timeoutSeconds: 5, retries: 1, retryDelayMs: 500 });
+        if (statusPending) return;
+        statusPending = true;
+        const epoch = nodeStatusEpoch;
+        const response = await fetch('/api/status', { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+        const result = { ok: response.ok, data: response.ok ? await response.json() : null };
+        statusPending = false;
+        if (epoch !== nodeStatusEpoch) { markNodeStatusUnknown(); return; }
 
         if (!result.ok || !result.data) {
-            // Fail silently voor status refresh - keep old status visible
+            markNodeStatusUnknown();
             return;
         }
 
         const status = result.data;
+        lastStatusAt = Date.now();
+        clearTimeout(statusExpiry);
+        statusExpiry = setTimeout(markNodeStatusUnknown, 12000);
+        if (typeof status.canEditRules === 'boolean' && status.canEditRules !== appConfig.canEditRules) {
+            appConfig.canEditRules = status.canEditRules;
+            rulesWritable(); renderEntries();
+        }
         const standalone = appConfig.deploymentMode === 'standalone';
         ['vipStatusText', 'peerStatusText'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.parentElement.hidden = standalone || (id === 'peerStatusText' && appConfig.managedHa);
         });
-        document.getElementById('manualSyncButton').hidden = standalone || appConfig.managedHa;
+        document.getElementById('manualSyncButton').hidden = standalone || appConfig.managedHa || appConfig.canManageProxy === false;
 
         if (Object.hasOwn(status, 'whitelist_mtime')) {
             if (lastWhitelistMtime !== undefined && status.whitelist_mtime !== lastWhitelistMtime) {
@@ -1294,15 +1346,15 @@ async function refreshStatus() {
         if (status.configured_role === 'STANDALONE') {
             roleBadge.className = 'node-badge master';
             roleBadge.textContent = I18n.t('ZELFSTANDIGE NODE');
-        } else if (status.configured_role === 'MASTER') {
+        } else if (status.current_state === 'MASTER') {
             roleBadge.className = 'node-badge master';
-            roleBadge.textContent = I18n.t('MASTER NODE');
-        } else if (status.configured_role === 'BACKUP') {
+            roleBadge.textContent = I18n.t('ACTIEVE NODE');
+        } else if (status.current_state === 'BACKUP') {
             roleBadge.className = 'node-badge backup';
-            roleBadge.textContent = I18n.t('BACKUP NODE');
+            roleBadge.textContent = I18n.t('STANDBY NODE');
         } else {
             roleBadge.className = 'node-badge unknown';
-            roleBadge.textContent = I18n.t('UNKNOWN');
+            roleBadge.textContent = I18n.t(status.current_state === 'FAULT' ? 'NODE IN FOUTTOESTAND' : 'UNKNOWN');
         }
 
         // Update VIP status indicator
@@ -1329,9 +1381,10 @@ async function refreshStatus() {
         const tinyproxyDot = document.getElementById('tinyproxyStatusDot');
         const tinyproxyText = document.getElementById('tinyproxyStatusText');
 
+        tinyproxyDot.style.background = '';
         if (status.tinyproxy_active) {
             tinyproxyDot.className = 'status-dot active';
-            if (status.tinyproxy_check_status === 'check_failed') {
+            if (['check_failed', 'unresponsive'].includes(status.tinyproxy_check_status)) {
                 // Tinyproxy draait maar health check faalt
                 tinyproxyText.textContent = I18n.t('⚠️ Tinyproxy draait maar health check faalt');
                 tinyproxyDot.style.background = '#ffc107';
@@ -1404,6 +1457,8 @@ async function refreshStatus() {
         // Last sync display is handled via sync state (checkSyncConflicts)
 
     } catch (error) {
+        statusPending = false;
+        markNodeStatusUnknown();
         // Fail silently - status refresh is niet kritisch
         console.warn('Status refresh gefaald:', error.message);
     }
@@ -1437,6 +1492,9 @@ async function loadEntries() {
 
         if (result.ok && result.data && result.data.success) {
             entries = result.data.entries;
+            entriesRevision = result.data.revision;
+            if (typeof result.data.canEditRules === 'boolean') appConfig.canEditRules = result.data.canEditRules;
+            rulesWritable();
             filterEntries();
             updateStats();
 
@@ -1469,7 +1527,7 @@ async function loadEntries() {
 function renderEntries() {
  const container = document.getElementById('entriesList');
  const items = searchQuery ? filteredEntries : entries;
- container.innerHTML = items.length ? items.map(RuleView.render).join('') : '<p class="help-text">' + escapeHtml(I18n.t(searchQuery ? 'Geen entries gevonden voor deze zoekopdracht' : 'Geen entries gevonden')) + '</p>';
+ container.innerHTML = items.length ? items.map(entry => RuleView.render(entry, !rulesWritable())).join('') : '<p class="help-text">' + escapeHtml(I18n.t(searchQuery ? 'Geen entries gevonden voor deze zoekopdracht' : 'Geen entries gevonden')) + '</p>';
 }
 
 // Filter entries based on search query
@@ -1577,6 +1635,7 @@ function regexToDomain(regex) {
 }
 
 function editEntry(id) {
+    if (!requireRulesWritable()) return;
     const entry = entries.find(e => e.id === id);
     if (!entry) return;
     currentEditId = id;
@@ -2029,6 +2088,7 @@ async function validateEditInput() {
 
 // Drag & drop handlers
 function handleDragStart(event, entryId) {
+    if (!requireRulesWritable() || isSavingOrder) { event.preventDefault(); return; }
     draggedEntryId = entryId;
     event.target.classList.add('dragging');
     event.dataTransfer.effectAllowed = 'move';
@@ -2098,6 +2158,7 @@ function handleDragLeave(event) {
 }
 
 function handleDrop(event, targetId) {
+    if (!requireRulesWritable() || isSavingOrder) { event.preventDefault(); return; }
     event.preventDefault();
     event.currentTarget.classList.remove('drag-over');
 
@@ -2140,6 +2201,7 @@ function handleDragEnd(event) {
 
 // Save entry order to backend
 async function saveOrder() {
+    if (!requireRulesWritable()) return;
     if (isSavingOrder) {
         return; // Voorkom dubbele saves
     }
@@ -2164,6 +2226,7 @@ async function saveOrder() {
             },
             body: JSON.stringify({
                 entry_ids: entryIds,
+                revision: entriesRevision,
                 auto_restart: false
             })
         }, 10);
@@ -2185,7 +2248,7 @@ async function saveOrder() {
                 }, 1000);
             }
         } else {
-            showAlert('danger', 'Fout bij opslaan volgorde: ' + (data.error || I18n.t('Onbekende fout')));
+            showToast('error', I18n.t('Volgorde niet opgeslagen'), I18n.t(data.error || 'Onbekende fout'));
             loadEntriesDebounced(500); // Reload om te herstellen
             if (statusDot && originalClass) {
                 statusDot.className = originalClass;
@@ -2193,7 +2256,7 @@ async function saveOrder() {
             }
         }
     } catch (error) {
-        showAlert('danger', 'Kan volgorde niet opslaan: ' + error.message);
+        showToast('error', I18n.t('Volgorde niet opgeslagen'), I18n.t(error.message));
         loadEntriesDebounced(500); // Reload om te herstellen
 
         const statusDot = document.getElementById('statusDot');
@@ -2208,6 +2271,7 @@ async function saveOrder() {
 
 // Delete entry
 async function deleteEntry(id) {
+    if (!requireRulesWritable()) return;
     const confirmed = await showConfirmModal(I18n.t('Weet je zeker dat je deze entry wilt verwijderen?'));
     if (!confirmed) return;
 
@@ -2229,7 +2293,7 @@ async function deleteEntry(id) {
             showToast('warning', 'Onvolledige response', I18n.t('Entry is mogelijk verwijderd, lijst wordt ververst'));
             loadEntriesDebounced(1000);
         } else {
-            showToast('error', I18n.t('Fout bij verwijderen'), result.error || I18n.t('Onbekende fout'));
+            showToast('error', I18n.t('Fout bij verwijderen'), I18n.t(result.error || 'Onbekende fout'));
             loadEntriesDebounced(1000);
         }
     } catch (error) {
@@ -2240,6 +2304,7 @@ async function deleteEntry(id) {
 
 // Restart service
 async function restartService() {
+    if (appConfig.canManageProxy === false) { requireRulesWritable(); return; }
     const confirmed = await showConfirmModal(I18n.t('Weet je zeker dat je de Tinyproxy service wilt herstarten?'));
     if (!confirmed) return;
 
@@ -2608,8 +2673,7 @@ async function apiRequest(url, options = {}, config = {}) {
             }
 
             if (!response.ok) {
-                const errorMsg = data && data.error ? data.error : `HTTP ${response.status}`;
-                throw new Error(errorMsg);
+                return { ok: false, status: response.status, data, error: I18n.t(data?.error || `HTTP ${response.status}`) };
             }
 
             if (isDirectConnection) {
@@ -2656,7 +2720,7 @@ async function apiRequest(url, options = {}, config = {}) {
                 continue;
             }
 
-            return { ok: false, status: null, data: null };
+            return { ok: false, status: null, data: null, error: I18n.t(errorMsg) };
         }
     }
 }
@@ -2730,6 +2794,7 @@ function updateImportDraft() {
 }
 
 function openImportModal() {
+    if (!requireRulesWritable()) return;
     if (importDialog.open) return;
     importForm.reset();
     _importPreviewExpanded = false;

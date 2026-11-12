@@ -28,6 +28,20 @@
         <h1>{{ _('Instellingen') }}</h1>
         <p>{{ _('Beheer de toegang tot deze ProxyPermit-node.') }}</p>
     </header>
+    <section class="card settings-panel settings-info-panel" id="access-safety" aria-labelledby="access-safety-title">
+        <header><div><h2 id="access-safety-title">{{ _('Anti-lockout') }}</h2><p>{{ _('Een vastgezet beheerprofiel beschermt web-, SSH- en proxytoegang. Bestemmingsfilters blijven gelden.') }}</p></div>
+            <span class="settings-badge" data-enabled="{{ 'true' if access_safety else 'false' }}">{{ _('Vastgezet door OS-beheerder') if access_safety else _('Nog niet ingesteld') }}</span></header>
+        {% if access_safety %}
+        <p class="settings-source-help">{{ _('Dit zijn toegestane bronadressen voor beheer, niet de eigen IP-adressen van deze node. Bij NAT kunnen meerdere nodes hetzelfde bronadres zien.') }}</p>
+        <dl class="settings-facts access-facts">
+            <div class="settings-fact-wide"><dt>{{ _('Beheerbronnen') }}</dt><dd class="settings-network-values">{% for network in access_safety.managementNetworks %}<code>{{ network }}</code>{% endfor %}</dd></div>
+            <div><dt>{{ _('SSH-poorten') }}</dt><dd><code>{{ access_safety.sshPorts | join(', ') }}</code></dd></div>
+            <div><dt>{{ _('Webbeheerpoorten') }}</dt><dd><code>{{ access_safety.webPorts | join(', ') }}</code></dd></div>
+            <div><dt>{{ _('Proxypoort') }}</dt><dd><code>{{ access_safety.proxyPort }}</code></dd></div>
+        </dl>
+        <div class="settings-panel-note"><p>{{ _('Deze uitzonderingen kunnen niet via een concept of HA-synchronisatie worden verwijderd. UFW-beheerregels blijven staan wanneer een HA-node wordt verwijderd.') }}</p></div>
+        {% else %}<div class="settings-panel-note"><p>{{ _('Laat de OS-beheerder het vertrouwde netwerk en de echte web- en SSH-poorten via de installer vastzetten. ProxyPermit raadt geen breed beheernetwerk.') }}</p></div>{% endif %}
+    </section>
     <section class="card settings-panel appearance-panel" aria-labelledby="appearance-title">
         <header><div><h2 id="appearance-title">{{ _('Weergave') }}</h2>
             <p id="themeHelp">{{ _('Je themakeuze wordt in deze browser onthouden.') }}</p></div>
@@ -41,11 +55,17 @@
             </div>
         </header>
     </section>
-    <section class="card settings-panel" aria-labelledby="privacy-title">
-        <header><div><h2 id="privacy-title">{{ _('Privacy en bewaartermijn') }}</h2>
-            <p>{{ _('Auditlogs') }}: {{ log_privacy.auditDays }} {{ _('dagen') }} · {{ _('Beheerlogs') }}: {{ log_privacy.managementDays }} {{ _('dagen') }} · {{ _('Tinyproxy- en verkeerslogs') }}: {{ log_privacy.trafficDays }} {{ _('dagen') }}</p></div></header>
-        <p>{{ _('Schijflimieten kunnen de beschikbare geschiedenis verkorten. Oudere systeemlogs, eigen logbestanden, back-ups en downloads vallen onder het beleid van de beheerder.') }}</p>
-        <p><a href="{{ url_for('privacy_notice') }}" target="_blank" rel="noopener">{{ _('Privacy en logging') }}</a></p>
+    <section class="card settings-panel settings-info-panel" id="privacy-retention" aria-labelledby="privacy-title">
+        <header><h2 id="privacy-title">{{ _('Privacy en bewaartermijn') }}</h2></header>
+        <dl class="settings-facts retention-facts">
+            <div><dt>{{ _('Auditlogs') }}</dt><dd><strong>{{ log_privacy.auditDays }}</strong> <span>{{ _('dagen') }}</span></dd></div>
+            <div><dt>{{ _('Beheerlogs') }}</dt><dd><strong>{{ log_privacy.managementDays }}</strong> <span>{{ _('dagen') }}</span></dd></div>
+            <div><dt>{{ _('Tinyproxy- en verkeerslogs') }}</dt><dd><strong>{{ log_privacy.trafficDays }}</strong> <span>{{ _('dagen') }}</span></dd></div>
+        </dl>
+        <div class="settings-panel-note">
+            <p>{{ _('Schijflimieten kunnen de beschikbare geschiedenis verkorten. Oudere systeemlogs, eigen logbestanden, back-ups en downloads vallen onder het beleid van de beheerder.') }}</p>
+            <a class="settings-info-link" href="{{ url_for('privacy_notice') }}" target="_blank" rel="noopener">{{ _('Privacy en logging') }} <span aria-hidden="true">↗</span></a>
+        </div>
     </section>
     {% if sign_in %}
     <section class="card"><h2>{{ _('Inloggen') }}</h2><p>{{ _('Log in om instellingen te beheren.') }}</p>
@@ -70,13 +90,13 @@
                 <div id="ha-policy-applied-row" hidden><dt>{{ _('Toegepaste revisie op B') }}</dt><dd><code id="ha-policy-applied"></code></dd></div>
                 <div id="ha-policy-checked-row" hidden><dt>{{ _('Laatste succesvolle contact') }}</dt><dd><time id="ha-policy-checked"></time></dd></div>
             </dl>
-            {% if ha_policy_role == 'a' %}
+            {% if ha_policy_role == 'a' and permissions.admin %}
             <button type="button" data-ha-policy="invite">{{ _('Node toevoegen') }}</button>
             <div id="ha-policy-result" hidden>
                 <label for="ha-policy-code">{{ _('Kopieer deze code') }}</label>
                 <textarea id="ha-policy-code" readonly spellcheck="false" autocomplete="off"></textarea>
             </div>
-            {% else %}
+            {% elif ha_policy_role == 'b' and permissions.admin %}
             <div id="ha-policy-join">
                 <label for="ha-policy-code">{{ _('Koppelcode van node A') }}</label>
                 <textarea id="ha-policy-code" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
@@ -86,7 +106,7 @@
             <p id="ha-policy-feedback" class="notice" role="status"></p>
         </div>
         {% endif %}
-        {% if not ha_enabled %}
+        {% if not ha_enabled and permissions.admin %}
         <details class="ha-settings">
             <summary>{{ _('HA instellen') if ha_setup_available else _('HA-instellingen controleren') }}</summary>
             {% if ha_setup_available %}
@@ -146,7 +166,7 @@
             {% endif %}
         </details>
         {% endif %}
-        {% if ha_enabled %}
+        {% if ha_enabled and permissions.admin %}
         <details class="ha-settings ha-maintenance">
             <summary>{{ _('HA-beheeracties') }}</summary>
             {% if ha_policy_role in ('a', 'b') %}
@@ -184,7 +204,7 @@
     </section>
     {% if not editable %}<p class="settings-notice">{{ _('Accountbeheer via de browser is hier niet beschikbaar.') }}</p>{% endif %}
     <section class="card settings-panel" aria-labelledby="profile-title">
-        <header><div><h2 id="profile-title">{{ _('Mijn account') }}</h2><p>{{ actor }}</p></div>
+        <header><div><h2 id="profile-title">{{ _('Mijn account') }}</h2><p>{{ actor }} · {{ _(role_labels.get(current_role, 'Monitor')) }}</p></div>
             {% if own %}<span class="settings-badge" data-enabled="{{ 'true' if mfa else 'false' }}">{{ _('2FA aan') if mfa else _('2FA uit') }}</span>{% endif %}
         </header>
         {% if editable %}
@@ -196,19 +216,22 @@
         </div>
         {% endif %}
     </section>
+    {% if permissions.admin %}
     <section class="card settings-panel" aria-labelledby="accounts-title">
-        <header><div><h2 id="accounts-title">{{ _('Beheerders') }}</h2>
-            <p>{{ _('Alle accounts in deze lijst mogen deze node beheren.') }}</p></div>
+        <header><div><h2 id="accounts-title">{{ _('Gebruikers en rollen') }}</h2>
+            <p>{{ _('Systeembeheerders beheren accounts en HA. Proxybeheerders wijzigen proxybeleid. Monitors bekijken status, regels en logs.') }}</p></div>
             {% if editable %}<button type="button" class="button-primary" data-action="create">{{ _('Account toevoegen') }}</button>{% endif %}
         </header>
         {% if accounts %}
         <ul class="settings-accounts">
             {% for username, account in accounts | dictsort %}
             <li><strong>{{ username }}{% if username == actor %}<small>{{ _('Jij') }}</small>{% endif %}</strong>
+                <span class="settings-badge">{{ _(role_labels.get(account_roles.get(username), 'Monitor')) }}</span>
                 <span class="settings-badge" data-enabled="{{ 'true' if 'totp_secret' in account else 'false' }}">
                     {{ _('2FA aan') if 'totp_secret' in account else _('2FA uit') }}
                 </span>
                 {% if editable and username != actor %}
+                    <button type="button" class="button-secondary" data-action="role" data-username="{{ username }}" data-role="{{ account_roles.get(username) }}" aria-label="{{ _('Rol wijzigen') }} {{ username }}">{{ _('Rol wijzigen') }}</button>
                     <button type="button" class="button-danger" data-action="remove" data-username="{{ username }}"
                             aria-label="{{ _('Account verwijderen') }} {{ username }}">{{ _('Verwijderen') }}</button>
                 {% endif %}
@@ -217,6 +240,7 @@
         </ul>
         {% endif %}
     </section>
+    {% endif %}
     {% if editable %}
     <dialog class="rule-dialog" id="accountDialog" aria-labelledby="accountDialogTitle" data-mfa="{{ 'true' if mfa else 'false' }}">
         <form method="post" id="accountForm">
@@ -229,13 +253,22 @@
                     <label for="accountName">{{ _('Gebruikersnaam') }}</label>
                     <input id="accountName" type="text" maxlength="64" autocomplete="off">
                 </div>
+                <div class="form-group" id="currentPasswordGroup">
+                    <label for="currentAccountPassword">{{ _('Je huidige wachtwoord') }}</label>
+                    <input id="currentAccountPassword" type="password" maxlength="256" autocomplete="current-password">
+                </div>
                 <div class="form-group" id="newPasswordGroup" hidden>
                     <label for="newAccountPassword">{{ _('Nieuw wachtwoord') }}</label>
                     <input id="newAccountPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password">
                 </div>
-                <div class="form-group" id="currentPasswordGroup">
-                    <label for="currentAccountPassword">{{ _('Je huidige wachtwoord') }}</label>
-                    <input id="currentAccountPassword" type="password" maxlength="256" autocomplete="current-password">
+                <div class="form-group" id="accountRoleGroup" hidden>
+                    <label for="accountRole">{{ _('Rol') }}</label>
+                    <select id="accountRole">
+                        <option value="monitor">{{ _('Monitor') }}</option>
+                        <option value="manager">{{ _('Proxybeheerder') }}</option>
+                        <option value="admin">{{ _('Systeembeheerder') }}</option>
+                    </select>
+                    <p class="help-text">{{ _('Een rolwijziging meldt bestaande sessies van die gebruiker af. Accounts en rollen blijven lokaal op deze node.') }}</p>
                 </div>
                 <div id="enrollGroup" hidden>
                     <p>{{ _('Scan de QR-code met je authenticator-app.') }}</p>

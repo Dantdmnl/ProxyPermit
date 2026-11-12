@@ -1,4 +1,4 @@
-name: CI
+name: ProxyPermit CI
 
 on:
   push:
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
         with:
-          name: coverage
+          name: proxypermit-coverage
           path: artifacts/coverage.xml
           retention-days: 14
 
@@ -129,6 +129,20 @@ jobs:
       - run: python -m pip install -r requirements/granian.txt
       - run: python scripts/dev/check_server.py --backend '${{ matrix.server }}'
 
+  documentation:
+    name: Documentation links and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements/docs.txt
+      - run: zensical build --clean --strict
+
   dependencies:
     name: Dependency vulnerabilities
     runs-on: ubuntu-latest
@@ -147,7 +161,7 @@ jobs:
 
   release:
     name: Release archive & tag validation
-    needs: [workflow, quality, unit, frontend, http, dependencies]
+    needs: [workflow, quality, unit, frontend, http, documentation, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -165,6 +179,6 @@ jobs:
       - run: python scripts/release.py archive
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: source-release
+          name: proxypermit-source-release
           path: dist/*
           retention-days: 14

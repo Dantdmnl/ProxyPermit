@@ -145,8 +145,27 @@ opslagretentie; de publieke melding geeft die onbeheerde toestand aan.
 
 ## Lokale gezondheidscontroles en verbindingsruis
 
-Het `/health`-endpoint en de nieuw geïnstalleerde Keepalived-helper lezen de TCP-luistertabellen van Linux in plaats van clientverbindingen direct te openen en te sluiten. Zo ontstaan geen kunstmatige `closed socket before read`-fouten of periodieke lokale verbindingsregels. Zowel IPv4- als IPv6-luistersockets worden herkend. Deze controles bewaken de lokale luisterpoort; ze testen geen volledig proxyverzoek, authenticatie, filtering, capaciteit van de verbindingswachtrij of bereikbaarheid van upstreamservers. Blijf echt proxyverkeer apart testen.
+Beheerde HA gebruikt nu een HTTP-verzoek met een tijdslimiet aan de ingestelde
+interne statistiekhost van Tinyproxy. De root-eigen helper draait onder het
+bestaande account `proxypermit` om de beschermde configuratie te kunnen lezen.
+Hij verstuurt geen proxywachtwoorden. Een proxy met een luisterpoort die niet
+antwoordt, wordt afgekeurd. HTTP 401/403/407 bewijst nog steeds dat de proxy
+antwoordt wanneer authenticatie of lokale toegangsregels toegang beperken.
+Dit bewijst geen bereikbaarheid van upstreamservers of correcte volledige filtering.
 
-Bij upgrades van beheerde HA-installaties vervangt de installer alleen de exacte oude ProxyPermit-helper. De helper wordt geback-upt voor rollback, met behoud van rechten en eigenaar. Eigen helpers blijven ongewijzigd. Extra privileges of firewallregels zijn niet nodig; onleesbare kernelgegevens laten de HA-controle mislukken.
+Succesvol herkenbaar lokaal controleverkeer is standaard verborgen in de
+logquery. Met **Gezondheidscontroles tonen** of expliciet zoeken neem je dit mee.
+De records blijven onder de bestaande verkeersretentie van 7 dagen vallen.
+Waarschuwingen, fouten, externe clients en niet-herkende historische socketfouten
+worden nooit op deze manier verborgen. Herkenning vereist het ongemaskeerde
+loopbackadres, proces en bestandsdescriptor; een gemaskeerd netwerkprefix is
+onvoldoende bewijs dat het een gezondheidscontrole was.
 
-Historische meldingen over gesloten sockets zijn niet betrouwbaar aan een gezondheidscontrole toe te schrijven. Ze blijven doorzoekbaar met hun oorspronkelijke ernstniveau en bestaande retentie. Vergelijkbare fouten van echte clients worden niet onderdrukt. Eenmalige netwerkcontroles vooraf en controles bij het uit bedrijf nemen van een peer blijven echte verbindingen testen.
+De installer migreert herkenbare oude helpers samen met de exacte beheerde
+Keepalived-configuratie, met behoud van eigenaar, rechten en rollback-back-ups.
+Eigen helpers en configuraties blijven behouden en vragen beoordeling door de
+beheerder. De oude luistercontrole blijft beschikbaar voor compatibiliteitstests.
+Keepalived gebruikt twee mislukte controles voor FAULT en twee geslaagde voor
+herstel. De werkelijke overnametijd hangt ook van VRRP en de hostplanning af.
+Zie de [Keepalived-referentie](https://keepalived.org/documentation/keepalived-conf/)
+en de [statistiekhostdocumentatie van Tinyproxy](https://tinyproxy.github.io/).

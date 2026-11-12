@@ -1,0 +1,10 @@
+/* Keep the documentation close to the console, using local system fonts. */
+:root { --md-primary-fg-color:#246b58; --md-accent-fg-color:#246b58; }
+[data-md-color-scheme="slate"] { --md-primary-fg-color:#8bd6b9; --md-accent-fg-color:#8bd6b9; }
+.md-typeset { line-height:1.75; }
+.md-typeset h1 { font-weight:700; letter-spacing:-.025em; }
+.md-typeset h2 { margin-top:2em; font-weight:650; }
+.md-typeset img { border:1px solid var(--md-default-fg-color--lightest); border-radius:10px; }
+.md-typeset table:not([class]) { line-height:1.6; }
+.md-typeset code { overflow-wrap:anywhere; }
+[data-md-color-scheme="slate"] .md-typeset :not(pre) > code { color:#e8eef2; background:#223039; }
