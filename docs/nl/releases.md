@@ -65,7 +65,7 @@ Granian en vermeldt platformgebonden overgeslagen tests. Draai bij gewijzigde br
 NL/EN, beide thema's en kleine schermen.
 
 Bouw de documentatie met de vastgelegde tools uit `requirements/docs.txt` en
-`zensical build --clean --strict`. De
+`python scripts/docs/site.py build`. De
 [handleiding voor de documentatiewebsite](documentatiewebsite.md#lokaal-bekijken)
 legt de voorbereiding uit.
 

@@ -1,0 +1,8 @@
+{
+  "name": "proxypermit-docs-tools",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": { "test": "node --test highlight.test.mjs" },
+  "dependencies": { "parse5": "8.0.0", "shiki": "4.6.0" }
+}

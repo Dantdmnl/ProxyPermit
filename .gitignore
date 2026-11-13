@@ -82,3 +82,5 @@ whitelist_entry_log.json
 # Generated documentation
 site/
 .cache/zensical/
+
+node_modules/

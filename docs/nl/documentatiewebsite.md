@@ -8,7 +8,7 @@ De gegenereerde map `site/` wordt niet ingecheckt of op proxynodes geïnstalleer
 
 ## Lokaal bekijken
 
-Gebruik Python 3.11 of hoger in een aparte virtuele omgeving. Vanuit de projectmap:
+Gebruik Python 3.11 of hoger in een aparte virtuele omgeving, plus Node.js 24 of hoger. Vanuit de projectmap:
 
 ```sh
 python -m venv .venv/docs-tools
@@ -18,18 +18,20 @@ Op Linux/macOS:
 
 ```sh
 .venv/docs-tools/bin/python -m pip install -r requirements/docs.txt
-.venv/docs-tools/bin/zensical serve
+npm ci --prefix scripts/docs --ignore-scripts
+.venv/docs-tools/bin/python scripts/docs/site.py serve
 ```
 
 In Windows PowerShell:
 
 ```powershell
 .venv/docs-tools/Scripts/python.exe -m pip install -r requirements/docs.txt
-.venv/docs-tools/Scripts/zensical.exe serve
+npm ci --prefix scripts/docs --ignore-scripts
+.venv/docs-tools/Scripts/python.exe scripts/docs/site.py serve
 ```
 
-Open het lokale adres dat Zensical toont. Stop met Ctrl+C. Vervang `serve` door
-`build --clean --strict` om dezelfde gecontroleerde build als CI uit te voeren.
+Open het lokale previewadres dat het script toont. Stop met Ctrl+C. Vervang `serve` door
+`build` om dezelfde gecontroleerde build als CI uit te voeren.
 
 ## GitHub Pages inschakelen
 
@@ -116,3 +118,10 @@ De browserjob in CI test de galerij met externe verzoeken geblokkeerd, in beide
 talen en thema’s en op mobiel-, tablet- en desktopbreedtes. Ook de afbeeldingslinks
 zonder JavaScript worden gecontroleerd. Gebruik voor deze tests het previewadres
 inclusief het `/ProxyPermit/`-voorvoegsel.
+
+Codeblokken krijgen tijdens de build syntaxkleuring met Shiki en de VS Code-thema’s
+Light+ en Dark+. De browser heeft daarvoor geen highlighter of CDN nodig. De
+kopieerknop kopieert de originele tekst, zonder het taallabel. Het buildscript
+voert eerst de strikte Zensical-build uit en kleurt daarna shell-, PowerShell- en
+`.env`-voorbeelden. Gewone tekst blijft ongewijzigd. Gebruik dit script voor de
+definitieve preview en CI. Bouw opnieuw nadat je de bronbestanden hebt aangepast.

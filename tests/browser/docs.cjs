@@ -66,6 +66,17 @@ async function main() {
                     assert.equal(await page.locator('.docs-support a').getAttribute('href'), 'https://github.com/Dantdmnl/ProxyPermit');
                     assert.match(await page.locator('.docs-support').innerText(), language === 'nl' ? /een ster/ : /a star/i);
                     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+                    const frame = page.locator('figure.docs-figure a.glightbox').first();
+                    assert.equal(await frame.evaluate(element => getComputedStyle(element).borderTopWidth), '0px');
+                    assert.equal(await frame.evaluate(element => getComputedStyle(element).paddingTop), '0px');
+                    await page.goto(base + language + '/' + (language === 'nl' ? 'installatie' : 'installation') + '/');
+                    await page.evaluate(value => { document.body.dataset.mdColorScheme = value; }, theme);
+                    const command = page.locator('pre.pp-code-shiki').first();
+                    assert.equal(await command.getAttribute('data-language'), 'Bash');
+                    assert.equal(await command.locator('code').textContent(), 'sudo bash install.sh\n');
+                    const colors = await command.locator('code span[style]').evaluateAll(elements => [...new Set(elements.map(element => getComputedStyle(element).color))]);
+                    assert.ok(colors.length >= 2, 'Simple commands must distinguish command names and arguments');
+                    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
                     console.log(`${language} ${theme} ${width}: figures, gallery navigation, zoom, close controls, keyboard, focus and layout passed`);
                 }
             }

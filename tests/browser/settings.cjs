@@ -182,7 +182,12 @@ async function checkModeAndCapture(page, base, filterPath) {
             await page.goto(base + '/?lang=' + locale);
             await page.locator('.entry-item').first().waitFor();
             await page.locator('#nodeHostname').evaluate(value => value.textContent = 'demo-node');
-            await page.screenshot({ fullPage: true, animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'overview.png') });
+            const overviewHeight = await page.evaluate(() => Math.max(900, document.documentElement.scrollHeight));
+            await page.setViewportSize({ width: 1360, height: overviewHeight });
+            const sidebar = await page.locator('.sidebar').boundingBox();
+            assert.ok(sidebar.height >= overviewHeight - 1, 'Overview capture must include the full sidebar');
+            await page.screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'overview.png') });
+            await page.setViewportSize({ width: 1360, height: 900 });
             await page.locator('#openRuleDialog').click();
             await page.locator('#domainInput').fill('updates.example.com');
             await page.locator('#regexPreview[data-state=valid]').waitFor();

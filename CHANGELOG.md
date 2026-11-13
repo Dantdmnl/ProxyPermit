@@ -6,6 +6,9 @@ Historical deployments are not assigned retrospective release tags.
 
 ### Changed
 
+- Use build-time VS Code Light+ / Dark+ syntax highlighting for documentation commands, preserving copied text and code anchors.
+- Remove decorative screenshot frames and capture overview screenshots without a truncated sidebar.
+
 - Publish stable GitHub Releases automatically after successful tag CI, using verified CI artifacts and the tagged changelog.
 
 - Present documentation screenshots as consistently sized, captioned figures with focused example data and reserved image dimensions.

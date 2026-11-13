@@ -63,7 +63,7 @@ report platform skips. Run `tests/browser/settings.cjs` with Playwright availabl
 to Node for changed browser workflows. Cover NL/EN, both themes and small screens.
 
 Build the documentation with the pinned tools in `requirements/docs.txt` using
-`zensical build --clean --strict`. The
+`python scripts/docs/site.py build`. The
 [documentation-site guide](documentation-site.md#preview-locally) explains setup.
 
 The archive is `dist/proxypermit-VERSION.tar.gz`, accompanied by a SHA-256

@@ -8,7 +8,7 @@ The generated `site/` directory is not committed or installed on proxy nodes.
 
 ## Preview locally
 
-Use Python 3.11 or later in a separate virtual environment. From the repository root:
+Use Python 3.11 or later in a separate virtual environment, plus Node.js 24 or later. From the repository root:
 
 ```sh
 python -m venv .venv/docs-tools
@@ -18,18 +18,20 @@ On Linux/macOS:
 
 ```sh
 .venv/docs-tools/bin/python -m pip install -r requirements/docs.txt
-.venv/docs-tools/bin/zensical serve
+npm ci --prefix scripts/docs --ignore-scripts
+.venv/docs-tools/bin/python scripts/docs/site.py serve
 ```
 
 On Windows PowerShell:
 
 ```powershell
 .venv/docs-tools/Scripts/python.exe -m pip install -r requirements/docs.txt
-.venv/docs-tools/Scripts/zensical.exe serve
+npm ci --prefix scripts/docs --ignore-scripts
+.venv/docs-tools/Scripts/python.exe scripts/docs/site.py serve
 ```
 
 Open the local address printed by Zensical. Stop with Ctrl+C. To make the same
-validated build as CI, replace `serve` with `build --clean --strict`.
+validated build as CI, replace `serve` with `build`. Rebuild after editing sources.
 
 ## Enable GitHub Pages
 
@@ -113,3 +115,9 @@ cache. Visitors load the viewer from the documentation host. The CI browser job
 checks the gallery with external requests blocked, in both languages and themes,
 on mobile, tablet and desktop widths, plus original-image links without JavaScript.
 Use the preview URL including the `/ProxyPermit/` prefix for those tests.
+
+Code blocks are rendered with Shiki and the VS Code Light+ / Dark+ themes during
+the build. There is no client-side highlighter or CDN dependency. Copy buttons
+continue to copy the original text, without the language label. The build helper
+runs the strict Zensical build and then highlights shell, PowerShell and `.env`
+examples; plain text stays unchanged. Use this helper for the final preview and CI.
