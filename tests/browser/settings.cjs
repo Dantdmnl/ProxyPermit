@@ -329,6 +329,7 @@ async function main() {
         }
         await page.setViewportSize({ width: 320, height: 460 });
         await page.emulateMedia({ colorScheme: 'dark' });
+        await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
         assert.equal(await page.locator('.signin-card').evaluate(card => getComputedStyle(card).backgroundColor), 'rgb(25, 36, 44)');
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
         const signInTheme = page.getByRole('button', { name: 'Dark mode' });

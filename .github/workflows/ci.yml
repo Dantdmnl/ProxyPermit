@@ -118,7 +118,7 @@ jobs:
           python -m http.server 8770 --bind 127.0.0.1 --directory "$RUNNER_TEMP/proxypermit-docs" > "$RUNNER_TEMP/proxypermit-docs-server.log" 2>&1 &
           preview_pid=$!
           trap 'kill "$preview_pid"' EXIT
-          for attempt in {1..50}; do
+          for _ in {1..50}; do
             if curl --silent --fail http://127.0.0.1:8770/ProxyPermit/en/ > /dev/null; then break; fi
             sleep 0.1
           done
