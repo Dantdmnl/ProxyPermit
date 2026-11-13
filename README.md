@@ -1,19 +1,22 @@
-# ProxyPermit
-
-<!-- The centered, explicitly sized logo needs HTML on GitHub. -->
-<!-- markdownlint-disable MD033 -->
+<!-- The branded header uses intentional HTML for GitHub alignment and sizing. -->
+<!-- markdownlint-disable MD033 MD041 -->
 <p align="center">
-  <img src="docs/assets/brand/logo.svg" width="88" height="88" alt="ProxyPermit
-    logo">
+  <img src="docs/assets/brand/logo.svg" width="88" height="88"
+    alt="ProxyPermit logo">
 </p>
-<!-- markdownlint-enable MD033 -->
 
-A clear, secure web console for Tinyproxy.
+<h1 align="center">ProxyPermit</h1>
 
-[English docs](https://dantdmnl.github.io/ProxyPermit/en/) ·
-[Nederlandse documentatie](https://dantdmnl.github.io/ProxyPermit/nl/) ·
-[Releases](https://github.com/Dantdmnl/ProxyPermit/releases) ·
-[Report an issue](https://github.com/Dantdmnl/ProxyPermit/issues)
+<p align="center">A clear, secure web console for Tinyproxy.</p>
+
+<p align="center">
+  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> ·
+  <a href="https://dantdmnl.github.io/ProxyPermit/nl/">
+    Nederlandse documentatie</a> ·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> ·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/issues">Report an issue</a>
+</p>
+<!-- markdownlint-enable MD033 MD041 -->
 
 ProxyPermit is a web console for managing Tinyproxy on Linux. Use it to control
 client access and destination filtering, stage and publish proxy configuration,
