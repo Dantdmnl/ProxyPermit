@@ -1221,5 +1221,9 @@
   "Choose a valid role.": "Choose a valid role.",
   "Keep at least one system administrator.": "Keep at least one system administrator.",
   "Only a system administrator can change service identity, listener settings or file paths.": "Only a system administrator can change service identity, listener settings or file paths.",
-  "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.": "Proxy managers can change proxy policy. System settings such as the service user, listener addresses and file paths require a system administrator."
+  "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.": "Proxy managers can change proxy policy. System settings such as the service user, listener addresses and file paths require a system administrator.",
+  "The rules changed. Refresh the list before making changes.": "The rules changed. Refresh the list before making changes.",
+  "Invalid filter revision.": "Invalid filter revision.",
+  "Restart and comment options must be booleans.": "Restart and comment options must be booleans.",
+  "Choose append or replace as the import mode.": "Choose append or replace as the import mode."
 }

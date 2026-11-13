@@ -1,4 +1,17 @@
-# ProxyPermit
+<p align="center">
+  <img src="docs/assets/brand/logo.svg" width="88" height="88" alt="ProxyPermit logo">
+</p>
+
+<h1 align="center">ProxyPermit</h1>
+
+<p align="center">A clear, secure web console for Tinyproxy.</p>
+
+<p align="center">
+  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> ·
+  <a href="https://dantdmnl.github.io/ProxyPermit/nl/">Nederlandse documentatie</a> ·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> ·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/issues">Report an issue</a>
+</p>
 
 ProxyPermit is a web console for managing Tinyproxy on Linux. Use it to control
 client access and destination filtering, stage and publish proxy configuration,
@@ -10,6 +23,10 @@ Keepalived. Pair existing standalone nodes through the web console; publishing
 on the primary automatically replicates filter rules and shared Tinyproxy settings
 over pinned TLS. Each node keeps its own management accounts and host settings.
 See the installation guide for migration from an existing HA deployment.
+
+![ProxyPermit management console](docs/assets/en/overview.png)
+
+*Example installation with synthetic data. [Explore the console](https://dantdmnl.github.io/ProxyPermit/en/user-guide/).*
 
 | Documentation | English | Nederlands |
 | --- | --- | --- |
@@ -47,3 +64,9 @@ lists the Linux and HA scenarios tested so far.
 
 The Zensical documentation site can be previewed locally and published with GitHub Pages;
 see [English](docs/en/documentation-site.md) / [Nederlands](docs/nl/documentatiewebsite.md).
+
+## Support the project
+
+Finding ProxyPermit useful? [Give the project a star](https://github.com/Dantdmnl/ProxyPermit)
+to help other administrators discover it. Bug reports and improvements to the
+[English and Dutch documentation](https://dantdmnl.github.io/ProxyPermit/) are welcome too.

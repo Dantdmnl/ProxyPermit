@@ -39,7 +39,7 @@ from ..core.audit import SharedAuditHandler, bounded_setting
 from ..core.files import file_lock
 from ..core.tinyproxy import atomic_write
 from ..core.validators import WhitelistValidator
-from .proxy import PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, paired_standby, record_published_policy, register_proxy_api, validate_filter
+from .proxy import domain_editor_error, PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, paired_standby, record_published_policy, register_proxy_api, validate_filter
 from .settings import register_settings
 from .permissions import required_permission
 from ..i18n import register_i18n
@@ -2415,8 +2415,41 @@ def get_entries():
         }), 500
 
 
+def filter_mutation(handler):
+    """Serialize browser rule changes and check the view revision before using IDs."""
+    @wraps(handler)
+    def guarded(*args, **kwargs):
+        data = request.get_json(silent=True) if request.method != 'DELETE' else {}
+        if not isinstance(data, dict):
+            return jsonify(success=False, error='No request data received.'), 400
+        if any(key in data and type(data[key]) is not bool for key in ('auto_restart', 'is_comment')):
+            return jsonify(success=False, error='Restart and comment options must be booleans.'), 400
+        expected = request.args.get('revision') if request.method == 'DELETE' else data.get('revision')
+        if expected is not None and (not isinstance(expected, str) or not re.fullmatch(r'[0-9a-f]{64}', expected)):
+            return jsonify(success=False, error='Invalid filter revision.'), 400
+        try:
+            with file_lock(str(whitelist_manager.whitelist_path) + '.lock'):
+                # The earlier compatibility check is advisory; drafts may have
+                # been saved while this request was waiting for the same lock.
+                if has_pending_changes(whitelist_manager.whitelist_path):
+                    return jsonify(success=False, error=PENDING_CHANGES), 409
+                compatibility_error = domain_editor_error(whitelist_manager.whitelist_path)
+                if compatibility_error:
+                    return jsonify(success=False, error=compatibility_error), 409
+                if expected is not None:
+                    path = whitelist_manager.whitelist_path
+                    current = hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
+                    if expected != current:
+                        return jsonify(success=False, error='The rules changed. Refresh the list before making changes.'), 409
+                return handler(*args, **kwargs)
+        except TimeoutError:
+            return jsonify(success=False, error='File is in use; try again.'), 409
+    return guarded
+
+
 @app.route('/api/entries', methods=['POST'])
 @requires_auth
+@filter_mutation
 def add_entry():
     """Add a filter rule."""
     try:
@@ -2875,6 +2908,7 @@ def get_status():
 
 @app.route('/api/entries/<int:entry_id>', methods=['PUT'])
 @requires_auth
+@filter_mutation
 def update_entry(entry_id):
     """Update a filter rule."""
     try:
@@ -2975,6 +3009,7 @@ def update_entry(entry_id):
 
 @app.route('/api/entries/<int:entry_id>', methods=['DELETE'])
 @requires_auth
+@filter_mutation
 def delete_entry(entry_id):
     """Remove a filter rule."""
     try:
@@ -3033,6 +3068,7 @@ def delete_entry(entry_id):
 
 @app.route('/api/entries/reorder', methods=['POST'])
 @requires_auth
+@filter_mutation
 def reorder_entries():
     """Reorder filter rules."""
     try:
@@ -3058,9 +3094,6 @@ def reorder_entries():
         with file_lock(str(whitelist_manager.whitelist_path) + '.lock'):
             if has_pending_changes(whitelist_manager.whitelist_path):
                 return jsonify(error=PENDING_CHANGES), 409
-            expected = data.get('revision')
-            if expected is not None and expected != hashlib.sha256(whitelist_manager.whitelist_path.read_bytes()).hexdigest():
-                return jsonify(error='The rules changed. Refresh the list before reordering.'), 409
             success, error = whitelist_manager.reorder_entries(entry_ids)
             if success:
                 record_published_policy(whitelist_manager.whitelist_path, logger)
@@ -3117,9 +3150,9 @@ def reorder_entries():
 def validate_entry():
     """Validate a filter rule without saving it."""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         
-        if not data:
+        if not isinstance(data, dict) or not isinstance(data.get('content'), str):
             return jsonify({
                 'success': False,
                 'error': 'No request data received.'
@@ -3208,9 +3241,9 @@ def restart_service():
 def domain_to_regex():
     """Convert a domain to a regular expression."""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True)
         
-        if not data:
+        if not isinstance(data, dict) or not isinstance(data.get('domain'), str):
             return jsonify({
                 'success': False,
                 'error': 'No request data received.'
@@ -3282,6 +3315,7 @@ def export_whitelist():
 
 @app.route('/api/import', methods=['POST'])
 @requires_auth
+@filter_mutation
 def import_whitelist():
     """Normalize, validate, and import filter rules."""
     try:
@@ -3292,9 +3326,9 @@ def import_whitelist():
             data = request.get_json()
         except Exception:
             data = None
-            logger.debug(f"Failed to parse JSON body for import: {raw_body}")
+            logger.debug("Failed to parse JSON body for import")
         
-        if not data or 'content' not in data:
+        if not isinstance(data, dict) or not isinstance(data.get('content'), str):
             return jsonify({
                 'success': False,
                 'error': 'No filter content received.'
@@ -3302,6 +3336,8 @@ def import_whitelist():
         
         content = data.get('content', '').strip()
         mode = data.get('mode', 'replace')  # replace or append
+        if mode not in ('replace', 'append'):
+            return jsonify(success=False, error='Choose append or replace as the import mode.'), 400
         
         if not content:
             return jsonify({
@@ -3431,9 +3467,8 @@ def import_whitelist():
                 'errors': errors
             }), 400
 
-        # Debug logging for validation results
+        # Keep import diagnostics limited to counts.
         logger.info(f"Import validation: validated={len(validated_entries)}, skipped={skipped_count}, errors={len(errors)}")
-        logger.debug(f"Validated entries sample: {validated_entries[:10]}")
 
         # Apply the selected import mode.
         if mode == 'replace':
@@ -3469,7 +3504,7 @@ def import_whitelist():
 
             logger.info(f"Import append: will append {len(to_append)} of {len(deduped)} deduped entries")
             if not to_append:
-                return jsonify({'success': True, 'imported_count': 0, 'skipped_count': len(validated_entries), 'errors': errors or None, 'mode': mode}), 200
+                return jsonify({'success': True, 'imported_count': 0, 'skipped_count': skipped_count, 'errors': errors or None, 'mode': mode}), 200
 
             success, error = whitelist_manager.append_entries(to_append)
         
@@ -3506,7 +3541,7 @@ def import_whitelist():
         else:
             imported_count = len([e for e in to_append if e.strip()]) if 'to_append' in locals() else 0
 
-        total_skipped = skipped_count + (len(validated_entries) - imported_count)
+        total_skipped = skipped_count
 
         logger.info(f'Imported {imported_count} filter rules, mode={mode}, skipped={total_skipped}')
 

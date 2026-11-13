@@ -164,7 +164,7 @@
   "Enter a valid username.": "Voer een geldige gebruikersnaam in.",
   "Enter the code from your authenticator app.": "Voer de code uit je authenticator-app in.",
   "Fetching remote preview from configured peer %s": "Remote preview ophalen van geconfigureerde peer %s",
-  "File is in use; try again.": "Bestand is in gebruik; probeer opnieuw.",
+  "File is in use; try again.": "Het bestand is in gebruik. Probeer het opnieuw.",
   "Filter differs from WHITELIST_PATH. Update the installation configuration before managing this file.": "Filter wijkt af van WHITELIST_PATH. Pas de installatieconfiguratie aan voordat je dit bestand beheert.",
   "Filter file does not exist: {0}": "Whitelist bestand bestaat niet: {0}",
   "Filter file not found: {0}": "Whitelist bestand niet gevonden: {0}",
@@ -1221,5 +1221,9 @@
   "Choose a valid role.": "Kies een geldige rol.",
   "Keep at least one system administrator.": "Behoud ten minste één systeembeheerder.",
   "Only a system administrator can change service identity, listener settings or file paths.": "Alleen een systeembeheerder kan de servicegebruiker, luisterinstellingen of bestandspaden wijzigen.",
-  "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.": "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder."
+  "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.": "Als proxybeheerder kun je proxybeleid aanpassen. Systeeminstellingen zoals servicegebruiker, luisteradressen en bestandspaden vereisen een systeembeheerder.",
+  "The rules changed. Refresh the list before making changes.": "De regels zijn gewijzigd. Ververs de lijst voordat je wijzigingen aanbrengt.",
+  "Invalid filter revision.": "De revisie van de filterlijst is ongeldig.",
+  "Restart and comment options must be booleans.": "De opties voor herstarten en opmerkingen moeten waar of onwaar zijn.",
+  "Choose append or replace as the import mode.": "Kies toevoegen of vervangen als importwijze."
 }

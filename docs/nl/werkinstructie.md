@@ -32,6 +32,8 @@ wachtwoorden, 2FA en rollen blijven lokaal op iedere node.
    voor concepten en activering, of **Instellingen** voor HA en accounts.
    **Live logs** opent boven de huidige pagina; je verlaat die pagina niet.
 
+![Inlogscherm met taalkeuze en themaknop](../assets/nl/sign-in.png)
+
 ![Overzicht van de beheerconsole](../assets/nl/overview.png)
 
 ## Begrijp de twee HA-rollen
@@ -87,6 +89,12 @@ werk niet overschrijven. Opmerkingen en ordening maken de lijst leesbaarder.
 Welke bestemmingen passen, wordt bepaald door filtermodus en patroontype, niet
 alleen door de zichtbare groepering.
 
+Wijzigt een andere beheerder de lijst terwijl je een regel bewerkt of een
+verwijdering bevestigt? Dan wordt jouw actie geweigerd. Je invoer blijft in het
+bewerkvenster staan. Kopieer tekst die je wilt bewaren, sluit het venster, ververs
+de lijst en open de bedoelde regel opnieuw. Controleer de huidige inhoud voordat
+je het opnieuw probeert.
+
 ## Regels importeren of exporteren
 
 1. Exporteer de huidige lijst voor een grote wijziging en bewaar de download veilig.
@@ -96,6 +104,8 @@ alleen door de zichtbare groepering.
    de bestaande lijst: kies dit alleen als het bestand de volledige gewenste lijst is.
 4. Controleer de herstartkeuze en bevestig. Controleer daarna resultaat,
    servicestatus en bij HA de toegepaste revisie op B.
+
+![Filterregels importeren uit tekst of een bestand](../assets/nl/import.png)
 
 Een export bevat bestemmingsinformatie. Volg het opslag- en verwijderbeleid van
 je organisatie; downloads hebben geen automatische bewaartermijn.
@@ -150,6 +160,8 @@ en een passend fencing-ontwerp zijn afzonderlijke beheerkeuzes.
 Open **Live logs** vanaf de huidige pagina. Kies bron en niveau, zoek tekst of
 gebruik **Periode** met begin- en einddatum. De datums gebruiken de lokale
 tijdzone van je browser. Pauzeer tijdens het lezen en keer daarna terug naar live.
+
+![Live logs in donkere modus met voorbeeldgebeurtenissen](../assets/nl/logs-dark.png)
 
 Herkenbaar lokaal verkeer van gezondheidscontroles is standaard verborgen. Met
 **Gezondheidscontroles tonen** of een expliciete serverzoekopdracht zie je het
@@ -218,3 +230,14 @@ Gebruik directe beheertoegang of een proxy-uitzondering voor het consoleadres in
 je browser. Het profiel herstelt geen routering, externe firewalls of verkeerde
 certificaten. Staat er **Nog niet ingesteld**, laat het profiel dan inrichten
 volgens de [beheerdersinstructies](beheer.md#anti-lockoutprofiel).
+
+## Op een telefoon of kleiner scherm
+
+Open het menu met de navigatieknop naast het logo. Op een kleiner scherm gebruik
+je dezelfde pagina’s en gelden dezelfde rechten. Op deze documentatiewebsite kun
+je een schermafbeelding aanklikken om die te vergroten. Kies **Inzoomen** voor
+meer detail en sluit de afbeelding met **Escape**.
+
+??? example "Toon de mobiele beheerconsole in donkere modus"
+
+    ![Mobiel overzicht in donkere modus](../assets/nl/overview-mobile.png)

@@ -76,3 +76,20 @@ Run the strict build, check the changed pages in both themes and on a small
 screen, and test navigation, search and the language cross-links. The
 [official Zensical publishing guide](https://zensical.org/docs/publish-your-site/)
 explains the GitHub Pages integration.
+
+## Screenshots and site interactions
+
+Store sanitized screenshots in `docs/assets/en/` and `docs/assets/nl/` and give
+images a descriptive alt text. The site adds a keyboard-accessible image viewer
+with zoom; Markdown on GitHub continues to show ordinary images. The logo is not
+opened in the viewer. A short, translated GitHub star invitation appears after
+the page content, without analytics or third-party scripts.
+
+To regenerate the example screenshots, run `tests/browser/settings.cjs` with
+`PP_DOC_SCREENSHOTS=1`, Playwright on `NODE_PATH`, and the development virtual
+environment ready. The test creates isolated accounts and synthetic log data.
+Review the images before committing them; never publish credentials or a 2FA QR code.
+
+With the built site served locally, run `tests/browser/docs.cjs` to check the
+image viewer in both languages, themes and screen sizes. Set `PP_DOCS_URL` to
+the preview address and `PLAYWRIGHT_CHANNEL` if needed.

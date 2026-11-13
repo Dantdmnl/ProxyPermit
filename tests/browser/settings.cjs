@@ -150,7 +150,7 @@ async function checkModeAndCapture(page, base) {
             mkdirSync(directory, { recursive: true });
             await page.setViewportSize({ width: 1360, height: 900 });
             await page.evaluate(() => document.documentElement.dataset.theme = 'light');
-            await dialog.screenshot({ path: path.join(directory, 'filter-mode.png') });
+            await dialog.screenshot({ animations: 'disabled', path: path.join(directory, 'filter-mode.png') });
         }
         await dialog.locator('button[value=apply]').click();
         assert.equal(await dialog.evaluate(value => value.open), true);
@@ -160,7 +160,7 @@ async function checkModeAndCapture(page, base) {
         assert.match(await page.locator('#config').inputValue(), /FilterDefaultDeny Yes/);
         assert.equal(await page.locator('#draft-panel').getAttribute('data-state'), 'dirty');
         assert.match(await page.locator('#draft-diff').textContent(), /\+ FilterDefaultDeny Yes/);
-        if (process.env.PP_DOC_SCREENSHOTS) await page.locator('#draft-panel').screenshot({ path: path.join(root, 'docs/assets', locale, 'draft.png') });
+        if (process.env.PP_DOC_SCREENSHOTS) await page.locator('#draft-panel').screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'draft.png') });
         const saved = await (await page.request.get(base + '/api/proxy/config')).json();
         assert.equal(saved.content, original, 'Mode selection must not save or activate automatically');
         await page.locator('#draft-save').click();
@@ -177,13 +177,85 @@ async function checkModeAndCapture(page, base) {
             await page.goto(base + '/?lang=' + locale);
             await page.locator('.entry-item').first().waitFor();
             await page.locator('#nodeHostname').evaluate(value => value.textContent = 'demo-node');
-            await page.screenshot({ path: path.join(root, 'docs/assets', locale, 'overview.png') });
+            await page.screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'overview.png') });
             await page.locator('#openRuleDialog').click();
-            await page.locator('#ruleDialog').screenshot({ path: path.join(root, 'docs/assets', locale, 'new-rule.png') });
+            await page.locator('#ruleDialog').screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'new-rule.png') });
             await page.keyboard.press('Escape');
+            const directory = path.join(root, 'docs/assets', locale);
+            const signIn = await page.context().browser().newPage({ viewport: { width: 1100, height: 760 } });
+            try {
+                await signIn.goto(base + '/?lang=' + locale);
+                await signIn.locator('#loginForm').waitFor();
+                await signIn.evaluate(() => document.documentElement.dataset.theme = 'light');
+                await signIn.screenshot({ animations: 'disabled', path: path.join(directory, 'sign-in.png') });
+            } finally { await signIn.close(); }
+            await page.locator('button[onclick="openImportModal()"]').click();
+            await page.locator('#importModal .modal-content').screenshot({ animations: 'disabled', path: path.join(directory, 'import.png') });
+            await page.keyboard.press('Escape');
+            // Use synthetic, stable log data: never publish local audit records.
+            await page.route('**/api/logs?*', route => route.fulfill({ json: {
+                logs: [
+                    { timestamp: '2026-11-13T09:30:00Z', service: 'manager', level: 'INFO', message: 'Tinyproxy configuration reloaded' },
+                    { timestamp: '2026-11-13T09:28:00Z', service: 'audit', level: 'INFO', message: 'AUDIT event=whitelist_add, username=demo-admin', audit: { event: 'whitelist_add', username: 'demo-admin' } },
+                    { timestamp: '2026-11-13T09:25:00Z', service: 'tinyproxy', level: 'WARNING', message: 'Connection to upstream proxy timed out' }
+                ], pagination: { total: 3, offset: 0, hasMore: false }
+            } }));
+            await page.locator('#shellNavigation a[href*="logs"]').click();
+            await page.locator('#loggingModal .log-row').first().waitFor();
+            await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
+            await page.locator('#loggingModal .modal-content').screenshot({ animations: 'disabled', path: path.join(directory, 'logs-dark.png') });
+            await page.keyboard.press('Escape');
+            await page.unroute('**/api/logs?*');
+            await page.setViewportSize({ width: 390, height: 844 });
+            await page.screenshot({ animations: 'disabled', path: path.join(directory, 'overview-mobile.png') });
+            await page.setViewportSize({ width: 1360, height: 900 });
+            await page.evaluate(() => document.documentElement.dataset.theme = 'light');
         }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(base + '/?lang=en');
+}
+
+async function checkStaleRuleActions(page, base) {
+    for (const language of ['en', 'nl']) {
+        await page.goto(base + '/?lang=' + language);
+        await page.locator('.entry-item').first().waitFor();
+        const initial = (await (await page.request.get(base + '/api/entries')).json()).entries[0];
+        const replace = async content => {
+            const revision = (await (await page.request.get(base + '/api/entries')).json()).revision;
+            const response = await page.request.put(base + '/api/entries/0', {
+                data: { content, is_comment: true, auto_restart: false, revision }
+            });
+            assert.equal(response.status(), 200);
+        };
+        const message = language === 'en' ? 'The rules changed. Refresh the list before making changes.'
+            : 'De regels zijn gewijzigd. Ververs de lijst voordat je wijzigingen aanbrengt.';
+        try {
+            await page.locator('button[onclick="editEntry(0)"]').click();
+            await page.locator('#editDescription').fill('My unsaved edit');
+            await replace('Another administrator changed this rule');
+            // A background refresh must not update the revision of an already-open editor.
+            await page.evaluate(() => loadEntries());
+            const conflict = page.waitForResponse(response => response.request().method() === 'PUT' && response.url().endsWith('/api/entries/0'));
+            await page.locator('#saveEditButton').click();
+            assert.equal((await conflict).status(), 409);
+            await page.getByText(message, { exact: true }).first().waitFor();
+            assert.equal(await page.locator('#editDescription').inputValue(), 'My unsaved edit');
+            await page.evaluate(() => closeEditModal(true));
+            await page.evaluate(() => loadEntries());
+            await page.locator('button[onclick="deleteEntry(0)"]').click();
+            await page.locator('#confirmModal.show').waitFor();
+            await replace('Keep this newer version');
+            await page.evaluate(() => loadEntries());
+            const deletion = page.waitForResponse(response => response.request().method() === 'DELETE' && response.url().includes('/api/entries/0?'));
+            await page.locator('#confirmOk').click();
+            assert.equal((await deletion).status(), 409);
+            const current = (await (await page.request.get(base + '/api/entries')).json()).entries[0];
+            assert.equal(current.content, 'Keep this newer version');
+        } finally {
+            await replace(initial.content);
+        }
+    }
     await page.goto(base + '/?lang=en');
 }
 
@@ -312,6 +384,7 @@ async function main() {
         await checkConnectivity(page, base, true);
         await checkBackupAndStatus(page, base);
         await checkModeAndCapture(page, base);
+        await checkStaleRuleActions(page, base);
         await checkBrand();
         const remove = page.locator('.entry-item .button-danger').first();
         for (const mode of ['light','dark']) {

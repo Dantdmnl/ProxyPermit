@@ -31,6 +31,8 @@ passwords, 2FA and roles remain local to each node.
    configuration** for drafts and activation, or **Settings** for HA and accounts.
    **Live logs** opens over the current page without changing your location.
 
+![Sign-in screen with language and theme controls](../assets/en/sign-in.png)
+
 ![Overview of the console](../assets/en/overview.png)
 
 ## Understand the two HA roles
@@ -83,6 +85,11 @@ refresh it before trying again; a stale reorder must not overwrite newer work.
 Comments and order help readability; destination matching is governed by the
 filter mode and pattern type, not by visual grouping alone.
 
+If another administrator changes the list while you edit a rule or confirm a
+deletion, the action is refused. Your editor input stays available. Copy any
+text you want to keep, close the editor, refresh the list and reopen the intended
+rule. Check its current contents before trying again.
+
 ## Import or export rules
 
 1. Export the current list before a large change and store the download securely.
@@ -92,6 +99,8 @@ filter mode and pattern type, not by visual grouping alone.
    the existing list: do not select it unless the file is the complete desired list.
 4. Review the restart choice and confirm import. Check the result, service state
    and, on HA, the applied revision on B.
+
+![Import rules from text or a file](../assets/en/import.png)
 
 An exported list contains destination information. Follow your organization's
 storage and deletion policy; downloaded files have no automatic retention timer.
@@ -142,6 +151,8 @@ an appropriate fencing design are separate operational decisions.
 Open **Live logs** from any page. Select source and severity, search for text, or
 use **Period** for local start/end dates. The dates refer to your browser's local
 timezone. Pause the view while reading and use the live button to return to now.
+
+![Live logs in dark mode with example events](../assets/en/logs-dark.png)
 
 Recognized local health-check traffic is hidden by default. **Show health checks**
 or an explicit server search includes it. Warnings, errors, remote requests and
@@ -205,3 +216,13 @@ access: configure direct management access or a browser proxy-bypass entry for
 the console. The profile cannot fix routing, upstream firewalls or incorrect
 certificates. If the panel says **Not configured**, ask the OS administrator to
 commission it using the [administrator instructions](administration.md#anti-lockout-profile).
+
+## On a phone or smaller screen
+
+Use the navigation button beside the logo to open the menu. The same pages and
+permissions apply on smaller screens. On this documentation site, select a
+screenshot to enlarge it; use **Zoom in** for detail and **Escape** to close it.
+
+??? example "Show the mobile console in dark mode"
+
+    ![Mobile overview in dark mode](../assets/en/overview-mobile.png)

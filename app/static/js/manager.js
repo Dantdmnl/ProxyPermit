@@ -121,6 +121,7 @@ let isDirectNode = isDirectHost(window.location.hostname);
 let entries = [];
 let filteredEntries = [];
 let currentEditId = null;
+let currentEditRevision = null;
 let currentEditType = null;
 let entriesRevision = null;
 let statusPending = false;
@@ -1639,6 +1640,7 @@ function editEntry(id) {
     const entry = entries.find(e => e.id === id);
     if (!entry) return;
     currentEditId = id;
+    currentEditRevision = entriesRevision;
     currentEditType = entry.type;
     const editDomain = document.getElementById('editDomain');
     const editRegex = document.getElementById('editRegex');
@@ -1767,7 +1769,8 @@ async function saveEdit() {
                 auto_restart: autoRestart,
                 description: description || null,
                 is_comment: isComment,
-                entry_type: entryType
+                entry_type: entryType,
+                revision: currentEditRevision
             })
         }, 20);
         if (!response.ok) {
@@ -2272,11 +2275,12 @@ async function saveOrder() {
 // Delete entry
 async function deleteEntry(id) {
     if (!requireRulesWritable()) return;
+    const revision = entriesRevision;
     const confirmed = await showConfirmModal(I18n.t('Weet je zeker dat je deze entry wilt verwijderen?'));
     if (!confirmed) return;
 
     try {
-        const result = await apiRequest(`/api/entries/${id}?auto_restart=true`, {
+        const result = await apiRequest(`/api/entries/${id}?auto_restart=true&revision=${encodeURIComponent(revision)}`, {
             method: 'DELETE'
         }, { timeoutSeconds: 30, retries: 2, retryDelayMs: 800 });
 

@@ -31,6 +31,25 @@ def has_pending_changes(filter_path):
     return is_staged(config_store()) or is_staged(TinyproxyConfigStore(filter_path))
 
 
+def domain_editor_error(filter_path):
+    """Return why the domain editor cannot safely modify the current native file."""
+    path = config_store().path
+    if not path.exists():
+        return None  # Older installations may supply only a filter path.
+    try:
+        if has_pending_changes(filter_path):
+            return PENDING_CHANGES
+        config = summary(path.read_text(encoding='utf-8-sig'))
+        compatible = (config['filterMode'] != 'disabled' and config['filterType'].lower() == 'ere'
+                      and not config['filterURLs'] and
+                      Path(config['filterPath']).resolve() == Path(filter_path).resolve())
+    except (OSError, ConfigError, ValueError):
+        compatible = False
+    if not compatible:
+        return 'The domain editor requires ERE domain filtering on WHITELIST_PATH. Manage the filter in Proxy configuration.'
+    return None
+
+
 def validate_filter(content, pattern_type):
     """Check native regex on Linux using the same POSIX family; never log rules."""
     import subprocess
@@ -506,18 +525,7 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             return jsonify(error='Publish shared proxy policy on the primary HA node.'), 409
         if not (request.path.startswith('/api/entries') or request.path == '/api/import'):
             return None
-        path = config_store().path
-        if not path.exists():
-            return None  # Old installs/demo may only supply a whitelist path.
-        try:
-            if has_pending_changes(manager.whitelist_path):
-                return jsonify(error=PENDING_CHANGES), 409
-            config = summary(path.read_text(encoding='utf-8-sig'))
-            compatible = (config['filterMode'] != 'disabled' and config['filterType'].lower() == 'ere'
-                          and not config['filterURLs'] and
-                          Path(config['filterPath']).resolve() == manager.whitelist_path.resolve())
-        except (OSError, ConfigError, ValueError):
-            compatible = False
-        if not compatible:
-            return jsonify(error='The domain editor requires ERE domain filtering on WHITELIST_PATH. Manage the filter in Proxy configuration.'), 409
+        error = domain_editor_error(manager.whitelist_path)
+        if error:
+            return jsonify(error=error), 409
         return None

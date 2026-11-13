@@ -4,13 +4,22 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-11-13
+
 ### Changed
 
+- Expand the bilingual screenshot guides and give the README a branded introduction.
+- Add an accessible screenshot viewer with zoom and a localized GitHub star invitation to the documentation site.
 - Improve command blocks and inline code styling in the documentation for both themes and small screens.
-
 - Clarify first sign-in and rule changes for each role in both languages.
-
 - Clarify Dutch operator instructions and explain the proxy manager’s configuration limits in both languages.
+
+### Fixed
+
+- Reject stale filter edits and deletions so a changed line ID cannot modify another administrator's rule. Keep an open editor's revision stable across background refreshes.
+- Recheck pending drafts, filter compatibility and revision conflicts under the same cross-process lock as filter writes, including imports.
+- Count each skipped import line once, including imports where every valid rule already exists.
+- Return client errors for malformed rule requests, invalid import modes and non-boolean mutation options.
 
 ## [1.2.0] - 2026-11-12
 

@@ -236,3 +236,28 @@ hoorde bij de oude runs. Een oude commit bleef daarna rechtstreeks via SHA
 bereikbaar: Actions opruimen wist de broncodegeschiedenis bij GitHub niet. Deze
 wijzigingen maken geen release, verplaatsen geen stabiele tag en bewijzen geen
 nieuwe geslaagde CI-run op GitHub.
+
+## 13 november 2026 — regressiecontroles voor 1.2.1
+
+Op Windows slaagden 159 Python-tests; zeven platformafhankelijke tests zijn
+overgeslagen. Ook de frontendcontroles, Pylint, typecontrole van de installer voor
+Windows/Linux en de HTTP-integratiecontrole met Granian slaagden. Afzonderlijke
+browsertests bevestigden dat een verouderde bewerking of verwijdering de nieuwere
+regel intact laat, ook na een achtergrondverversing terwijl het bewerk- of
+bevestigingsvenster openstaat. Dit is in het Nederlands en Engels gecontroleerd.
+
+Regressietests controleren ook gelijktijdige bewerkingen vanuit dezelfde revisie,
+een concept of gewijzigd filtertype voordat een wachtend schrijfverzoek het slot
+krijgt, ongeldige verzoeken en de telling van overgeslagen importregels. Bestaande
+HA-tests controleren publicatie op A, schrijfbeperkingen op B en geauthenticeerde
+beleidsoverdracht. Dit is geen nieuwe overnametest op afzonderlijke VM’s.
+
+De strikte documentatiebuild en viewercontroles omvatten beide talen, beide
+thema’s en schermbreedtes van 390 en 1440 pixels. De schermafbeeldingen gebruiken
+afzonderlijke testgegevens.
+
+In een afzonderlijke Linux-virtualenv met de huidige requirements slaagden ook
+159 Python-tests; één test die rootrechten vereist is overgeslagen. De oude
+WSL-serviceomgeving gebruikte nog pyrad 2.4. De RADIUS-testfouten verdwenen met
+de vereiste 2.6.0 in de afzonderlijke testomgeving. De serviceomgeving is niet
+aangepast.

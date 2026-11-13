@@ -8,6 +8,7 @@ docs_dir = "docs"
 site_dir = "site"
 exclude_docs = "legacy/"
 extra_css = ["stylesheets/docs.css"]
+extra_javascript = ["javascripts/docs.js"]
 nav = [
   { "Start / Begin" = "README.md" },
   { "English" = [

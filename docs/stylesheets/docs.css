@@ -67,3 +67,25 @@
 [data-md-color-scheme="default"] { --pp-code-bg:#f3f6f5; }
 [data-md-color-scheme="slate"] { --pp-code-bg:#14212a; }
 .md-typeset .highlight pre, .md-typeset .highlight pre > code { background:var(--pp-code-bg); }
+
+.md-typeset .highlight .w { color:inherit; }
+.md-typeset .highlight :is(.o,.p) { color:var(--pp-code-command); }
+.docs-screenshot { display:block; width:100%; padding:0; border:0; background:transparent; cursor:zoom-in; margin-block:1.2rem; }
+.docs-screenshot img { display:block; width:100%; height:auto; margin:0; }
+.docs-screenshot::after { content:attr(data-hint) " ↗"; display:block; padding-top:.4rem; text-align:end; color:var(--md-default-fg-color--light); font-size:.7rem; }
+.docs-screenshot:focus-visible { outline:3px solid var(--md-accent-fg-color); outline-offset:4px; border-radius:10px; }
+body.docs-image-open { overflow:hidden; }
+.docs-image-viewer { width:min(96vw,1500px); max-width:96vw; max-height:94dvh; padding:16px; border:1px solid var(--md-default-fg-color--lightest); border-radius:12px; color:var(--md-default-fg-color); background:var(--md-default-bg-color); }
+.docs-image-viewer::backdrop { background:rgb(0 0 0 / .8); }
+.docs-image-toolbar { display:flex; justify-content:flex-end; gap:10px; margin-bottom:12px; }
+.docs-image-toolbar button { min-height:44px; padding:8px 16px; border:1px solid var(--md-default-fg-color--lightest); border-radius:6px; background:var(--pp-code-bg); color:var(--md-default-fg-color); cursor:pointer; font:inherit; }
+.docs-image-toolbar button:focus-visible,.docs-image-viewport:focus-visible { outline:2px solid var(--md-accent-fg-color); outline-offset:2px; }
+.docs-image-viewport { overflow:auto; max-height:calc(94dvh - 140px); overscroll-behavior:contain; }
+.docs-image-viewport img { display:block; max-width:100%; max-height:calc(94dvh - 140px); margin:auto; object-fit:contain; }
+.is-zoomed .docs-image-viewport img { max-width:none; max-height:none; }
+#docs-image-caption { margin:12px 0 0; font-size:14px; line-height:1.5; }
+.docs-support { margin-top:3rem; padding:1.2rem; border:1px solid var(--md-default-fg-color--lightest); border-radius:8px; background:var(--pp-code-bg); font-size:.85em; }
+.docs-support p { margin:0 0 .5em; }
+@media(max-width:600px) { .docs-image-viewer { padding:10px; } }
+
+.docs-screenshot:has(img[src*="overview-mobile"]) { max-width:390px; margin-inline:auto; }

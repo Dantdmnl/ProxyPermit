@@ -189,3 +189,25 @@ and 61 current artifacts were retained. No current artifacts belonged to the
 obsolete runs. An old commit still resolved directly by SHA afterwards: Actions
 cleanup does not erase GitHub source history. These changes do not create a
 release, move a stable tag or establish a new remote CI result.
+
+## 13 November 2026 — 1.2.1 regression checks
+
+The Windows run passed 159 Python tests (seven platform-specific skips), frontend
+checks, Pylint, installer type checks for Windows/Linux and the Granian HTTP
+integration checks. Isolated browser tests confirmed that stale edits and
+deletions preserve the newer rule, including a background refresh while the
+editor or confirmation is open. The check runs in English and Dutch.
+
+Regression tests also cover simultaneous edits from one revision, drafts or a
+changed filter mode appearing before a waiting write obtains its lock, malformed
+requests and import skip counts. Existing HA tests cover primary publication,
+standby write rejection and authenticated policy transfer. These checks do not
+constitute a new failover test on separate VMs.
+
+The strict documentation build and screenshot-viewer checks cover both languages,
+both themes and 390/1440-pixel widths. Screenshots use isolated test data.
+
+A separate Linux virtual environment with the current requirements also passed
+159 Python tests (one root-only skip). The older WSL service environment still
+had pyrad 2.4; its RADIUS test failures disappeared with the required 2.6.0 in
+the isolated environment. No service environment was modified.

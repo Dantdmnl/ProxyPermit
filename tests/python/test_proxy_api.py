@@ -32,6 +32,104 @@ class ProxyApiTests(unittest.TestCase):
         data = self.client.get('/api/proxy/config').get_json()
         return {'X-CSRF-Token': data['csrfToken']}, data['revision']
 
+    def test_rule_mutations_reject_stale_ids_without_writing_or_restarting(self):
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        self.filter.write_text('# first\n# second\n', encoding='utf-8')
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main, 'WHITELIST_PATH', str(self.filter)), \
+                patch.object(main, 'restart_tinyproxy_async') as restart:
+            revision = self.client.get('/api/entries').json['revision']
+            self.filter.write_text('# second\n# first\n', encoding='utf-8')
+            before = self.filter.read_bytes()
+            for method, url, body in [
+                    ('PUT', '/api/entries/0', {'content': 'Changed', 'is_comment': True, 'revision': revision}),
+                    ('DELETE', '/api/entries/0?revision=' + revision, None)]:
+                with self.subTest(method=method):
+                    result = self.client.open(url, method=method, json=body)
+                    self.assertEqual(result.status_code, 409)
+                    self.assertEqual(self.filter.read_bytes(), before)
+            restart.assert_not_called()
+
+    def test_import_counts_each_skipped_nonempty_line_once(self):
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        self.filter.write_text('# existing\n', encoding='utf-8')
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter):
+            result = self.client.post('/api/import', json={
+                'content': 'example.com\nexample.com\n^.*$\n\n# comment', 'mode': 'append'})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json['imported_count'], 2)
+            self.assertEqual(result.json['skipped_count'], 2)
+            result = self.client.post('/api/import', json={
+                'content': 'example.com\nexample.com\n^.*$', 'mode': 'append'})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(result.json['imported_count'], 0)
+            self.assertEqual(result.json['skipped_count'], 3)
+
+    def test_concurrent_edits_from_the_same_revision_have_one_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        self.filter.write_text('# original\n', encoding='utf-8')
+        barrier = Barrier(2)
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main, 'WHITELIST_PATH', str(self.filter)):
+            revision = self.client.get('/api/entries').json['revision']
+            def edit(content):
+                barrier.wait(timeout=5)
+                with main.app.test_client() as client:
+                    return client.put('/api/entries/0', json={
+                        'content': content, 'is_comment': True, 'auto_restart': False, 'revision': revision}).status_code
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                statuses = list(pool.map(edit, ['first edit', 'second edit']))
+            self.assertEqual(sorted(statuses), [200, 409])
+            self.assertIn(self.filter.read_text(), ['# first edit\n', '# second edit\n'])
+
+    def test_mutation_rechecks_drafts_after_the_early_compatibility_guard(self):
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main, 'has_pending_changes', return_value=True), \
+                patch.object(main, 'restart_tinyproxy_async') as restart:
+            before = self.filter.read_bytes()
+            for method, url, body in [
+                    ('POST', '/api/entries', {'content': 'example.org'}),
+                    ('PUT', '/api/entries/0', {'content': 'example.org'}),
+                    ('DELETE', '/api/entries/0', None),
+                    ('POST', '/api/import', {'content': 'example.org', 'mode': 'replace'})]:
+                with self.subTest(method=method, url=url):
+                    self.assertEqual(self.client.open(url, method=method, json=body).status_code, 409)
+            self.assertEqual(self.filter.read_bytes(), before)
+            restart.assert_not_called()
+
+    def test_domain_editor_rechecks_mode_after_waiting_for_the_write_lock(self):
+        from contextlib import contextmanager
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        @contextmanager
+        def lock_after_activation(_path):
+            # A concurrent activation completes between the early guard and this lock.
+            self.config.write_text(self.content, encoding='utf-8')
+            yield
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main, 'file_lock', side_effect=lock_after_activation), \
+                patch.object(main, 'restart_tinyproxy_async') as restart:
+            before = self.filter.read_bytes()
+            result = self.client.post('/api/entries', json={'content': 'example.org'})
+            self.assertEqual(result.status_code, 409)
+            self.assertEqual(self.filter.read_bytes(), before)
+            restart.assert_not_called()
+
+    def test_invalid_rule_request_shapes_are_client_errors_and_never_write(self):
+        self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter):
+            before = self.filter.read_bytes()
+            for url in ['/api/entries', '/api/entries/reorder', '/api/import', '/api/validate', '/api/domain-to-regex']:
+                for body in [[], ['content'], 'content', 42]:
+                    with self.subTest(url=url, body=body):
+                        self.assertEqual(self.client.post(url, json=body).status_code, 400)
+            for body in [{'content': []}, {'content': 'example.org', 'mode': 'invalid'},
+                         {'content': 'example.org', 'auto_restart': 'false'}]:
+                self.assertEqual(self.client.post('/api/import', json=body).status_code, 400)
+            self.assertEqual(self.filter.read_bytes(), before)
+
     def test_reorder_publishes_exact_order_and_rejects_a_stale_revision(self):
         from app.web import ha_replication
         self.filter.write_text('# first\n# second\n', encoding='utf-8')

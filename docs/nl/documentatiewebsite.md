@@ -76,3 +76,21 @@ Draai de strikte build, controleer de gewijzigde pagina's in beide thema's en op
 een klein scherm, en test navigatie, zoeken en de taalverwijzingen. De
 [officiële publicatiehandleiding van Zensical](https://zensical.org/docs/publish-your-site/)
 beschrijft de koppeling met GitHub Pages.
+
+## Schermafbeeldingen en bediening
+
+Bewaar schermafbeeldingen zonder gevoelige gegevens in `docs/assets/nl/` en
+`docs/assets/en/`. Geef elke afbeelding een beschrijvende alternatieve tekst.
+De website voegt een viewer toe waarmee je ook met het toetsenbord kunt vergroten
+en inzoomen. Op GitHub blijven het gewone Markdown-afbeeldingen. Het logo opent
+niet in de viewer. Onder de paginatekst staat een korte, vertaalde uitnodiging
+om het project een ster te geven, zonder analytics of scripts van derden.
+
+Maak de voorbeeldafbeeldingen opnieuw met `tests/browser/settings.cjs`, met
+`PP_DOC_SCREENSHOTS=1`, Playwright op `NODE_PATH` en de ontwikkelomgeving gereed.
+De test gebruikt afzonderlijke accounts en verzonnen loggegevens. Controleer de
+afbeeldingen voor je ze commit; publiceer nooit inloggegevens of een 2FA-QR-code.
+
+Draait de gebouwde site lokaal? Voer dan `tests/browser/docs.cjs` uit om de
+viewer in beide talen, thema’s en schermformaten te controleren. Stel
+`PP_DOCS_URL` in op het previewadres en zo nodig `PLAYWRIGHT_CHANNEL`.
