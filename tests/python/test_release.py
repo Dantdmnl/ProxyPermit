@@ -48,6 +48,39 @@ class ReleaseTests(unittest.TestCase):
         release.prepare('2.0.0', self.root)
         self.assertEqual(release.current_version(self.root), '2.0.0')
 
+    def test_notes_select_only_the_requested_dated_section(self):
+        release.prepare('1.0.1', self.root, date='2026-11-13')
+        self.assertEqual(release.release_notes('1.0.1', self.root), '### Fixed\n\n- Preserve configured ports.\n')
+        with self.assertRaises(ValueError):
+            release.release_notes('1.0.2', self.root)
+
+    def test_publication_requires_the_successful_tag_push_in_this_repository(self):
+        run = dict(event='push', status='completed', conclusion='success', head_branch='v1.0.0',
+                   head_sha='a' * 40, path='.github/workflows/ci.yml', name='ProxyPermit CI',
+                   head_repository={'full_name': 'example/ProxyPermit'})
+        release.validate_release_run(run, 'v1.0.0', 'a' * 40, 'example/ProxyPermit')
+        running = {**run, 'status': 'in_progress', 'conclusion': None}
+        with self.assertRaises(ValueError):
+            release.validate_release_run(running, 'v1.0.0', 'a' * 40, 'example/ProxyPermit')
+        release.validate_release_run(running, 'v1.0.0', 'a' * 40, 'example/ProxyPermit',
+                                     [dict(name='Release archive & tag validation', status='completed', conclusion='success')])
+        for key, value in [('event', 'pull_request'), ('head_branch', 'main'), ('head_sha', 'b' * 40),
+                           ('conclusion', 'failure'), ('path', '.github/workflows/other.yml'),
+                           ('head_repository', {'full_name': 'fork/ProxyPermit'})]:
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                release.validate_release_run({**run, key: value}, 'v1.0.0', 'a' * 40, 'example/ProxyPermit')
+
+    def test_publication_checks_archive_checksum_and_tag_metadata(self):
+        release.prepare('1.0.1', self.root, date='2026-11-13')
+        archive = release.archive(self.root)
+        changelog = (self.root / 'CHANGELOG.md').read_bytes()
+        release.verify_release_artifact(archive.parent, '1.0.1', changelog)
+        with self.assertRaises(ValueError):
+            release.verify_release_artifact(archive.parent, '1.0.1', b'unrelated changelog')
+        archive.write_bytes(archive.read_bytes() + b'changed')
+        with self.assertRaises(ValueError):
+            release.verify_release_artifact(archive.parent, '1.0.1', changelog)
+
     def test_archive_excludes_secrets_and_matches_manifest(self):
         (self.root / '.env').write_text('SECRET=private')
         (self.root / 'app/private.key').write_text('secret')

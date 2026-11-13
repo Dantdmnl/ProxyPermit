@@ -4,6 +4,15 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+### Changed
+
+- Publish stable GitHub Releases automatically after successful tag CI, using verified CI artifacts and the tagged changelog.
+
+- Present documentation screenshots as consistently sized, captioned figures with focused example data and reserved image dimensions.
+- Replace the custom screenshot dialog with Zensical's bundled lightbox gallery, adding localized controls and keyboard focus handling.
+- Self-host gallery assets through the documentation privacy build and check the gallery, focus, sizing and JavaScript-free fallback in CI.
+- Move the sign-in illustration to first steps and use a quieter documentation support footer.
+
 ## [1.2.1] - 2026-11-13
 
 ### Changed
@@ -22,6 +31,8 @@ Historical deployments are not assigned retrospective release tags.
 - Return client errors for malformed rule requests, invalid import modes and non-boolean mutation options.
 
 ## [1.2.0] - 2026-11-12
+
+First official public release. Earlier version headings record development milestones.
 
 ### Added
 

@@ -136,7 +136,7 @@ async function checkBackupAndStatus(page, base) {
     await page.goto(base + '/?lang=en');
 }
 
-async function checkModeAndCapture(page, base) {
+async function checkModeAndCapture(page, base, filterPath) {
     for (const locale of ['en', 'nl']) {
         await page.goto(base + '/proxy?lang=' + locale);
         await page.locator('#filter-policy-mode:not([disabled])').waitFor();
@@ -174,12 +174,20 @@ async function checkModeAndCapture(page, base) {
         await page.locator('#draft-panel[data-state=idle]').waitFor();
         await page.locator('#config').evaluate((input, value) => { input.value = value; input.dispatchEvent(new Event('input', { bubbles: true })); }, original);
         if (process.env.PP_DOC_SCREENSHOTS) {
+            const originalRules = readFileSync(filterPath, 'utf8');
+            const heading = locale === 'nl' ? 'Bedrijfstoepassingen' : 'Business applications';
+            const source = locale === 'nl' ? 'Broncode en samenwerking' : 'Source control and collaboration';
+            const packages = locale === 'nl' ? 'Pakketupdates' : 'Package updates';
+            writeFileSync(filterPath, `# ${heading}\n^github\\.com(:[0-9]+)?$  # ${source}\n^packages\\.example\\.com(:[0-9]+)?$  # ${packages}\n`);
             await page.goto(base + '/?lang=' + locale);
             await page.locator('.entry-item').first().waitFor();
             await page.locator('#nodeHostname').evaluate(value => value.textContent = 'demo-node');
-            await page.screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'overview.png') });
+            await page.screenshot({ fullPage: true, animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'overview.png') });
             await page.locator('#openRuleDialog').click();
+            await page.locator('#domainInput').fill('updates.example.com');
+            await page.locator('#regexPreview[data-state=valid]').waitFor();
             await page.locator('#ruleDialog').screenshot({ animations: 'disabled', path: path.join(root, 'docs/assets', locale, 'new-rule.png') });
+            page.once('dialog', prompt => prompt.accept());
             await page.keyboard.press('Escape');
             const directory = path.join(root, 'docs/assets', locale);
             const signIn = await page.context().browser().newPage({ viewport: { width: 1100, height: 760 } });
@@ -187,10 +195,13 @@ async function checkModeAndCapture(page, base) {
                 await signIn.goto(base + '/?lang=' + locale);
                 await signIn.locator('#loginForm').waitFor();
                 await signIn.evaluate(() => document.documentElement.dataset.theme = 'light');
-                await signIn.screenshot({ animations: 'disabled', path: path.join(directory, 'sign-in.png') });
+                await signIn.locator('.signin-card').screenshot({ animations: 'disabled', path: path.join(directory, 'sign-in.png') });
             } finally { await signIn.close(); }
             await page.locator('button[onclick="openImportModal()"]').click();
+            await page.locator('#importContent').fill('# Package repository\nupdates.example.com');
+            await page.locator('#importButton:not([disabled])').waitFor();
             await page.locator('#importModal .modal-content').screenshot({ animations: 'disabled', path: path.join(directory, 'import.png') });
+            page.once('dialog', prompt => prompt.accept());
             await page.keyboard.press('Escape');
             // Use synthetic, stable log data: never publish local audit records.
             await page.route('**/api/logs?*', route => route.fulfill({ json: {
@@ -200,6 +211,7 @@ async function checkModeAndCapture(page, base) {
                     { timestamp: '2026-11-13T09:25:00Z', service: 'tinyproxy', level: 'WARNING', message: 'Connection to upstream proxy timed out' }
                 ], pagination: { total: 3, offset: 0, hasMore: false }
             } }));
+            await page.setViewportSize({ width: 1360, height: 650 });
             await page.locator('#shellNavigation a[href*="logs"]').click();
             await page.locator('#loggingModal .log-row').first().waitFor();
             await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
@@ -210,6 +222,7 @@ async function checkModeAndCapture(page, base) {
             await page.screenshot({ animations: 'disabled', path: path.join(directory, 'overview-mobile.png') });
             await page.setViewportSize({ width: 1360, height: 900 });
             await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+            writeFileSync(filterPath, originalRules);
         }
     }
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -383,7 +396,7 @@ async function main() {
         assert.equal(loginRequests, 1);
         await checkConnectivity(page, base, true);
         await checkBackupAndStatus(page, base);
-        await checkModeAndCapture(page, base);
+        await checkModeAndCapture(page, base, filter);
         await checkStaleRuleActions(page, base);
         await checkBrand();
         const remove = page.locator('.entry-item .button-danger').first();

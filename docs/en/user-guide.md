@@ -9,6 +9,8 @@ For installation and recovery commands, use the [administrator guide](administra
 New to the console? Start with [First steps](getting-started.md). Unfamiliar
 words are explained in [Terms explained](glossary.md).
 
+Select a screenshot to enlarge it. Use the arrows to browse and **×** or **Escape** to close it.
+
 ## Before you start
 
 Get the management URL and your individual account from your administrator. The
@@ -31,9 +33,10 @@ passwords, 2FA and roles remain local to each node.
    configuration** for drafts and activation, or **Settings** for HA and accounts.
    **Live logs** opens over the current page without changing your location.
 
-![Sign-in screen with language and theme controls](../assets/en/sign-in.png)
-
-![Overview of the console](../assets/en/overview.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![Overview of the console](../assets/en/overview.png){ loading=lazy width="1360" height="1039" }
+<figcaption>The overview brings node status, service actions and destination rules together.</figcaption>
+</figure>
 
 ## Understand the two HA roles
 
@@ -67,7 +70,10 @@ the read-only restriction.
    both nodes. The published and applied revisions should converge. The backup
    receives changes asynchronously; its open rule list refreshes automatically.
 
-![New destination rule](../assets/en/new-rule.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![New destination rule](../assets/en/new-rule.png){ loading=lazy width="520" height="534" }
+<figcaption>Add a domain and an optional description. Validation appears beside the input.</figcaption>
+</figure>
 
 If automatic restart is unchecked, saving the file does not by itself activate
 the new filtering behavior or publish a changed active policy. Restart through
@@ -100,7 +106,10 @@ rule. Check its current contents before trying again.
 4. Review the restart choice and confirm import. Check the result, service state
    and, on HA, the applied revision on B.
 
-![Import rules from text or a file](../assets/en/import.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![Import rules from text or a file](../assets/en/import.png){ loading=lazy width="638" height="576" }
+<figcaption>Choose a text file or paste one rule per line, then review the import mode.</figcaption>
+</figure>
 
 An exported list contains destination information. Follow your organization's
 storage and deletion policy; downloaded files have no automatic retention timer.
@@ -123,7 +132,10 @@ authentication and CONNECT port restrictions still apply in both modes.
 7. Test both an expected allowed destination and an expected blocked destination
    from an actual proxy client. On HA, also verify the applied revision on B.
 
-![Reviewing a filter mode change](../assets/en/filter-mode.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![Reviewing a filter mode change](../assets/en/filter-mode.png){ loading=lazy width="760" height="384" }
+<figcaption>Review the effect before applying a different filter mode to your draft.</figcaption>
+</figure>
 
 If filtering is disabled, first configure the intended filter file. This shortcut
 does not silently create a new file, erase rules, change their pattern type, or
@@ -152,7 +164,10 @@ Open **Live logs** from any page. Select source and severity, search for text, o
 use **Period** for local start/end dates. The dates refer to your browser's local
 timezone. Pause the view while reading and use the live button to return to now.
 
-![Live logs in dark mode with example events](../assets/en/logs-dark.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![Live logs in dark mode with example events](../assets/en/logs-dark.png){ loading=lazy width="1118" height="624" }
+<figcaption>Filter by source or severity and inspect individual events. The log entries shown here are examples.</figcaption>
+</figure>
 
 Recognized local health-check traffic is hidden by default. **Show health checks**
 or an explicit server search includes it. Warnings, errors, remote requests and
@@ -196,7 +211,10 @@ green plus lines will be added. This also shows changes to rule order in the
 native configuration. Password-bearing directives are masked in this comparison.
 For very large files, review the complete native editor instead.
 
-![Reviewing the working draft](../assets/en/draft.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![Reviewing the working draft](../assets/en/draft.png){ loading=lazy width="1078" height="365" }
+<figcaption>The draft comparison shows exactly which settings would be added or removed.</figcaption>
+</figure>
 
 Use the panel's save, publish or discard action for the indicated draft. A saved
 configuration draft survives reloading; unsaved editor text does not. A pending
@@ -221,8 +239,11 @@ commission it using the [administrator instructions](administration.md#anti-lock
 
 Use the navigation button beside the logo to open the menu. The same pages and
 permissions apply on smaller screens. On this documentation site, select a
-screenshot to enlarge it; use **Zoom in** for detail and **Escape** to close it.
+screenshot to enlarge it; zoom in for detail and press **Escape** to close it.
 
 ??? example "Show the mobile console in dark mode"
 
-    ![Mobile overview in dark mode](../assets/en/overview-mobile.png)
+    <figure class="docs-figure docs-figure--mobile" markdown="span">
+    ![Mobile overview in dark mode](../assets/en/overview-mobile.png){ loading=lazy width="390" height="844" }
+    <figcaption>The mobile overview keeps status and service actions within reach.</figcaption>
+    </figure>

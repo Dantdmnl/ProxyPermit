@@ -70,22 +70,26 @@
 
 .md-typeset .highlight .w { color:inherit; }
 .md-typeset .highlight :is(.o,.p) { color:var(--pp-code-command); }
-.docs-screenshot { display:block; width:100%; padding:0; border:0; background:transparent; cursor:zoom-in; margin-block:1.2rem; }
-.docs-screenshot img { display:block; width:100%; height:auto; margin:0; }
-.docs-screenshot::after { content:attr(data-hint) " ↗"; display:block; padding-top:.4rem; text-align:end; color:var(--md-default-fg-color--light); font-size:.7rem; }
-.docs-screenshot:focus-visible { outline:3px solid var(--md-accent-fg-color); outline-offset:4px; border-radius:10px; }
-body.docs-image-open { overflow:hidden; }
-.docs-image-viewer { width:min(96vw,1500px); max-width:96vw; max-height:94dvh; padding:16px; border:1px solid var(--md-default-fg-color--lightest); border-radius:12px; color:var(--md-default-fg-color); background:var(--md-default-bg-color); }
-.docs-image-viewer::backdrop { background:rgb(0 0 0 / .8); }
-.docs-image-toolbar { display:flex; justify-content:flex-end; gap:10px; margin-bottom:12px; }
-.docs-image-toolbar button { min-height:44px; padding:8px 16px; border:1px solid var(--md-default-fg-color--lightest); border-radius:6px; background:var(--pp-code-bg); color:var(--md-default-fg-color); cursor:pointer; font:inherit; }
-.docs-image-toolbar button:focus-visible,.docs-image-viewport:focus-visible { outline:2px solid var(--md-accent-fg-color); outline-offset:2px; }
-.docs-image-viewport { overflow:auto; max-height:calc(94dvh - 140px); overscroll-behavior:contain; }
-.docs-image-viewport img { display:block; max-width:100%; max-height:calc(94dvh - 140px); margin:auto; object-fit:contain; }
-.is-zoomed .docs-image-viewport img { max-width:none; max-height:none; }
-#docs-image-caption { margin:12px 0 0; font-size:14px; line-height:1.5; }
-.docs-support { margin-top:3rem; padding:1.2rem; border:1px solid var(--md-default-fg-color--lightest); border-radius:8px; background:var(--pp-code-bg); font-size:.85em; }
-.docs-support p { margin:0 0 .5em; }
-@media(max-width:600px) { .docs-image-viewer { padding:10px; } }
 
-.docs-screenshot:has(img[src*="overview-mobile"]) { max-width:390px; margin-inline:auto; }
+/* Task-focused figures: keep dialogs readable without inflating small captures. */
+.md-typeset figure.docs-figure { margin:1.6rem auto 2rem; width:100%; text-align:left; }
+.md-typeset figure.docs-figure--dialog { max-width:32rem; }
+.md-typeset figure.docs-figure--signin { max-width:23rem; }
+.md-typeset figure.docs-figure--mobile { max-width:16rem; }
+.docs-figure a.glightbox { position:relative; display:flex; justify-content:center; padding:12px; border:1px solid var(--md-default-fg-color--lightest); border-radius:12px; background:var(--pp-code-bg); box-shadow:0 3px 12px rgb(0 0 0 / .04); cursor:zoom-in; }
+.md-typeset .docs-figure img { display:block; width:auto; max-width:100%; height:auto; margin:0; border-radius:6px; border:0; }
+.docs-figure a.glightbox::after { content:'⤢'; position:absolute; top:18px; right:18px; display:grid; place-items:center; width:30px; height:30px; border:1px solid var(--md-default-fg-color--lightest); border-radius:6px; background:var(--md-default-bg-color); color:var(--md-default-fg-color); font:20px/1 system-ui,sans-serif; box-shadow:0 1px 4px rgb(0 0 0 / .12); pointer-events:none; }
+.docs-figure a.glightbox:hover { border-color:var(--md-accent-fg-color); }
+.docs-figure a.glightbox:focus-visible { outline:3px solid var(--md-accent-fg-color); outline-offset:4px; }
+.md-typeset .docs-figure figcaption { max-width:none; margin:.65rem .1rem 0; padding:0; color:var(--md-default-fg-color--light); font-size:.72rem; font-style:normal; line-height:1.6; }
+.docs-support { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--md-default-fg-color--lightest); font-size:.75rem; color:var(--md-default-fg-color--light); }
+.docs-support p { margin:0 0 .35em; }
+@media (max-width:600px) { .docs-figure a.glightbox { padding:6px; border-radius:8px; } .docs-figure a.glightbox::after { top:12px; right:12px; } }
+
+/* Keep the bundled gallery controls legible over both light and dark screenshots. */
+.glightbox-clean .gslide-description { background:var(--pp-code-bg); }
+.glightbox-clean .gdesc-inner { padding:12px 18px; }
+.glightbox-clean .gslide-title { margin:0; color:var(--md-default-fg-color); font:500 15px/1.5 system-ui,sans-serif; }
+.glightbox-container .gbtn { min-width:44px; min-height:44px; background:rgb(20 33 42 / .9); border:1px solid rgb(255 255 255 / .3); border-radius:8px; }
+.glightbox-container .gbtn:focus-visible { outline:3px solid #a2dec9; outline-offset:3px; }
+@media (prefers-reduced-motion:reduce) { .glightbox-container * { animation-duration:.01ms !important; transition:none !important; } }

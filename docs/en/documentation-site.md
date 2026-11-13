@@ -79,11 +79,24 @@ explains the GitHub Pages integration.
 
 ## Screenshots and site interactions
 
-Store sanitized screenshots in `docs/assets/en/` and `docs/assets/nl/` and give
-images a descriptive alt text. The site adds a keyboard-accessible image viewer
-with zoom; Markdown on GitHub continues to show ordinary images. The logo is not
-opened in the viewer. A short, translated GitHub star invitation appears after
-the page content, without analytics or third-party scripts.
+Store sanitized screenshots in `docs/assets/en/` and `docs/assets/nl/`. Use
+consistent example data and capture the relevant panel or dialog. Avoid empty
+screens, unnecessary desktop margins and screenshots of terminal text.
+
+Place screenshots beside the task they explain. Use a `figure` with the
+`docs-figure` class, a concise `figcaption` and descriptive alt text. Add
+`docs-figure--dialog`, `docs-figure--signin` or `docs-figure--mobile` for narrower
+captures. Set `loading=lazy` and the original pixel width/height on the Markdown
+image to reserve space while it loads. Never stretch a small screenshot.
+
+Zensical's bundled GLightbox supplies the gallery and zoom. Local JavaScript
+adds translated labels and focus handling; local CSS styles the figures.
+Without JavaScript the image links still open the original file. No external
+viewer script, analytics or image service is needed. The GitHub star invitation
+appears as a short footer after the page content.
+
+This follows [Zensical's image guidance](https://zensical.org/docs/authoring/images/)
+and [Google's screenshot guidance](https://developers.google.com/style/images).
 
 To regenerate the example screenshots, run `tests/browser/settings.cjs` with
 `PP_DOC_SCREENSHOTS=1`, Playwright on `NODE_PATH`, and the development virtual
@@ -93,3 +106,10 @@ Review the images before committing them; never publish credentials or a 2FA QR 
 With the built site served locally, run `tests/browser/docs.cjs` to check the
 image viewer in both languages, themes and screen sizes. Set `PP_DOCS_URL` to
 the preview address and `PLAYWRIGHT_CHANNEL` if needed.
+
+The privacy build copies the viewer's runtime assets into the generated site.
+A first build needs network access; subsequent builds can reuse the download
+cache. Visitors load the viewer from the documentation host. The CI browser job
+checks the gallery with external requests blocked, in both languages and themes,
+on mobile, tablet and desktop widths, plus original-image links without JavaScript.
+Use the preview URL including the `/ProxyPermit/` prefix for those tests.

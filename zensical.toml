@@ -83,3 +83,9 @@ toggle.name = "Light mode / Lichte modus"
 [project.validation]
 invalid_links = true
 invalid_link_anchors = true
+
+[project.plugins.glightbox]
+auto_caption = true
+
+[project.plugins.privacy]
+assets_exclude = ["unpkg.com/pyodide@*", "unpkg.com/ace-builds@*", "cdn.plyr.io/*", "player.vimeo.com/*"]

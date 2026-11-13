@@ -10,6 +10,8 @@ productiegegevens. Installatie- en herstelcommando's staan in de
 Nieuw in de interface? Begin bij [Eerste stappen](eerste-stappen.md). Onbekende
 termen vind je bij [Begrippen uitgelegd](begrippen.md).
 
+Klik op een schermafbeelding om die te vergroten. Blader met de pijltjes en sluit met **×** of **Escape**.
+
 ## Voor je begint
 
 Vraag de beheerder om het beheeradres en een persoonlijk account. De beheerconsole
@@ -32,9 +34,10 @@ wachtwoorden, 2FA en rollen blijven lokaal op iedere node.
    voor concepten en activering, of **Instellingen** voor HA en accounts.
    **Live logs** opent boven de huidige pagina; je verlaat die pagina niet.
 
-![Inlogscherm met taalkeuze en themaknop](../assets/nl/sign-in.png)
-
-![Overzicht van de beheerconsole](../assets/nl/overview.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![Overzicht van de beheerconsole](../assets/nl/overview.png){ loading=lazy width="1360" height="1039" }
+<figcaption>Het overzicht brengt nodestatus, serviceacties en bestemmingsregels samen.</figcaption>
+</figure>
 
 ## Begrijp de twee HA-rollen
 
@@ -69,7 +72,10 @@ leesbeperking te omzeilen.
    worden. De overdracht verloopt asynchroon; een geopende regellijst op B wordt
    automatisch ververst.
 
-![Een nieuwe bestemmingsregel](../assets/nl/new-rule.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![Een nieuwe bestemmingsregel](../assets/nl/new-rule.png){ loading=lazy width="520" height="554" }
+<figcaption>Voeg een domein en eventueel een omschrijving toe. De validatie staat bij de invoer.</figcaption>
+</figure>
 
 Zonder automatische herstart wordt het bestand wel opgeslagen, maar is het
 nieuwe filtergedrag daarmee nog niet actief of als gewijzigd actief beleid
@@ -105,7 +111,10 @@ je het opnieuw probeert.
 4. Controleer de herstartkeuze en bevestig. Controleer daarna resultaat,
    servicestatus en bij HA de toegepaste revisie op B.
 
-![Filterregels importeren uit tekst of een bestand](../assets/nl/import.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![Filterregels importeren uit tekst of een bestand](../assets/nl/import.png){ loading=lazy width="638" height="576" }
+<figcaption>Open een tekstbestand of plak de filterregels, elk op een eigen regel. Controleer daarna de importwijze.</figcaption>
+</figure>
 
 Een export bevat bestemmingsinformatie. Volg het opslag- en verwijderbeleid van
 je organisatie; downloads hebben geen automatische bewaartermijn.
@@ -130,7 +139,10 @@ proxy-authenticatie en CONNECT-poortbeperkingen blijven in beide modi gelden.
    zijn als een bestemming die geblokkeerd moet zijn. Controleer bij HA ook de
    toegepaste revisie op B.
 
-![De gevolgen van een moduswijziging controleren](../assets/nl/filter-mode.png)
+<figure class="docs-figure docs-figure--dialog" markdown="span">
+![De gevolgen van een moduswijziging controleren](../assets/nl/filter-mode.png){ loading=lazy width="760" height="384" }
+<figcaption>Controleer het effect voordat je een andere filtermodus op je concept toepast.</figcaption>
+</figure>
 
 Is filtering uitgeschakeld, configureer dan eerst het bedoelde filterbestand.
 Deze snelkoppeling maakt niet stilzwijgend een nieuw bestand, wist geen regels,
@@ -161,7 +173,10 @@ Open **Live logs** vanaf de huidige pagina. Kies bron en niveau, zoek tekst of
 gebruik **Periode** met begin- en einddatum. De datums gebruiken de lokale
 tijdzone van je browser. Pauzeer tijdens het lezen en keer daarna terug naar live.
 
-![Live logs in donkere modus met voorbeeldgebeurtenissen](../assets/nl/logs-dark.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![Live logs in donkere modus met voorbeeldgebeurtenissen](../assets/nl/logs-dark.png){ loading=lazy width="1118" height="624" }
+<figcaption>Filter op bron of niveau en bekijk afzonderlijke gebeurtenissen. De getoonde logregels zijn voorbeelden.</figcaption>
+</figure>
 
 Herkenbaar lokaal verkeer van gezondheidscontroles is standaard verborgen. Met
 **Gezondheidscontroles tonen** of een expliciete serverzoekopdracht zie je het
@@ -208,7 +223,10 @@ verdwijnen; groene plusregels worden toegevoegd. Ook een andere regelvolgorde in
 het Tinyproxy-configuratiebestand wordt zichtbaar. Wachtwoordhoudende instellingen worden
 in deze vergelijking afgeschermd. Controleer grote bestanden in de editor voor het configuratiebestand.
 
-![De werkversie controleren](../assets/nl/draft.png)
+<figure class="docs-figure docs-figure--wide" markdown="span">
+![De werkversie controleren](../assets/nl/draft.png){ loading=lazy width="1078" height="365" }
+<figcaption>De vergelijking toont precies welke instellingen je concept toevoegt of verwijdert.</figcaption>
+</figure>
 
 Gebruik de zichtbare actie om het betreffende concept op te slaan, te publiceren
 of te verwerpen. Een opgeslagen configuratieconcept blijft na herladen bestaan;
@@ -235,9 +253,12 @@ volgens de [beheerdersinstructies](beheer.md#anti-lockoutprofiel).
 
 Open het menu met de navigatieknop naast het logo. Op een kleiner scherm gebruik
 je dezelfde pagina’s en gelden dezelfde rechten. Op deze documentatiewebsite kun
-je een schermafbeelding aanklikken om die te vergroten. Kies **Inzoomen** voor
+je een schermafbeelding aanklikken om die te vergroten. Zoom in voor
 meer detail en sluit de afbeelding met **Escape**.
 
 ??? example "Toon de mobiele beheerconsole in donkere modus"
 
-    ![Mobiel overzicht in donkere modus](../assets/nl/overview-mobile.png)
+    <figure class="docs-figure docs-figure--mobile" markdown="span">
+    ![Mobiel overzicht in donkere modus](../assets/nl/overview-mobile.png){ loading=lazy width="390" height="844" }
+    <figcaption>Het mobiele overzicht houdt status en serviceacties binnen handbereik.</figcaption>
+    </figure>

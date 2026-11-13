@@ -89,11 +89,18 @@ Tag CI verifies both before producing the release archive.
 
 ## 5. Publish the download and documentation
 
-Once tag CI passes, use its **proxypermit-source-release** artifact as the build
-output. Publish the archive and checksum as assets of the matching GitHub Release
-and include the release notes and upgrade considerations. CI does not create
-that GitHub Release automatically. Actions artifacts expire after 14 days;
-they are temporary build outputs, not permanent release downloads.
+Once stable tag CI passes, **Publish stable GitHub Release** calls the reusable
+**Publish release** workflow. It publishes the exact **proxypermit-source-release**
+archive and checksum from that successful run, with notes from the tagged changelog.
+It verifies repository, tag, commit, CI result, archive manifest and checksums.
+Existing releases are left unchanged; release assets are never silently replaced.
+
+To publish an older tested tag whose CI did not yet publish releases, run
+**Actions → Publish release → Run workflow** on `main`. Enter the stable tag and
+its successful **ProxyPermit CI** tag-push run ID. A PR or branch run is rejected.
+Expired artifacts require a new successful CI run on that same tag; do not move it.
+Only the publication job has release write permission. Actions artifacts expire
+after 14 days, so they are temporary build outputs rather than permanent downloads.
 
 Pages deployment is separate. The **Documentation** workflow validates pull
 requests and can publish `main` after Pages is configured for GitHub Actions.
@@ -108,9 +115,9 @@ tests, JavaScript/locales, Playwright flows, real HTTP with Gunicorn/Granian,
 dependency vulnerabilities and a strict documentation build. The release job
 waits for all these jobs, including documentation.
 
-Actions are pinned to commits and the main CI token is read only. Coverage is
-available as **proxypermit-coverage**. Only the separate Pages deployment job
-receives Pages and identity-token write permissions. Dependabot proposes Action
+Actions are pinned to commits and ordinary CI jobs use a read-only token. Coverage is
+available as **proxypermit-coverage**. The release publication job receives contents write access; the separate Pages
+deployment job receives Pages and identity-token write permissions. Dependabot proposes Action
 and Python dependency updates.
 
 ## Old workflow runs and source history

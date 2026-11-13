@@ -80,11 +80,25 @@ beschrijft de koppeling met GitHub Pages.
 ## Schermafbeeldingen en bediening
 
 Bewaar schermafbeeldingen zonder gevoelige gegevens in `docs/assets/nl/` en
-`docs/assets/en/`. Geef elke afbeelding een beschrijvende alternatieve tekst.
-De website voegt een viewer toe waarmee je ook met het toetsenbord kunt vergroten
-en inzoomen. Op GitHub blijven het gewone Markdown-afbeeldingen. Het logo opent
-niet in de viewer. Onder de paginatekst staat een korte, vertaalde uitnodiging
-om het project een ster te geven, zonder analytics of scripts van derden.
+`docs/assets/en/`. Gebruik samenhangende voorbeeldgegevens en leg het relevante
+paneel of dialoogvenster vast. Vermijd lege schermen, onnodige bureaubladranden
+en afbeeldingen van terminaltekst.
+
+Plaats afbeeldingen bij de handeling die ze uitleggen. Gebruik een `figure` met
+de klasse `docs-figure`, een kort bijschrift in `figcaption` en beschrijvende
+alternatieve tekst. Voeg `docs-figure--dialog`, `docs-figure--signin` of
+`docs-figure--mobile` toe voor smallere beelden. Zet `loading=lazy` en de
+originele breedte/hoogte in pixels op de Markdown-afbeelding, zodat de pagina
+ruimte reserveert tijdens het laden. Rek kleine screenshots niet uit.
+
+De ingebouwde GLightbox van Zensical verzorgt de galerij en zoom. Lokale
+JavaScript voegt vertaalde labels en focusbeheer toe; lokale CSS verzorgt de
+opmaak. Zonder JavaScript opent de afbeeldingslink nog steeds het originele
+bestand. Er zijn geen externe viewerscripts, analytics of afbeeldingsdiensten
+nodig. De uitnodiging om een GitHub-ster te geven staat kort onder de paginatekst.
+
+Deze aanpak volgt de [afbeeldingsrichtlijnen van Zensical](https://zensical.org/docs/authoring/images/)
+en [Googles richtlijnen voor screenshots](https://developers.google.com/style/images).
 
 Maak de voorbeeldafbeeldingen opnieuw met `tests/browser/settings.cjs`, met
 `PP_DOC_SCREENSHOTS=1`, Playwright op `NODE_PATH` en de ontwikkelomgeving gereed.
@@ -94,3 +108,11 @@ afbeeldingen voor je ze commit; publiceer nooit inloggegevens of een 2FA-QR-code
 Draait de gebouwde site lokaal? Voer dan `tests/browser/docs.cjs` uit om de
 viewer in beide talen, thema’s en schermformaten te controleren. Stel
 `PP_DOCS_URL` in op het previewadres en zo nodig `PLAYWRIGHT_CHANNEL`.
+
+De privacyfunctie kopieert de viewerbestanden tijdens de build naar de gegenereerde
+site. Een eerste build heeft netwerktoegang nodig; volgende builds kunnen de
+downloadcache gebruiken. Bezoekers laden de viewer vanaf de documentatiehost.
+De browserjob in CI test de galerij met externe verzoeken geblokkeerd, in beide
+talen en thema’s en op mobiel-, tablet- en desktopbreedtes. Ook de afbeeldingslinks
+zonder JavaScript worden gecontroleerd. Gebruik voor deze tests het previewadres
+inclusief het `/ProxyPermit/`-voorvoegsel.

@@ -30,6 +30,11 @@ enter the current six-digit code from your authenticator app.
 2FA is optional. Set it up later under **Settings → My account** if you want it.
 Never send passwords, setup QR codes or pairing codes in a support ticket.
 
+<figure class="docs-figure docs-figure--signin" markdown="span">
+![Sign in with your personal account. Language and theme controls stay at the top.](../assets/en/sign-in.png){ loading=lazy width="420" height="450" }
+<figcaption>Sign in with your personal account. Language and theme controls stay at the top.</figcaption>
+</figure>
+
 ## 3. Check where you are
 
 **Overview** shows the node and service status. A node is one server. In a paired setup, shared rule changes belong on

@@ -90,15 +90,23 @@ git push origin v1.2.0
 Een stabiele tag moet exact `vVERSION` heten en een gedateerde changelogsectie
 hebben. De tag-build controleert beide voordat het releasearchief wordt gemaakt.
 
-## 5. Publiceer de download en documentatie
+## 5. Downloads en documentatie publiceren
 
-Gebruik na een geslaagde tag-build het artefact **proxypermit-source-release**
-als bouwresultaat. Publiceer het archief en de checksum bij de bijbehorende
-GitHub Release, met releaseopmerkingen en aandachtspunten voor bijwerken.
-CI maakt die GitHub Release niet automatisch aan. Actions-artefacten verlopen
-na 14 dagen; het zijn tijdelijke bouwresultaten, geen blijvende releasedownloads.
+Na een geslaagde CI-run voor een stabiele tag roept **Publish stable GitHub Release**
+de herbruikbare workflow **Publish release** aan. Die publiceert precies het archief
+en controlebestand uit **proxypermit-source-release**, met de notities uit de
+changelog van de tag. Repository, tag, commit, CI-resultaat, manifest en hashes
+worden gecontroleerd. Bestaande releases worden overgeslagen; releasebestanden
+worden niet stilzwijgend vervangen.
 
-Publicatie via Pages staat hier los van. De workflow **Documentation** controleert
+Een oudere, al geteste tag publiceren? Kies **Actions → Publish release → Run
+workflow** op `main`. Vul de stabiele tag en het run-ID van de geslaagde
+**ProxyPermit CI**-tagrun in. Een PR- of branchrun wordt geweigerd. Zijn de
+artefacten verlopen, voer CI dan opnieuw uit op dezelfde tag; verplaats de tag niet.
+Alleen de publicatiejob heeft schrijfrechten voor releases. Actions-artefacten
+verlopen na 14 dagen en zijn tijdelijke bouwresultaten.
+
+Pages staat hier los van. De workflow **Documentation** controleert
 pull requests en kan `main` publiceren zodra Pages op GitHub Actions is ingesteld.
 Zie [GitHub Pages inschakelen](documentatiewebsite.md#github-pages-inschakelen).
 Controleer daarna navigatie, zoeken, afbeeldingen en taalverwijzingen op het
@@ -112,9 +120,10 @@ JavaScript en vertalingen, Playwright-scenario's, echte HTTP met Gunicorn/Grania
 bekende kwetsbaarheden in dependencies en een strikte documentatiebuild. De
 releasejob wacht op al deze controles, inclusief de documentatie.
 
-Actions zijn vastgezet op commits en het token van de hoofdworkflow is alleen-lezen.
-Het dekkingsrapport staat in **proxypermit-coverage**. Alleen de aparte
-Pages-publicatiejob krijgt schrijfrechten voor Pages en het identiteitstoken.
+Actions zijn vastgezet op commits. Gewone CI-jobs hebben alleen leesrechten;
+de releasepublicatiejob krijgt schrijfrechten voor releases. Het dekkingsrapport
+staat in **proxypermit-coverage**. De aparte Pages-publicatiejob krijgt
+schrijfrechten voor Pages en het identiteitstoken.
 Dependabot stelt updates van Actions en Python-dependencies voor.
 
 ## Oude workflowruns en broncodegeschiedenis

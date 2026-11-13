@@ -30,6 +30,11 @@ actuele zescijferige code uit je authenticatorapp in.
 2FA is optioneel. Je kunt het later instellen onder **Instellingen → Mijn account**.
 Stuur wachtwoorden, QR-codes voor 2FA en koppelcodes nooit mee in een supportticket.
 
+<figure class="docs-figure docs-figure--signin" markdown="span">
+![Log in met je persoonlijke account. De taalkeuze en themaknop staan bovenaan.](../assets/nl/sign-in.png){ loading=lazy width="420" height="450" }
+<figcaption>Log in met je persoonlijke account. De taalkeuze en themaknop staan bovenaan.</figcaption>
+</figure>
+
 ## 3. Controleer op welke node je werkt
 
 **Overzicht** toont de node en de status van Tinyproxy. Een node is één server.
