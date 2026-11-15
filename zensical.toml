@@ -13,6 +13,7 @@ nav = [
   { "Start / Begin" = "README.md" },
   { "English" = [
     { "Start here" = "en/README.md" },
+    { "Roadmap" = "en/planned-work.md" },
     { "First steps" = "en/getting-started.md" },
     { "Use the console" = "en/user-guide.md" },
     { "Install and maintain" = [
@@ -31,11 +32,11 @@ nav = [
       { "Releases and CI" = "en/releases.md" },
       { "Documentation website" = "en/documentation-site.md" },
       { "Verification" = "en/verification.md" },
-      { "Planned work" = "en/planned-work.md" },
     ] },
   ] },
   { "Nederlands" = [
     { "Begin hier" = "nl/README.md" },
+    { "Roadmap" = "nl/vervolgwerk.md" },
     { "Eerste stappen" = "nl/eerste-stappen.md" },
     { "De interface gebruiken" = "nl/werkinstructie.md" },
     { "Installeren en beheren" = [
@@ -54,7 +55,6 @@ nav = [
       { "Releases en CI" = "nl/releases.md" },
       { "Documentatiewebsite" = "nl/documentatiewebsite.md" },
       { "Verificatie" = "nl/verification.md" },
-      { "Vervolgwerk" = "nl/vervolgwerk.md" },
     ] },
   ] },
 ]

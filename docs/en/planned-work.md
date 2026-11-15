@@ -1,85 +1,97 @@
-# Follow-up work
+# Roadmap
 
 [Nederlands](../nl/vervolgwerk.md) · [Documentation](README.md)
 
-Updated on 13 November 2026. These items are planned, not implemented features.
+Where ProxyPermit is heading, what you can use today, and what still needs work.
+Updated on 15 November 2026 for **v1.3.0**. Priorities may change; there are no
+promised delivery dates. A checked item means that specific step was verified,
+not that every feature in its milestone is production-ready.
 
-## Priority 1: safe behavior during HA failures
+## Available in v1.3.0
 
-- Design split-brain protection. Explicitly choose a quorum/witness design with
-  enforceable exclusion, or fencing. Pinging a third host or adding another
-  heartbeat alone does not guarantee exclusive VIP ownership.
-- Define when a node may own the VIP, when it must stop, and how operators recover
-  when the peer or decision mechanism is unavailable.
-- Keep VIP ownership separate from shared-policy write authority: failover must
-  not silently promote B to policy writer.
-- Clearly expose uncertain cluster state, lost peer contact and mismatched policy
-  revisions, and audit state changes.
+| Area | Status | What this means for you |
+| --- | --- | --- |
+| Two-node HA | Available | Keepalived provides VIP failover; B automatically receives policy published on A. Accounts and host settings stay local. |
+| Peer-key rotation | Available after upgrading both nodes | Rotate from A's interface with password confirmation and optional 2FA; B confirms the new key automatically. |
+| Internal HA certificate renewal | OS-administrator operation | Renew the pinned HA certificate through a staged handover and recovery record. This does not enable HTTPS on the management website. |
+| Connection-preserving filter reload | Opt-in | Tested with Tinyproxy 1.11.1 and 1.11.3. Other settings still require a restart. Reload remains disabled by default. |
+| Quorum, witness and fencing | Experimental integration | Tested on a separate KVM cluster. Initial setup still requires OS cluster administration; the normal HA wizard does not provision it. |
+| Protected-cluster maintenance | Experimental integration | Rolling app upgrades and recovery are verified on an OS-prepared cluster. Complete installation/removal and other platforms remain open. |
 
-**Acceptance:** use separate VMs to test complete and asymmetric network
-partitions, loss of the witness/fencing service, a hung proxy, reconnection and
-return of an outdated node. Verify exclusive VIP ownership within the chosen
-failure model, documented stop behavior and preservation of the last valid policy.
-Two active nodes must not be presented as healthy. Document the guarantee's limits.
+**Why does the interface say “Quorum and fencing are not configured”?**
+The normal HA setup configures Keepalived and policy synchronization. It does not
+yet configure a witness or fencing. The message is expected on those installations
+and does not mean policy synchronization is broken. Two-node VRRP alone cannot
+guarantee exclusive VIP ownership during a network partition.
 
-## Priority 2: activate changes without breaking connections
+See [HA setup and its limits](high-availability.md#understand-failover-protection)
+before choosing a production deployment. Upgrading does not silently convert an
+existing HA installation to a quorum-managed cluster.
 
-- Determine which changes each supported Tinyproxy version can reload through
-  `SIGUSR1` and which require a full restart. Check the systemd unit and process
-  startup mode as well.
-- Use reload for proven compatible changes, both on A and when applying policy
-  on B. Keep validation, saving, activation and recovery separate.
-- Explicitly identify changes requiring a restart. Never silently fall back to a
-  disruptive restart after a failed or uncertain reload.
-- Verify that the new configuration actually works; successful signal delivery
-  alone does not prove successful activation.
+## Next: guided split-brain protection
 
-**Acceptance:** keep long-running HTTP transfers and HTTPS CONNECT tunnels open
-while adding, removing and synchronizing rules. Existing connections survive
-supported reloads; new connections follow the new policy. Test invalid
-configuration, refused reloads and recovery. Document that preserving existing
-tunnels means new filter rules do not retroactively close those tunnels.
+**Goal:** help an administrator provision and maintain a cluster that can stop
+or power off a node before allowing unsafe takeover.
 
-## Priority 3: HA key and certificate management
+- [x] Test the Pacemaker/Corosync design with a TLS witness and restricted libvirt fencing.
+- [x] Verify hung proxies, leftover VIPs, asymmetric/full peer partitions, witness loss and unavailable fencing in separate VMs.
+- [x] Show expiring protection evidence without exposing cluster credentials to the web account.
+- [x] Verify exclusive rolling-maintenance reservations, peer takeover and explicit recovery after failure.
+- [ ] Add guided initial provisioning and joining, with clear witness and fencing prerequisites.
+- [ ] Add safe migration from an existing Keepalived-only installation and a reviewed recovery path.
+- [ ] Complete cluster-aware rollback, node retirement and uninstallation; preserve management access and remove only owned firewall rules.
+- [ ] Validate platform-specific fencing and narrowly scoped credentials for additional hypervisors and physical hosts.
+- [ ] Complete end-to-end recovery tests for stale nodes, interrupted setup and unavailable decision infrastructure.
 
-- Add controlled peer-key rotation with a bounded transition period and
-  verification before revoking the old key.
-- Test revocation on both nodes, re-pairing and rejection of expired or consumed
-  invitations. Expose synchronization failures without logging secrets.
-- Design safe certificate renewal and pin changes. A pin mismatch must never
-  trigger automatic disabling of certificate verification.
-- Audit who pairs, rotates or revokes credentials, on which node and with what
-  result. Never include bearer keys, invitations or 2FA secrets in audit records.
+**Before calling this ready:** demonstrate exclusive VIP ownership within the
+documented failure model, withhold takeover when required fencing cannot be
+confirmed, and keep B read-only for policy after traffic failover. A witness on
+the same physical host does not provide an independent failure domain.
 
-**Acceptance:** revoked keys no longer work; interrupted rotation leaves a
-recognizable, recoverable state. Unexpected certificates are rejected. Policy
-remains unchanged on authentication or transport failures.
+## Next: complete reload and credential recovery testing
 
-## Required regression tests for these improvements
+**Goal:** make routine policy changes less disruptive without weakening recovery
+or peer authentication.
 
-- Interrupt transfers and reboot during each activation phase.
-- Test full disks, missing write permissions, invalid/incomplete responses,
-  concurrent publications and lagging revisions.
-- Test changed, unexpected and expired TLS certificate material. Explicitly
-  define and document which validity checks certificate pinning performs.
-- Verify atomic saves, rollback, locking, account permissions and anti-lockout
-  rules. Accounts and host-specific configuration remain local.
-- Cover standalone operation and paired HA nodes, with understandable NL/EN
-  errors. Record results and remaining limitations.
+- [x] Preserve continuous HTTP transfers and CONNECT tunnels during supported filter reloads.
+- [x] Verify automatic A-to-B application, publication ordering and native read permissions without exposing management secrets.
+- [x] Verify real peer-key rotation and pinned certificate renewal on the HA pair, including old-key/pin removal.
+- [x] Reject wrong or expired certificates and certificate changes between handshakes before sending the peer key.
+- [x] Test isolated storage failures and lost commit replies.
+- [ ] Finish VM power-loss/restart tests in every key, certificate and activation phase.
+- [ ] Complete full-disk, permission, interrupted-transfer and concurrent-publication regression coverage.
+- [ ] Complete revocation, re-pairing and one-time invitation lifecycle acceptance on both nodes.
+- [ ] Review actor attribution and failure reporting across every credential workflow.
+- [ ] Enable reload by default only after the remaining acceptance checks pass.
 
-## Evaluate later: additional message authentication
+Existing tunnels remain open during a supported reload: a new filter rule does
+not retroactively close them. See [Reload configuration](administration.md#optional-filter-reload)
+and the [verification report](verification.md) for tested scenarios and limits.
 
-Assess whether per-request HMAC-SHA256 with timestamps and one-time nonces
-addresses a concrete additional threat on top of TLS. Current automatic HA sync
-uses pinned TLS, a peer key and SHA-256 revisions; legacy sync already uses HMAC.
-HMAC does not replace TLS, key rotation, quorum or fencing. A stolen HMAC key can
-also be used to generate fresh valid requests. Implement only after a justified
-assessment and replay/clock-skew tests.
+## After that: HTTPS management by default
 
-## Separate track: optional account replication
+**Goal:** offer a secure management URL on fresh installations and an explicit,
+recoverable migration for existing HTTP deployments.
 
-- Design optional account replication separately from proxy policy replication.
-  Decide which accounts remain local, how existing usernames conflict, whether
-  existing password hashes may be replaced, how revocation and session versions
-  propagate, and what happens to 2FA secrets and recovery access. Do not silently
-  overwrite an existing local account. Current accounts are not replicated.
+- [ ] Generate a unique self-signed certificate and protected private key per node; display the fingerprint through the trusted installer/console.
+- [ ] Support administrator-provided certificates and internal CAs; assess optional ACME where appropriate.
+- [ ] Add expiry warnings and controlled renewal, separate from HA replication pins.
+- [ ] Preserve anti-lockout access during migration; validate TLS before activation and provide rollback.
+- [ ] Apply HSTS only to verified HTTPS responses; review secure cookies, redirects and server-identification headers.
+- [ ] Test installation, upgrade, trust, renewal and recovery on standalone and HA nodes in NL/EN.
+
+## Later: account replication and additional authentication
+
+- [ ] Design optional account replication with explicit handling of existing usernames, password changes, 2FA, session revocation and local recovery accounts. Never silently overwrite a local account.
+- [ ] Assess whether request-level HMAC-SHA256 adds useful protection beyond pinned TLS. Require replay and clock-skew tests before adopting it.
+
+These are design topics, not currently supported features. HA policy replication
+does not replicate accounts. HMAC would not replace TLS, key rotation, quorum or fencing.
+
+## Follow progress or contribute
+
+Read the [release notes](https://github.com/Dantdmnl/ProxyPermit/releases) for
+shipped changes and [verification](verification.md) for evidence and remaining
+limits. Use [GitHub issues](https://github.com/Dantdmnl/ProxyPermit/issues) to report
+reproducible problems or discuss a planned feature. Include the version and
+deployment type; never include pairing codes, passwords, keys or private logs.

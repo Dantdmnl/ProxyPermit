@@ -41,10 +41,21 @@ Name both networks `proxypermit-ha` and assign the static addresses from
 the HA example below to those adapters, without adding a default gateway.
 Give a test client on that internal network an address such as `10.77.0.20/24`.
 
-For SSH management, forward NAT host port 2221 on A and 2222 on B to guest
-port 22. Bind both forwarding rules to `127.0.0.1` on Windows and select
+For SSH management, forward an available NAT host port, for example 12222 on A
+and 12223 on B, to guest port 22. Bind both forwarding rules to `127.0.0.1` on Windows and select
 the host port with `ssh -p`.
 [VirtualBox networking modes](https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/networkingdetails.html)
+
+On Windows, Hyper-V/WSL can reserve port ranges after a reboot. If a configured
+forward does not listen, check the reserved ranges in PowerShell:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+Choose host ports outside those ranges and update your SSH commands. A listed
+VirtualBox forwarding rule does not prove that Windows allowed it to bind.
+Keep the private lab key outside the repository and retain a protected backup.
 
 ## One standalone node
 

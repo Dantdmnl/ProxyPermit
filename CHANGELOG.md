@@ -4,17 +4,40 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-11-15
+
+### Added
+
+- Rotate the HA peer key from A's interface with password confirmation, optional fresh TOTP, automatic acknowledgement by B and bounded recovery after a lost response.
+- Renew internal HA certificates through an OS-operated staged pin handover, durable commit/recovery records and OS-UID audit attribution.
+- Protect HA publication order with membership-scoped generations so B rejects stale, conflicting or downgraded policy publications.
+- Add opt-in connection-preserving filter reload for Tinyproxy 1.11.1 and 1.11.3, with fresh journal acknowledgements and native HTTP health checks.
+- Show expiring, root-verified failover-protection status without giving the web account access to cluster credentials.
+- Add an experimental Pacemaker/Corosync Keepalived resource and guarded rolling app upgrades for OS-prepared two-node clusters, including an exclusive maintenance reservation and explicit recovery.
+
+### Fixed
+
+- Preserve ACLs across native filter updates and recovery, granting Tinyproxy read access only to its own configuration and filter files.
+- Reject native filter lines that Tinyproxy would split or interpret differently; never silently restart after a rejected reload or a changed activation plan.
+- Persist credential/state replacements and removals before acknowledging changes; redact incomplete peer responses and translate HA dialog errors.
+- Keep public certificate-transition metadata outside private TLS directories so existing deployments continue synchronizing without exposing keys.
+- Prepare fresh-install backup directories before the service-account import check; refuse backup symlinks and unsafe recursive root migration of application-owned draft files.
+- Preserve service-account access when installing from private source directories and isolate installer self-tests from the real host's cluster and certificate state.
+- Permit the narrowly scoped peer-key commit endpoint in the legacy internal nginx example.
+
 ### Changed
 
-- Use build-time VS Code Light+ / Dark+ syntax highlighting for documentation commands, preserving copied text and code anchors.
-- Remove decorative screenshot frames and capture overview screenshots without a truncated sidebar.
+- Publish a bilingual public roadmap with available, opt-in, experimental and planned capabilities, verified checklists and explicit HA limitations.
+- Improve documentation screenshots, the lightbox gallery, localized controls and keyboard focus; render command blocks with VS Code Light+ / Dark+ colors.
+- Publish stable GitHub Releases automatically from successful tag CI using verified archives, checksums and dated release notes.
 
-- Publish stable GitHub Releases automatically after successful tag CI, using verified CI artifacts and the tagged changelog.
+### Upgrade notes and limitations
 
-- Present documentation screenshots as consistently sized, captioned figures with focused example data and reserved image dimensions.
-- Replace the custom screenshot dialog with Zensical's bundled lightbox gallery, adding localized controls and keyboard focus handling.
-- Self-host gallery assets through the documentation privacy build and check the gallery, focus, sizing and JavaScript-free fallback in CI.
-- Move the sign-in illustration to first steps and use a quieter documentation support footer.
+- Upgrade both HA nodes before rotating peer keys or internal certificates. Older internal nginx deployments must allow the peer-restricted `/internal/ha/credential-commit` endpoint; see the administrator guide.
+- Normal HA setup still configures Keepalived and automatic policy sync. It does not automatically configure quorum, a witness or fencing; VRRP alone does not guarantee exclusive VIP ownership during a network partition.
+- Protected-cluster integration remains experimental. Initial OS provisioning, additional fencing platforms and complete cluster-aware rollback/removal are not yet provided by the GUI or normal installer.
+- Reload remains disabled by default. Enable it only on verified supported hosts; other changes require restart and existing tunnels are not retroactively closed by new filter rules.
+- Default management HTTPS remains planned. This release preserves existing management listeners; internal HA certificate renewal does not enable HTTPS on the website.
 
 ## [1.2.1] - 2026-11-13
 

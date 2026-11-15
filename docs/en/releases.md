@@ -18,7 +18,7 @@ Before choosing the release version:
   management source and host-side ports. A NAT source is not the node's own address.
 - Verify standalone and paired HA behavior. Compare policy revisions and test
   actual client traffic; a green status alone is insufficient.
-- Review [verification](verification.md) and [planned work](planned-work.md).
+- Review [verification](verification.md) and the [roadmap](planned-work.md).
   Do not describe a planned feature as available in the release.
 - Check backup and recovery instructions before asking operators to upgrade.
 

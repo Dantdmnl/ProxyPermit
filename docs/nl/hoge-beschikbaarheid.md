@@ -6,6 +6,11 @@
 **Resultaat:** apparaten gebruiken één gedeeld proxyadres en B ontvangt automatisch
 het beleid dat op A is gepubliceerd. Oefen eerst in het [VM-testlab](vm-lab.md).
 
+!!! warning "Quorum en fencing worden niet automatisch ingesteld"
+    Deze werkwijze stelt Keepalived en beleidsynchronisatie in. Afdwingbare
+    split-brainbescherming bij netwerkonderbrekingen wordt nog niet ingericht.
+    Lees vóór productiegebruik [Begrijp de bescherming bij overname](#begrijp-de-bescherming-bij-overname).
+
 ## Begrijp de taak van elke node
 
 Een node is één server. In deze handleiding pas je op **A** de gedeelde regels en
@@ -25,6 +30,8 @@ wachtwoorden, 2FA en hostgebonden instellingen blijven lokaal. HA is geen back-u
 van die bestanden en beschermt niet tegen bijvoorbeeld stroomuitval van beide servers.
 
 ## Bereid het netwerk voor
+
+Lees eerst [Begrijp de bescherming bij overname](#begrijp-de-bescherming-bij-overname).
 
 Verzamel deze gegevens voordat je het instelformulier opent:
 
@@ -85,3 +92,37 @@ lokale HA- en proxydiensten. Dat zijn verschillende acties. Controleer voordat j
 uit HA neemt of de andere node al verkeer via het VIP afhandelt. Volg
 [Een HA-node uit gebruik nemen](installatie.md). De beheerinterface blijft
 beschikbaar en de aparte UFW-regels voor anti-lockout blijven behouden.
+
+## Begrijp de bescherming bij overname
+
+De inrichting in deze handleiding stelt **Keepalived-failover en automatische
+beleidsynchronisatie** in. Pacemaker/Corosync, een witness en fencing worden niet
+automatisch geïnstalleerd. Een upgrade naar v1.3.0 voegt die onderdelen ook niet
+toe aan een bestaand cluster.
+
+Toont de interface **Bescherming bij overname → Quorum en fencing zijn niet
+ingesteld**? Dat is bij deze inrichting te verwachten. De melding gaat over
+clusterbescherming, niet over de synchronisatie van regels. Controleer de
+beleidsrevisies afzonderlijk.
+
+**Split brain** betekent dat beide nodes zich als actieve node gedragen. Als ze
+elkaar niet meer bereiken maar nog wel clients kunnen bedienen, kan VRRP alleen
+niet garanderen dat slechts één node de VIP voert. Veilige beleidsynchronisatie
+voorkomt dit niet.
+
+| Bescherming | Doel | Huidige status |
+| --- | --- | --- |
+| Keepalived/VRRP | De VIP verplaatsen als een node of proxy uitvalt | Ingericht door de gewone HA-werkwijze |
+| Quorum met een onafhankelijke witness | Bepalen welke kant mag doorgaan na verbindingsverlies | Experimentele integratie met OS-voorbereiding; begeleide inrichting staat gepland |
+| Fencing | Een node stoppen of uitschakelen vóór een onveilige overname | Vereist platformafhankelijke OS-inrichting en tests |
+
+Een witness moet in een onafhankelijk storingsdomein staan. Fencingaccounts
+moeten beperkt blijven tot de bedoelde nodes; het daadwerkelijk uitschakelen
+moet ook worden getest. ProxyPermit raadt deze instellingen niet en verandert
+je platform niet ongemerkt.
+
+Bij een door het OS voorbereid, beveiligd cluster toont de interface recente,
+door root gecontroleerde gegevens. Ontbrekende of verouderde gegevens worden
+als onzeker getoond; een gezonde melding blijft niet onbeperkt staan. Die status
+vervangt geen echte fencingtest. Zie [onderhoud aan een beveiligd cluster](beheer.md#onderhoud-aan-een-door-het-os-beveiligd-cluster)
+en de [roadmap](vervolgwerk.md) voor de ondersteunde grenzen en resterende stappen.

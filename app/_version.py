@@ -1,2 +1,2 @@
 # Generated from VERSION by scripts/release.py sync.
-__version__ = '1.2.1'
+__version__ = '1.3.0'

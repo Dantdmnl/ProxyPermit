@@ -114,7 +114,7 @@ def archive(root=ROOT, output=None):
             if not path.is_file() or path.is_symlink() or '__pycache__' in relative.parts or path.suffix in ('.pyc', '.log', '.key', '.pem', '.crt'):
                 continue
             if any(part in ('.test-data', '.demo', '.venv', '.cache', 'node_modules', 'backups',
-                            'manual_backups', '.backups', '.proxypermit-config-backups') for part in relative.parts):
+                            'manual_backups', '.backups', '.proxypermit-config-backups', 'ha-tls') for part in relative.parts):
                 continue
             if '.log.' in path.name or path.suffix in ('.jsonl', '.journal') or path.name.endswith('.journal~'):
                 continue
@@ -123,7 +123,7 @@ def archive(root=ROOT, output=None):
                 continue
             if path.name.startswith('.env') and path.name != '.env.example':
                 continue
-            if path.name in ('accounts.json', 'totp-steps.json', 'login-attempts.json') or path.match('enroll-*.json'):
+            if path.name in ('accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-protection.json', 'cluster-maintenance.json') or path.match('enroll-*.json'):
                 continue
             if 'generated' in path.name:
                 continue
@@ -224,6 +224,7 @@ def publish(tag, run_id, repository, dry_run=False):
         notes = release_notes(version, work)
         notes += '\n[English documentation](https://dantdmnl.github.io/ProxyPermit/en/) · [Nederlandse documentatie](https://dantdmnl.github.io/ProxyPermit/nl/)\n'
         notes += '\nFor an existing installation, review the upgrade plan first. Pass your existing `--install-dir` if it differs from the default.\n'
+        notes += '\nOS-prepared quorum/fencing clusters require [protected-cluster maintenance](https://dantdmnl.github.io/ProxyPermit/en/administration/#maintenance-on-an-os-protected-cluster) instead of the ordinary upgrade commands below.\n'
         notes += '\n```sh\nsudo bash install.sh --upgrade --plan\nsudo bash install.sh --upgrade --apply\n```\n'
         output = work / 'assets'
         subprocess.run(['gh', 'run', 'download', run_id, '--repo', repository, '--name',

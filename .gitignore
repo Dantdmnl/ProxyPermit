@@ -69,6 +69,9 @@ nginx/*.generated.conf
 *.journal
 *.journal~
 ha-*.json
+ha-tls/
+cluster-protection.json
+cluster-maintenance.json
 session-state.json
 nonce-store.json
 nonces.json

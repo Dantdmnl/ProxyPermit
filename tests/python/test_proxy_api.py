@@ -345,6 +345,19 @@ class ProxyApiTests(unittest.TestCase):
         headers, _ = self.token_and_revision()
         self.assertEqual(self.client.post('/api/proxy/config/validate', headers=headers, json={'content': []}).status_code, 400)
 
+    def test_reload_confirmation_cannot_authorize_a_restart(self):
+        headers, revision = self.token_and_revision()
+        before = self.config.read_bytes()
+        with patch.dict(os.environ, TINYPROXY_RELOAD_ENABLED='true'), \
+                patch('app.web.proxy.activation_supported', return_value=True), \
+                patch.object(main.whitelist_manager, 'restart_tinyproxy') as restart:
+            response = self.client.put('/api/proxy/config', headers=headers, json={
+                'content': 'Port 3129\nAllow 127.0.0.1\n', 'revision': revision,
+                'activate': True, 'activationAction': 'reload'})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.config.read_bytes(), before)
+        restart.assert_not_called()
+
     def test_native_filter_uses_revision_and_preserves_patterns(self):
         headers, _ = self.token_and_revision()
         native = dict(filterMode='blocklist', filterType='fnmatch', filterURLs=False, filterPath=str(self.filter))

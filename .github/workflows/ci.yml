@@ -70,6 +70,9 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements/*.txt
+      - name: POSIX ACL regression dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: python -m pip install -r requirements/base.txt
       - if: matrix.os != 'ubuntu-latest' || matrix.python != '3.14'
         run: python scripts/dev/test.py
@@ -108,6 +111,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/proxypermit-browser" --no-audit --no-fund playwright@1.65.0
           node "$RUNNER_TEMP/proxypermit-browser/node_modules/playwright/cli.js" install --with-deps chromium
           NODE_PATH="$RUNNER_TEMP/proxypermit-browser/node_modules" PP_TEST_PYTHON="$(command -v python)" node tests/browser/settings.cjs
+          NODE_PATH="$RUNNER_TEMP/proxypermit-browser/node_modules" PP_TEST_PYTHON="$(command -v python)" node tests/browser/ha-security.cjs
 
       - name: Verify documentation screenshots and gallery
         run: |

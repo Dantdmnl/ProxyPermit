@@ -19,7 +19,8 @@ from ..core.audit import audit_lock, audit_paths, bounded_setting, open_audit, r
 
 SERVICES = ('manager', 'tinyproxy', 'proxy_traffic', 'keepalived', 'audit')
 UNITS = ('proxypermit.service', 'proxypermit-ha-policy.service', 'proxypermit-ha-tls.service',
-         'proxypermit-ha-setup.service', 'proxypermit-ha-retire.service', 'tinyproxy.service', 'keepalived.service')
+         'proxypermit-ha-setup.service', 'proxypermit-ha-retire.service', 'proxypermit-ha-cert-recover.service',
+         'proxypermit-cluster-status.service', 'tinyproxy.service', 'keepalived.service')
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
 
 

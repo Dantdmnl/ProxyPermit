@@ -59,8 +59,9 @@ beheerconsole is op zichzelf onvoldoende om clientverkeer te verifiëren.
 1. Noteer welke bestemmingen na de wijziging bereikbaar moeten zijn.
 2. Open **Proxyconfiguratie**. Kies **Controleer concept** en verwerk de fouten
    of aandachtspunten. Kies daarna **Concept opslaan**.
-3. Kies **Publiceren en activeren** tijdens het onderhoudsvenster. Tinyproxy
-   herstart en bestaande verbindingen kunnen worden onderbroken.
+3. Kies **Publiceren en activeren** tijdens het onderhoudsvenster. Lees de
+   bevestiging: de standaardherstart kan bestaande verbindingen onderbreken.
+   Een gecontroleerde, ingeschakelde reloadroute behoudt die bij geschikte filterwijzigingen.
 4. Test het clientverkeer opnieuw en controleer de wijziging in **Live logs**.
 
 Publiceer gedeeld beleid bij gekoppelde beheerde HA-nodes op A. B haalt het
@@ -68,7 +69,32 @@ automatisch op en activeert het. Controleer gelijke revisies vóór een
 failovertest. Niet-gekoppelde nodes houden zelfstandig beleid. Houd account- en
 softwareonderhoud gescheiden van beleidspublicatie.
 
+## Optioneel filters herladen
+
+Publiceren herstart Tinyproxy standaard en kan verbindingen verbreken. v1.3.0
+voegt een optionele reloadroute toe voor geschikte filterwijzigingen op
+**Tinyproxy 1.11.1 en 1.11.3** met beheerde journallogging. Andere wijzigingen
+vereisen nog een herstart; een mislukte reload leidt nooit ongemerkt tot een herstart.
+
+Laat de OS-beheerder voor deze optie `TINYPROXY_RELOAD_ENABLED=true` instellen in
+`/etc/proxypermit/.env` en daarna de ondersteunde installerupgrade vanuit de
+nieuwe release uitvoeren. Gebruik bij een beveiligd cluster de onderhoudsroute
+verderop. De installer geeft Tinyproxy via ACL’s alleen leesrechten op de native
+configuratie en het filterbestand. De account wordt geen lid van de beheergroep.
+Een aangepast ACL-masker dat lezen blokkeert vereist OS-controle. Controleer de
+rechten opnieuw als je de OS-account van Tinyproxy wijzigt.
+
+Controleer toegestane/geblokkeerde bestemmingen, een doorlopende HTTP-overdracht
+en een CONNECT-tunnel op je eigen hosts voordat je op deze optie vertrouwt.
+Bestaande tunnels blijven open; nieuwe regels sluiten ze niet achteraf af.
+Uitgebreide acceptatie bij stroomuitval en opslagfouten staat nog op de
+[roadmap](vervolgwerk.md).
+
 ## Een storing onderzoeken
+
+Zie [HA-bescherming en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname)
+als de interface meldt dat quorum en fencing niet zijn ingesteld. Dat is geen
+melding over een mislukte beleidsynchronisatie.
 
 Open **Live logs** en filter op bron en niveau. Typ om de geladen regels te
 filteren of kies **Zoek op server** om ook oudere regels te doorzoeken. Klap
@@ -119,9 +145,10 @@ kunt inloggen en of het proxyverkeer werkt.
   accountreplicatie vallen buiten het huidige lokale accountmodel.
 - Auditlogs staan lokaal. Leg voor bedrijfsgebruik vast hoe je ze centraal
   verzamelt en hoe lang je ze bewaart.
-- De HA-proef bevestigt VIP-failover in het WSL-lab. Valideer de volledige
-  installatie, hostuitval, netwerkpartitionering en herstel op de beoogde
-  afzonderlijke hosts. [Uitgevoerde tests](verification.md)
+- VirtualBox-HA en een afzonderlijk KVM-prototype met quorum/fencing zijn getest.
+  De gewone HA-werkwijze richt dat beveiligde cluster nog niet in. Controleer
+  installatie, hostuitval, netwerkonderbrekingen en herstel op je beoogde platform.
+  [Uitgevoerde tests](verification.md)
 
 ## Verbindingsverlies
 
@@ -187,3 +214,125 @@ HA-nodes terecht dezelfde waarde tonen. Hun HA-adressen en identiteit zijn
 verschillend. Moet je achter gedeelde NAT of een reverse proxy onderscheid
 maken tussen clients? Beperk de toegang dan ook op dat toegangspunt. De bronregel
 vervangt inloggen of HTTPS niet.
+
+## De HA-peersleutel vernieuwen
+
+Werk eerst beide nodes bij en wacht tot de automatische synchronisatie slaagt.
+Open op A **Instellingen → Hoge beschikbaarheid → Peersleutel vernieuwen**.
+Bevestig met je huidige wachtwoord en, als je account 2FA gebruikt, een nieuwe
+authenticatorcode. B ontvangt de nieuwe sleutel automatisch via de bestaande
+gepinde TLS-verbinding. B slaat die sleutel op voordat A de oude sleutel intrekt.
+De interface toont de voortgang en de afronding, maar nooit de sleutels zelf.
+
+De overgang verloopt na tien minuten. Als B de nieuwe sleutel dan nog niet heeft
+bevestigd, worden beide sleutels geweigerd en moet je de nodes opnieuw koppelen.
+Een verloren bevestigingsantwoord kan met de op B opgeslagen sleutel opnieuw
+worden opgevraagd. Het beleid en bestaande proxyverbindingen blijven tijdens de
+sleutelrotatie behouden. Certificaatvernieuwing is een afzonderlijke handeling.
+
+Gebruik je het oudere nginx-voorbeeld voor interne TLS? Sta dan vóór de rotatie
+ook `/internal/ha/credential-commit` toe, naast `enroll` en `policy`. Behoud de
+beperking tot het bronadres van de peer en weiger alle andere paden. Maak een
+back-up, voer `sudo nginx -t` uit en herlaad daarna nginx. Het bijgewerkte voorbeeld
+staat in `deploy/nginx/proxypermit-ha.conf.example`. Het beheerde Gunicorn-TLS-endpoint
+beperkt de toegang al tot deze drie machine-endpoints. Stel de beheerinterface
+niet via deze interne listener beschikbaar.
+
+## Het interne HA-certificaat vernieuwen
+
+Dit doet de OS-beheerder op A. Het staat los van het certificaat voor de
+beheerwebsite. Werk eerst beide nodes bij en controleer of de synchronisatie
+slaagt. Het huidige interne certificaat moet nog minstens elf minuten geldig
+zijn. Deze opdrachten gebruiken de standaardinstallatiemap:
+
+```bash
+cd /opt/proxypermit/current
+sudo .venv/bin/python -m scripts.deploy.ha_certificates plan
+sudo .venv/bin/python -m scripts.deploy.ha_certificates stage
+sudo .venv/bin/python -m scripts.deploy.ha_certificates activate
+```
+
+Geef B na `stage` tijd om het beleid op te halen. `activate` weigert de definitieve
+omschakeling totdat B de nieuwe pin heeft opgeslagen. Probeer de opdracht zo nodig
+na de volgende synchronisatie opnieuw. Gebruik je de oudere interne nginx-listener?
+Voeg dan bij `stage` de optie `--tls-service nginx.service` toe. Bij een andere
+installatiemap geef je ook `--install-dir /jouw/pad` mee. De beheerapp wordt kort
+herstart; Tinyproxy en Keepalived blijven draaien.
+
+Vóór de definitieve beslissing kun je het aanbod met `cancel` intrekken zonder
+het actieve certificaat te veranderen. Daarna moet herstel het nieuwe certificaat
+afmaken: zet nooit alleen het oude certificaat of de oude pin terug. Een
+OS-herstelunit maakt een onderbroken omschakeling bij het opstarten af. Met
+`recover` kun je dat handmatig opnieuw proberen; voer daarna `activate` uit voor
+B’s bevestiging. Bij een verlopen overgang of gewijzigde peer kan herstel via
+onafhankelijke beheertoegang en opnieuw koppelen nodig zijn. Certificaatcontrole
+wordt nooit uitgeschakeld.
+
+Nieuwe sleutels, back-ups van het oorspronkelijke certificaat, de sleutel en de
+omgeving, en het herstelplan blijven alleen voor root toegankelijk onder
+`/etc/proxypermit/ha-tls/maintenance`. Openbare overgangsmetadata staat apart in
+`/etc/proxypermit/ha-certificate-transition.json`. De webservice hoeft daardoor
+niet in een oude afgeschermde TLS-map te kunnen lezen. De bestaande private
+auditlog legt de OS-UID en het bewerkingsnummer vast, met dezelfde bewaartermijn.
+
+## Onderhoud aan een door het OS beveiligd cluster
+
+Deze werkwijze is bedoeld voor een OS-beheerder die de geteste
+Pacemaker/Corosync-resource, een onafhankelijke TLS-witness en fencing al heeft
+ingericht. De gewone HA-wizard installeert deze onderdelen **nog niet**.
+Keepalived mag niet zelfstandig starten bij het opstarten of zichzelf automatisch
+herstarten: Pacemaker bepaalt waar het draait.
+
+**Bescherming bij overname** in de interface toont recente clustergegevens die door
+root zijn gecontroleerd. De status maakt onderscheid tussen niet-ingestelde
+beveiliging, onzekerheid, verminderde beveiliging, een gestopte resource en
+tegenstrijdig VIP-eigenaarschap. Zonder geslaagde verversing vervalt een gezonde
+melding binnen twintig seconden. Fencing moet beide nodes expliciet aan
+verschillende doelen koppelen en als beschikbaar worden gemonitord. Dit vervangt
+geen echte fencingtest en bewijst niet dat de hypervisor, witness en
+stroomvoorziening onafhankelijk van elkaar zijn.
+
+Pak voor een applicatie-update de nieuwe release uit en voer de installer op één
+node uit:
+
+```bash
+sudo bash install.sh --upgrade --cluster-maintenance --plan
+sudo bash install.sh --upgrade --cluster-maintenance --apply
+```
+
+Gebruik bij een afwijkend installatiepad ook `--install-dir /jouw/pad`.
+De installer vereist gezond quorum, een bereikbare witness en beschikbare
+fencing. Hij reserveert onderhoud voor het hele cluster en zet deze node in
+standby. Lokale wijzigingen beginnen pas nadat de andere node de beveiligde VIP
+heeft overgenomen. OS-pakketten, de Keepalived-configuratie en clusterservices
+blijven behouden. Na controle van de beheerinterface en de proxy herstelt hij de
+oorspronkelijke standby-instelling en geeft hij de reservering vrij. Wacht op een
+stabiele clusterstatus voordat je de tweede node bijwerkt. Gedeeld beleid wordt
+nog steeds op A gepubliceerd; VIP-overname geeft B geen schrijfrechten.
+
+Bij een onderbroken of mislukte update blijft de onderhoudsreservering staan.
+Deze verloopt niet automatisch, zodat de andere node niet tegelijk in onderhoud
+kan gaan. Controleer het back-upmanifest van de installer en herstel eerst de
+lokale installatie. Laat daarna de geïnstalleerde release het herstel controleren:
+
+```bash
+cd /opt/proxypermit/current
+sudo .venv/bin/python -m scripts.deploy.cluster_maintenance --recover
+```
+
+Deze opdracht controleert de lokale beheerinterface en proxy, de beveiliging op
+de andere node en het eigenaarschap van de reservering voordat hij standby
+herstelt. Gewijzigde beheerdersinstellingen of een onduidelijk herstelbestand
+worden geweigerd. Verwijder `/etc/proxypermit/cluster-maintenance.json` niet,
+wis geen reservering van de andere node en start Keepalived niet rechtstreeks om
+een weigering te omzeilen. Onderzoek zulke situaties via OS-clusterbeheer en
+onafhankelijke beheertoegang. Gewone installerrollback, HA-inrichting, het uit
+dienst nemen van een node en de-installatie blijven op beveiligde nodes
+geblokkeerd. Volledige clusterondersteuning voor die handelingen en andere
+fencingplatformen staat nog open.
+
+De installer controleert ook de afgeschermde back-ups van native concepten. Hij
+weigert symlinks, bestanden met meerdere harde koppelingen en oude concepten met
+ongeschikte eigenaars of rechten. Hij wijzigt zulke door de applicatie beschrijfbare
+paden niet recursief als root. Controleer die bestanden via OS-beheer en gebruik
+geen algemene recursieve rechtenopdracht.

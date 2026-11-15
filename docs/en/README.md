@@ -34,7 +34,7 @@ reach websites. Creating a console account does not configure a client device.
 - [Releases and CI](releases.md) covers checks and packaging.
 - [Documentation website](documentation-site.md) explains previewing and publishing.
 - [Verification](verification.md) records what has actually been tested.
-- [Planned work](planned-work.md) lists features that are not available yet.
+- [Roadmap](planned-work.md) distinguishes available, experimental and planned capabilities.
 
 These pages follow `main`, including work that has not been released yet.
 Historical instructions are kept in the

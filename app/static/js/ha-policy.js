@@ -10,7 +10,12 @@
     const buttons = panel.closest('.settings-panel').querySelectorAll('[data-ha-policy]');
     const disconnect = document.querySelector('[data-ha-policy="disconnect"]');
     const disconnectDialog = document.getElementById('ha-disconnect-dialog');
+    const rotate = panel.querySelector('[data-ha-policy="rotate-key"]');
+    const keyDialog = document.getElementById('ha-key-dialog');
+    const keyForm = document.getElementById('ha-key-form');
     let pending = false;
+    let statusSequence = 0;
+    let protectionExpiry;
 
     async function request(action, data = {}) {
         const response = await fetch('/api/proxy/ha-replication/' + action, {
@@ -19,16 +24,35 @@
             body: JSON.stringify(data),
             signal: AbortSignal.timeout(15000)
         });
-        if (!response.ok) throw new Error();
-        return response.json();
+        const result = await response.json();
+        if (!response.ok) throw new Error(I18n.t(result.error || 'HA replication request failed. Check the peer and TLS configuration.'));
+        return result;
     }
 
     async function refresh() {
+        const sequence = ++statusSequence;
         try {
             const result = await request('status');
+            if (sequence !== statusSequence) return;
             const current = result.status;
+            const protection = document.getElementById('ha-protection-status');
+            const protectionLabels = {
+                'not-configured': 'Quorum and fencing are not configured',
+                protected: 'Quorum confirmed; fencing configured',
+                degraded: 'Cluster protection needs attention',
+                stopped: 'Cluster resource is stopped',
+                unsafe: 'Conflicting cluster ownership detected',
+                unknown: 'Cluster protection could not be confirmed'
+            };
+            protection.textContent = I18n.t(protectionLabels[result.protection?.state] || protectionLabels.unknown);
+            clearTimeout(protectionExpiry);
+            if (!['not-configured', 'unknown'].includes(result.protection?.state)) {
+                const lifetime = Number.isInteger(result.protection?.validFor) ? Math.min(20, Math.max(0, result.protection.validFor)) : 0;
+                protectionExpiry = setTimeout(() => { protection.textContent = I18n.t(protectionLabels.unknown); }, lifetime * 1000);
+            }
             const synchronized = current?.state === 'synchronized';
             status.textContent = I18n.t(!result.paired ? 'Nodes zijn nog niet gekoppeld.'
+                : current?.reason === 'stale-primary' ? 'Policy history does not match. Review recovery on A before synchronizing.'
                 : synchronized ? 'Beleid gesynchroniseerd.' : 'Synchronisatie wacht op de andere node.');
             status.dataset.state = !result.paired ? '' : synchronized ? 'synchronized' : 'pending';
             for (const [name, value] of [['published', current?.primaryRevision ?? result.revision], ['applied', current?.revision]]) {
@@ -44,6 +68,16 @@
                 checked.textContent = new Intl.DateTimeFormat(I18n.tag, { dateStyle: 'short', timeStyle: 'medium' }).format(time);
             }
             if (disconnect) disconnect.hidden = !result.paired;
+            const credential = result.credential?.state || 'idle';
+            document.getElementById('ha-key-state-row').hidden = !result.paired;
+            const keyLabels = { idle: 'Peer key active', prepared: 'Waiting for B to accept the new key',
+                committed: 'New key active; waiting for confirmation from B', complete: 'Peer key renewed',
+                expired: 'Key transition expired. Re-pair the nodes.', invalid: 'Peer credential state needs operator review.' };
+            document.getElementById('ha-key-state').textContent = I18n.t(keyLabels[credential] || keyLabels.invalid);
+            if (rotate) {
+                rotate.hidden = !result.paired;
+                rotate.disabled = pending || !['idle', 'complete'].includes(credential);
+            }
             const join = document.getElementById('ha-policy-join');
             if (join) join.hidden = result.paired;
             const invite = panel.querySelector('[data-ha-policy="invite"]');
@@ -53,8 +87,10 @@
                 output.hidden = true;
             }
         } catch {
+            if (sequence !== statusSequence) return;
             status.dataset.state = '';
             status.textContent = I18n.t('Synchronisatiestatus kon niet worden geladen.');
+            document.getElementById('ha-protection-status').textContent = I18n.t('Cluster protection could not be confirmed');
         }
     }
     let vipSequence = 0, vipExpiry;
@@ -76,31 +112,44 @@
     }
 
     window.addEventListener('proxypermit:connection', event => {
-        if (event.detail.state !== 'online') { vipSequence++; document.getElementById('ha-policy-vip').textContent = I18n.t('VIP-status niet bevestigd'); }
-        else refreshVip();
+        if (event.detail.state !== 'online') {
+            vipSequence++;
+            statusSequence++;
+            document.getElementById('ha-policy-vip').textContent = I18n.t('VIP-status niet bevestigd');
+            document.getElementById('ha-protection-status').textContent = I18n.t('Cluster protection could not be confirmed');
+        } else { refreshVip(); refresh(); }
     });
 
-    async function perform(action) {
+    async function perform(action, fields = {}) {
         if (pending) return;
         if (action === 'join' && !window.confirm(I18n.t('Node B gaat het actieve gedeelde beleid van A gebruiken. Doorgaan?'))) return;
         pending = true;
+        statusSequence++;
         buttons.forEach(control => { control.disabled = true; });
         feedback.textContent = '';
         try {
-            const result = await request(action, { code: code.value.trim() });
+            const result = await request(action, { code: code.value.trim(), ...fields });
             code.value = result.code || '';
             if (output) output.hidden = !result.code;
             if (result.code) code.select();
             await refresh();
-        } catch {
-            feedback.textContent = I18n.t('HA replication request failed. Check the peer and TLS configuration.');
+            return true;
+        } catch (error) {
+            feedback.textContent = error.message || I18n.t('HA replication request failed. Check the peer and TLS configuration.');
+            return false;
         } finally {
             pending = false;
             buttons.forEach(control => { control.disabled = false; });
+            await refresh();
         }
     }
     for (const button of buttons) button.addEventListener('click', () => {
-        if (button === disconnect) {
+        if (button === rotate) {
+            keyForm.reset();
+            document.getElementById('ha-key-error').textContent = '';
+            keyDialog.showModal();
+            keyForm.elements.password.focus();
+        } else if (button === disconnect) {
             disconnectDialog.returnValue = '';
             disconnectDialog.showModal();
         } else {
@@ -110,6 +159,22 @@
     disconnectDialog?.addEventListener('close', () => {
         if (disconnectDialog.returnValue === 'disconnect') perform('disconnect');
     });
+    if (keyForm) {
+        protectDialogDismiss(keyDialog, [document.getElementById('ha-key-cancel')],
+            () => [...keyForm.querySelectorAll('input')].some(input => input.value), () => pending);
+        keyDialog.addEventListener('close', () => keyForm.reset());
+        keyForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (pending || !keyForm.reportValidity()) return;
+            const submit = keyForm.querySelector('[type="submit"]');
+            submit.disabled = true;
+            const success = await perform('rotate-key', { password: keyForm.elements.password.value,
+                otp: keyForm.elements.otp?.value || '' });
+            submit.disabled = false;
+            if (success) keyDialog.close();
+            else document.getElementById('ha-key-error').textContent = feedback.textContent;
+        });
+    }
     refresh();
     refreshVip();
     window.setInterval(() => { if (!pending) { refresh(); refreshVip(); } }, 10000);

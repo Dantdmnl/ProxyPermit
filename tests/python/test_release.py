@@ -88,11 +88,17 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'app/ha-peer.json').write_text('{"key":"fixture"}')
         (self.root / 'app/.test-data').mkdir()
         (self.root / 'app/.test-data/private.json').write_text('{"fixture":true}')
+        (self.root / 'ha-tls/maintenance').mkdir(parents=True)
+        (self.root / 'ha-tls/maintenance/plan.json').write_text('{"runtime":"fixture"}')
+        (self.root / 'cluster-protection.json').write_text('{"runtime":"fixture"}')
+        (self.root / 'app/cluster-maintenance.json').write_text('{"runtime":"fixture"}')
         archive = release.archive(self.root)
         with tarfile.open(archive) as bundle:
             names = bundle.getnames()
             self.assertFalse(any(name.endswith(('.env', '.key')) for name in names))
             self.assertFalse(any('.log.' in name or 'ha-peer.json' in name or '/.test-data/' in name for name in names))
+            self.assertFalse(any('/ha-tls/' in name or name.endswith('/cluster-protection.json') for name in names))
+            self.assertFalse(any(name.endswith('/cluster-maintenance.json') for name in names))
             manifest = json.load(bundle.extractfile('proxypermit-1.0.0/release-manifest.json'))
             for name, digest in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.extractfile('proxypermit-1.0.0/' + name).read()).hexdigest(), digest)

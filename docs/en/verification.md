@@ -211,3 +211,144 @@ A separate Linux virtual environment with the current requirements also passed
 159 Python tests (one root-only skip). The older WSL service environment still
 had pyrad 2.4; its RADIUS test failures disappeared with the required 2.6.0 in
 the isolated environment. No service environment was modified.
+
+
+## Reload verification — 15 November 2026
+
+The isolated Linux checks passed 191 tests. The Windows run passed the same
+suite with 15 POSIX/root-specific skips, plus quality, type and frontend checks.
+The installer was also upgraded successfully from a private source directory.
+
+The standalone node and both VirtualBox HA nodes passed a real service-account
+reload check: a fresh start/completion pair in the private journal, the same
+systemd invocation and process ID, and a successful local HTTP probe. The check
+rejects old startup messages. Native read ACLs survive atomic edits and rollback;
+Tinyproxy does not receive access to management secrets through group membership.
+
+An isolated Tinyproxy probe on versions 1.11.1 and 1.11.3 kept an HTTP transfer
+and a CONNECT tunnel open through three reloads and allowlist/blocklist changes.
+New requests followed the changed policy:
+
+```bash
+python3 scripts/dev/check_reload.py
+```
+
+The probe uses its own temporary files, ports and process. It does not reload
+the installed service. For managed HA verification, use disposable nodes: record
+`systemctl show tinyproxy.service -p MainPID -p InvocationID` on both nodes,
+add a temporary `.invalid` domain through A with automatic activation enabled,
+wait for B's matching revision, then remove the same rule. Both process IDs must
+remain unchanged and both revisions must converge after each operation.
+
+
+The authenticated A → B test passed for both addition and removal. Both Tinyproxy
+process IDs stayed unchanged, the original filter bytes were restored and both
+nodes returned to the original shared revision. OS checks on all three VMs
+confirmed native config/filter read-only access for Tinyproxy and denied reads
+of the management environment, account file and existing peer credentials.
+
+These reload checks do not prove split-brain protection. Quorum/fencing and
+partition-failure tests remain open in the [roadmap](planned-work.md).
+
+## Key rotation and TLS verification — 15 November 2026
+
+The isolated Linux suite passed all 208 tests with no skips. The Windows suite
+passed with 19 platform- or OpenSSL-dependent tests skipped. Rotation tests cover
+old-key revocation, transition expiry, concurrent requests and recovery after a
+lost commit response. This does not yet verify the complete browser-driven key
+rotation on two VMs.
+
+TLS tests use real local connections with temporary generated certificates.
+A first handshake checks the previously trusted SHA-256 pin without an HTTP
+request or peer key. A second handshake validates the pinned certificate with
+OpenSSL, including validity dates and signature; the pin is then checked again.
+Only then may the peer key be sent. The pin identifies the node; hostname checks
+and system CAs are not used for this purpose. A wrong pin, an expired certificate
+and a certificate switch between handshakes are rejected. Controlled certificate
+renewal and pin migration remain open, as do additional storage-failure and
+restart tests for key rotation.
+
+## Extended HA verification — 15 November 2026
+
+The Linux suite now passes 231 tests without skips, including storage-failure,
+optional fresh-TOTP, VIP-resource and publication-order checks. Both the existing
+Playwright settings suite and the new isolated HA-security suite passed. The HA
+suite covers NL/EN, both themes, mobile/desktop, focus, dirty-dialog dismissal,
+incorrect passwords and monitor-role restrictions.
+
+A real browser-driven key rotation passed on the VirtualBox HA pair. B confirmed
+the new key automatically; the old key returned 403 and the new key returned 200.
+The primary's filters and Tinyproxy process ID remained unchanged. The first run
+exposed an outdated nginx path restriction; after updating only the internal
+commit path, the complete test passed. See the upgrade note in
+[Administration](administration.md#renewing-the-ha-peer-key).
+
+A separate disposable KVM/libvirt prototype used two Ubuntu 24.04 nodes,
+Pacemaker/Corosync, a TLS qdevice witness and the standard `fence_xvm` agent.
+The host fencer was restricted to the two proxy VM UUIDs and source addresses;
+the witness had no fencing key. Tests passed for a hung proxy, recovery without
+automatic failback, a leftover VIP after killing Keepalived, witness loss with
+both peers connected, asymmetric/full peer partitions and a frozen node while
+the fencer was unavailable. Takeover was withheld until fencing was available;
+the frozen VM was then powered off before a healthy VIP appeared on the peer.
+
+This verifies the prototype's tested failure scenarios, not production integration.
+The normal HA wizard and existing ProxyPermit nodes do not enable it automatically.
+Platform adapters, complete lifecycle integration, broader fault coverage, certificate
+renewal and management HTTPS remain open. Restoring an entire old OS image must
+be quarantined through the platform until its cluster state has been reviewed;
+guest software cannot protect against a restore that also removes its guards.
+
+The final Linux run passed 247 tests without skips, plus shell checks and real
+Gunicorn/Granian HTTP checks with two workers. The real HA pair also passed a
+publication-order regression: B refused a temporarily restored lower sequence,
+kept its native filter and Tinyproxy process, and synchronized after the original
+publication was restored.
+
+Internal certificate renewal then passed on that pair. B confirmed the new pin
+and removed the old pin from its allowed set. Both Tinyproxy and Keepalived
+process IDs and both filter files stayed unchanged. Peer-key rotation also passed
+over the renewed TLS connection. OS-UID audit attribution and absence of the peer
+key from audit records were verified. The completed recovery path was idempotent.
+
+The separate KVM prototype's three VMs share one workstation; these tests do not
+cover failure of that shared physical host. They were restarted for the maintenance tests below.
+The existing standalone and two VirtualBox HA nodes remain running. Default HTTPS
+for the management website is still planned; internal HA TLS renewal does not
+enable HTTPS on that website.
+
+### Cluster status and rolling-maintenance verification
+
+The separate KVM pair now runs real installer-managed ProxyPermit services on
+top of its OS-prepared cluster. Both nodes passed the supported
+`--upgrade --cluster-maintenance` path. Checks compared package versions,
+Keepalived configuration and health helper, cluster configuration and profile,
+native proxy configuration, filter file and accounts before and after each
+upgrade; all were preserved. The application release changed on both nodes.
+
+The active node handed the VIP to its peer before local changes. A second
+maintenance request was rejected while the first reservation existed. A process
+exit left the checkpoint and matching reservation intact; explicit recovery
+restored standby. A separate failed post-maintenance health check also retained
+the reservation. The real root recovery CLI then verified manager/proxy health
+and peer protection before releasing it.
+
+Root status export was checked on both nodes. The application account could read
+only the reduced status and was denied CIB access. Witness loss changed the status
+to degraded; stopping the exporter made its healthy evidence expire to unknown.
+Isolated tests also reject fencing maps without distinct coverage of both nodes,
+conflicting VIP ownership, malformed evidence and untrusted file permissions.
+Playwright passed NL/EN, both themes, small and large viewports, keyboard/focus,
+dirty-dialog handling, reauthentication and monitor restrictions.
+
+These checks do not enable automatic production cluster provisioning. Other
+platform adapters, cluster-aware removal/rollback and the remaining interruption
+matrix are still open. See [Follow-up work](planned-work.md).
+
+The latest Linux run passed all 280 Python tests without skips. Lint and installer
+type checks passed, as did shell checks and the real two-worker Gunicorn and
+Granian HTTP suites. The strict documentation build also passed. Fresh-install
+testing found and fixed backup-directory preparation before the unprivileged
+import; installer self-tests now isolate both cluster reservation and certificate
+transition state from the host. Mutable native draft backups are validated
+without recursive privileged ownership migration.

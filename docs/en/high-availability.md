@@ -6,6 +6,11 @@
 **Result:** clients use one shared proxy address and B automatically receives
 policy published on A. Try this in the [VM lab](vm-lab.md) before production.
 
+!!! warning "Quorum and fencing are not configured automatically"
+    This workflow sets up Keepalived and policy sync. It does not yet provide
+    enforceable split-brain protection during network partitions. Read
+    [Understand failover protection](#understand-failover-protection) before production use.
+
 ## Understand what each node does
 
 A node is one server. In this guide, **A** is where you change shared rules and
@@ -25,6 +30,8 @@ passwords, 2FA and host-specific settings stay local. HA is not a backup of
 those files, and it does not protect against both servers losing power together.
 
 ## Prepare the network
+
+Before continuing, read [Understand failover protection](#understand-failover-protection).
 
 Before opening the setup form, collect these values from your network plan:
 
@@ -84,3 +91,33 @@ and proxy services. They are different actions. Before retirement, verify that
 the other node already serves clients through the VIP. Follow
 [Retire an HA node](installation.md#retire-an-ha-node). The console remains
 available, and dedicated UFW anti-lockout rules are retained.
+
+## Understand failover protection
+
+The setup described here installs **Keepalived failover and automatic policy
+synchronization**. It does not automatically install Pacemaker/Corosync, a witness
+or fencing. Upgrading to v1.3.0 does not add those components to an existing cluster.
+
+If the interface shows **Failover protection → Quorum and fencing are not
+configured**, that is expected for this setup. It describes cluster protection,
+not whether rules are synchronized. Check the policy revisions separately.
+
+**Split brain** means both nodes act as the active node. If they lose contact
+while both can still reach clients, VRRP alone cannot guarantee that only one
+owns the VIP. Secure policy synchronization does not prevent this situation.
+
+| Protection | Purpose | Current status |
+| --- | --- | --- |
+| Keepalived/VRRP | Move the VIP when a node or proxy becomes unavailable | Configured by the normal HA workflow |
+| Quorum with an independent witness | Decide which side may continue after loss of contact | OS-prepared experimental integration; guided provisioning is planned |
+| Fencing | Stop or power off a node before permitting an unsafe takeover | Requires platform-specific OS configuration and testing |
+
+A witness must have an independent failure domain. Fencing credentials must be
+limited to the intended nodes, and the power-off path must actually be tested.
+ProxyPermit does not guess those settings or silently change your platform.
+
+On an OS-prepared protected cluster, the console reports recent root-verified
+evidence. Missing or expired evidence is shown as uncertain; it is never retained
+as healthy indefinitely. This status does not replace a real fencing test.
+See [protected-cluster maintenance](administration.md#maintenance-on-an-os-protected-cluster)
+and the [roadmap](planned-work.md) for the supported boundary and remaining work.

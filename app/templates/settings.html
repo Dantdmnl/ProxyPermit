@@ -86,12 +86,30 @@
             <dl class="ha-status-grid">
                 <div><dt>{{ _('Beleid synchroniseren') }}</dt><dd id="ha-policy-status" role="status">—</dd></div>
                 <div><dt>{{ _('Virtueel IP') }}</dt><dd id="ha-policy-vip">—</dd></div>
+                <div><dt>{{ _('Failover protection') }}</dt><dd id="ha-protection-status" role="status">—</dd></div>
                 <div id="ha-policy-published-row" hidden><dt>{{ _('Laatst opgehaalde revisie van A') if ha_policy_role == 'b' else _('Gepubliceerde revisie') }}</dt><dd><code id="ha-policy-published"></code></dd></div>
                 <div id="ha-policy-applied-row" hidden><dt>{{ _('Toegepaste revisie op B') }}</dt><dd><code id="ha-policy-applied"></code></dd></div>
                 <div id="ha-policy-checked-row" hidden><dt>{{ _('Laatste succesvolle contact') }}</dt><dd><time id="ha-policy-checked"></time></dd></div>
+                <div id="ha-key-state-row" hidden><dt>{{ _('Peer key') }}</dt><dd id="ha-key-state" role="status">—</dd></div>
             </dl>
             {% if ha_policy_role == 'a' and permissions.admin %}
             <button type="button" data-ha-policy="invite">{{ _('Node toevoegen') }}</button>
+            <button type="button" class="button-secondary" data-ha-policy="rotate-key" hidden>{{ _('Rotate peer key') }}</button>
+            <dialog id="ha-key-dialog" class="workspace-dialog" aria-labelledby="ha-key-title">
+                <form id="ha-key-form">
+                    <header class="workspace-dialog-header"><h3 id="ha-key-title">{{ _('Rotate peer key') }}</h3></header>
+                    <div class="workspace-dialog-body">
+                        <p>{{ _('B receives and verifies the new key automatically. The current key expires after ten minutes if the transition cannot finish. Re-pair the nodes if the transition expires.') }}</p>
+                        <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                        {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>{% endif %}
+                        <p id="ha-key-error" role="alert"></p>
+                    </div>
+                    <footer class="workspace-dialog-footer">
+                        <button type="button" id="ha-key-cancel" class="button-secondary">{{ _('Annuleren') }}</button>
+                        <button type="submit">{{ _('Rotate peer key') }}</button>
+                    </footer>
+                </form>
+            </dialog>
             <div id="ha-policy-result" hidden>
                 <label for="ha-policy-code">{{ _('Kopieer deze code') }}</label>
                 <textarea id="ha-policy-code" readonly spellcheck="false" autocomplete="off"></textarea>

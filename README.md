@@ -26,9 +26,12 @@ account with optional two-factor authentication.
 Run it on a single node or use two nodes with a shared virtual IP managed by
 Keepalived. Pair existing standalone nodes through the web console; publishing
 on the primary automatically replicates filter rules and shared Tinyproxy
-settings
-over pinned TLS. Each node keeps its own management accounts and host settings.
+settings over pinned TLS. Each node keeps its own management accounts and host settings.
 See the installation guide for migration from an existing HA deployment.
+
+The normal HA setup does not yet configure quorum, a witness or fencing.
+Keepalived alone cannot guarantee exclusive VIP ownership during a network
+partition. See [HA protection and its limits](docs/en/high-availability.md#understand-failover-protection).
 
 ![ProxyPermit management console](docs/assets/en/overview.png)
 
@@ -77,6 +80,13 @@ The Zensical documentation site can be previewed locally and published with
 GitHub Pages;
 see [English](docs/en/documentation-site.md) /
 [Nederlands](docs/nl/documentatiewebsite.md).
+
+## Roadmap
+
+Follow the [English roadmap](docs/en/planned-work.md) or
+[Nederlandse roadmap](docs/nl/vervolgwerk.md) for current capabilities, experimental
+work and planned improvements. Checked steps have been verified; future work has
+no promised delivery dates.
 
 ## Support the project
 

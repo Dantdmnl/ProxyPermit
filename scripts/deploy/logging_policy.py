@@ -24,7 +24,7 @@ def assets(release, values):
             f'SystemMaxFileSize=8M\nMaxFileSec=1h\nMaxRetentionSec={age}day\n'
             'ForwardToSyslog=no\nForwardToKMsg=no\nForwardToConsole=no\nForwardToWall=no\n')
     units = ('proxypermit', 'proxypermit-ha-policy', 'proxypermit-ha-tls', 'proxypermit-ha-setup',
-             'proxypermit-ha-retire', 'keepalived', 'tinyproxy')
+             'proxypermit-ha-retire', 'proxypermit-ha-cert-recover', 'keepalived', 'tinyproxy')
     for name in units:
         if name == 'keepalived' and values.get('DEPLOYMENT_MODE') != 'ha':
             continue

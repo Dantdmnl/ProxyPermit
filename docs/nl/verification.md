@@ -261,3 +261,155 @@ In een afzonderlijke Linux-virtualenv met de huidige requirements slaagden ook
 WSL-serviceomgeving gebruikte nog pyrad 2.4. De RADIUS-testfouten verdwenen met
 de vereiste 2.6.0 in de afzonderlijke testomgeving. De serviceomgeving is niet
 aangepast.
+
+
+## Reload gecontroleerd — 15 november 2026
+
+De afzonderlijke Linux-controle slaagde voor 191 tests. Op Windows slaagde dezelfde
+suite, met 15 overgeslagen tests voor POSIX-rechten of root. Ook de kwaliteits-,
+type- en frontendcontroles slaagden. Een upgrade vanuit een afgeschermde bronmap
+is daarnaast op een echte VM gecontroleerd.
+
+De zelfstandige node en beide VirtualBox-HA-nodes doorstonden een echte reload als
+serviceaccount: verse start- en eindmeldingen in het private journal, dezelfde
+systemd-invocatie en hetzelfde proces-ID, plus een geslaagde lokale HTTP-controle.
+Oude opstartmeldingen tellen niet als bevestiging. De lees-ACL’s op de native
+bestanden blijven bij atomair opslaan en herstel behouden. Tinyproxy krijgt
+hiervoor geen toegang tot beheergeheimen via lidmaatschap van de beheergroep.
+
+Een afzonderlijke Tinyproxy-proef met versies 1.11.1 en 1.11.3 hield een
+HTTP-overdracht en een CONNECT-tunnel open tijdens drie reloads en wisselingen
+tussen allowlist en blocklist. Nieuwe verzoeken volgden het gewijzigde beleid:
+
+```bash
+python3 scripts/dev/check_reload.py
+```
+
+Deze proef gebruikt eigen tijdelijke bestanden, poorten en een eigen proces.
+De geïnstalleerde service wordt niet herladen. Gebruik voor de beheerde HA-proef
+wegwerp-nodes: noteer op beide nodes
+`systemctl show tinyproxy.service -p MainPID -p InvocationID`. Voeg via A een
+tijdelijk `.invalid`-domein toe met automatisch toepassen ingeschakeld. Wacht op
+B’s gelijke revisie en verwijder daarna dezelfde regel. Beide proces-ID’s moeten
+gelijk blijven; na elke bewerking moeten de revisies overeenkomen.
+
+
+De geauthenticeerde A → B-proef slaagde voor toevoegen én verwijderen. Beide
+Tinyproxy-proces-ID’s bleven gelijk, de oorspronkelijke filterinhoud is exact
+hersteld en beide nodes keerden terug naar de oorspronkelijke gedeelde revisie.
+OS-controles op alle drie de VM’s bevestigden dat Tinyproxy de native bestanden
+alleen kan lezen en de beheeromgeving, accountfile en bestaande peergegevens niet kan lezen.
+
+Deze reloadcontroles bewijzen geen bescherming tegen split-brain. Quorum/fencing
+en tests met netwerkonderbrekingen blijven open op de [roadmap](vervolgwerk.md).
+
+## Sleutelrotatie en TLS gecontroleerd — 15 november 2026
+
+De geïsoleerde Linux-suite slaagde voor alle 208 tests, zonder overgeslagen tests.
+De Windows-suite slaagde met 19 platform- of OpenSSL-afhankelijke tests overgeslagen.
+De rotatietests controleren intrekking van de oude sleutel, het aflopen van de
+overgang, gelijktijdige verzoeken en herstel na een verloren bevestigingsantwoord.
+Dit is nog geen volledige controle van sleutelrotatie via de browser op twee VM’s.
+
+De TLS-tests gebruiken echte lokale verbindingen met tijdelijk gegenereerde
+certificaten. Een eerste handshake controleert de vooraf vertrouwde SHA-256-pin
+zonder HTTP-verzoek of peersleutel. Een tweede handshake controleert het gepinde
+certificaat met OpenSSL, inclusief geldigheid en handtekening; daarna wordt de pin
+opnieuw gecontroleerd. Pas daarna mag de peersleutel worden verstuurd. De pin
+identificeert de node; de hostnaam en systeem-CA’s worden hiervoor niet gebruikt.
+Een verkeerde pin, een verlopen certificaat en een certificaatwissel tussen beide
+handshakes worden geweigerd. Gecontroleerde certificaatvernieuwing en pinmigratie
+blijven open, evenals de aanvullende opslag- en herstarttests voor sleutelrotatie.
+
+## Aanvullende HA-controles — 15 november 2026
+
+De Linux-suite slaagt nu voor 231 tests zonder overgeslagen tests, inclusief
+opslagfouten, een nieuwe optionele TOTP-code, de VIP-resource en de volgorde van
+publicaties. De bestaande Playwright-instellingensuite en de nieuwe afzonderlijke
+HA-beveiligingssuite slagen. De HA-suite controleert NL/EN, beide thema’s,
+mobiel/desktop, focus, sluiten met onopgeslagen invoer, verkeerde wachtwoorden
+en de beperkingen van de monitorrol.
+
+Een echte sleutelrotatie via de browser slaagde op het VirtualBox-HA-paar.
+B bevestigde de nieuwe sleutel automatisch; de oude sleutel kreeg 403 en de
+nieuwe 200. De filters en het Tinyproxy-proces-ID op A bleven behouden. De eerste
+proef vond een verouderde nginx-padbeperking. Na aanpassing van uitsluitend het
+interne commitpad slaagde de volledige proef. Zie de upgradevoorwaarde in
+[Beheer](beheer.md#de-ha-peersleutel-vernieuwen).
+
+Een afzonderlijk KVM/libvirt-prototype gebruikte twee Ubuntu 24.04-nodes,
+Pacemaker/Corosync, een TLS-qdevice-witness en de standaardagent `fence_xvm`.
+De hostfencer was beperkt tot de UUID’s en bronadressen van de twee proxynodes;
+de witness had geen fencing-sleutel. De proeven slaagden voor een vastgelopen proxy,
+herstel zonder automatische terugkeer van het VIP, een achtergebleven VIP na het
+doden van Keepalived, witnessverlies met verbonden peers, eenzijdige/volledige
+peeronderbreking en een bevroren node met een onbereikbare fencer. Overname bleef
+geblokkeerd tot fencing weer beschikbaar was. Daarna werd de bevroren VM eerst
+uitgeschakeld voordat het VIP gezond op de andere node verscheen.
+
+Dit bewijst de geteste foutscenario’s van het prototype, niet de productie-integratie.
+De gewone HA-wizard en bestaande ProxyPermit-nodes zetten dit niet automatisch aan.
+Platformadapters, integratie met beheerhandelingen, bredere storingstests,
+certificaatvernieuwing en HTTPS voor de beheerinterface blijven open. Zet een volledig
+oud OS-image bij herstel eerst via het platform in quarantaine totdat de clusterstatus
+is beoordeeld. Gastsoftware kan geen herstel tegenhouden dat ook haar eigen
+beveiligingsmaatregelen verwijdert.
+
+De laatste Linux-controle slaagde voor 247 tests zonder overgeslagen tests, plus
+shellcontroles en echte HTTP-controles met Gunicorn en Granian met twee workers.
+Het echte HA-paar doorstond ook de volgordecontrole: B weigerde een tijdelijk
+teruggezet lager publicatienummer, behield zijn filter en Tinyproxy-proces en
+synchroniseerde weer nadat de oorspronkelijke publicatie was hersteld.
+
+Daarna slaagde de interne certificaatvernieuwing op dat paar. B bevestigde de
+nieuwe pin en verwijderde de oude uit zijn toegestane pins. Op beide nodes bleven
+de Tinyproxy- en Keepalived-proces-ID’s en de filterbestanden behouden.
+Peersleutelrotatie over de vernieuwde TLS-verbinding slaagde ook. De OS-UID in de
+auditregistratie en het ontbreken van de peersleutel in die logregels zijn
+gecontroleerd. De afgeronde herstelroute kon zonder wijzigingen opnieuw draaien.
+
+De drie VM’s van het afzonderlijke KVM-prototype delen één werkstation. Uitval
+van die gedeelde fysieke host valt buiten deze proeven. De VM’s zijn opnieuw
+gestart voor onderstaande onderhoudsproeven. De bestaande standalone- en twee VirtualBox-HA-nodes blijven
+draaien. Standaard HTTPS voor de beheerwebsite blijft gepland: interne HA-TLS-
+vernieuwing schakelt HTTPS op die website niet in.
+
+### Controle van clusterstatus en onderhoud per node
+
+Het afzonderlijke KVM-paar draait nu echte, door de installer beheerde
+ProxyPermit-services boven op het door het OS voorbereide cluster. Beide nodes
+doorliepen de ondersteunde route `--upgrade --cluster-maintenance` met succes.
+Voor en na iedere update zijn pakketversies, Keepalived-configuratie en
+gezondheidscontrole, clusterconfiguratie en -profiel, native proxyconfiguratie,
+filterbestand en accounts vergeleken. Die bleven allemaal behouden; de
+applicatierelease veranderde op beide nodes.
+
+De actieve node droeg de VIP over voordat lokale wijzigingen begonnen. Een tweede
+onderhoudsaanvraag werd geweigerd zolang de eerste reservering bestond. Na
+procesafsluiting bleven het herstelbestand en de bijbehorende reservering intact;
+expliciet herstel zette standby terug. Ook een afzonderlijke mislukte
+gezondheidscontrole liet de reservering staan. De echte root-herstelopdracht
+controleerde vervolgens de lokale beheerinterface en proxy en de bescherming op
+de andere node voordat hij de reservering vrijgaf.
+
+De root-statusexport is op beide nodes gecontroleerd. De applicatieaccount kon
+alleen de beperkte status lezen en kreeg geen toegang tot de CIB. Witnessverlies
+leverde een verminderde beschermingsstatus op. Na het stoppen van de exporter
+verviel de gezonde status automatisch naar onbekend. Geïsoleerde tests weigeren
+ook fencingtoewijzingen zonder verschillende doelen voor beide nodes,
+tegenstrijdig VIP-bezit, ongeldige gegevens en onveilige bestandsrechten.
+Playwright slaagde voor NL/EN, beide thema’s, kleine en grote schermen,
+toetsenbord/focus, onopgeslagen wijzigingen, herauthenticatie en de monitorrol.
+
+Hiermee wordt de productieclusterinrichting nog niet automatisch ingeschakeld.
+Andere platformadapters, clusterbewust verwijderen/terugdraaien en de overige
+onderbrekingsproeven staan nog open. Zie [Vervolgwerk](vervolgwerk.md).
+
+De laatste Linux-controle slaagde voor alle 280 Python-tests, zonder overgeslagen
+tests. Lint- en installertypecontroles, shellcontroles en de echte HTTP-proeven
+met Gunicorn en Granian met twee workers slaagden ook. De strikte documentatiebuild
+slaagde eveneens. De schone installatietest vond een fout in de voorbereiding van
+de back-upmap vóór de import als serviceaccount; die is opgelost. Installerzelftests
+isoleren nu zowel de clusterreservering als certificaatvernieuwing van de echte
+host. Beschrijfbare native conceptback-ups worden gecontroleerd zonder recursieve
+rechtenmigratie als root.

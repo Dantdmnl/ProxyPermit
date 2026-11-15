@@ -19,6 +19,7 @@ from werkzeug.security import generate_password_hash
 from ..core.accounts import ROLES, account_role, admin_count, consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
 from ..core.access_safety import read_profile
+from ..core import cluster
 from ..core.ha import HA_SETUP_ENV, HA_SETUP_REQUEST, HA_SETUP_RESULT, ha_firewall_rules, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from ..core.tinyproxy import ConfigError, atomic_write
 from .proxy import activation_supported, ha_enabled, has_pending_changes, managed_ha
@@ -30,7 +31,7 @@ HA_SETUP_COMMAND = ('/usr/bin/sudo', '-n', '/usr/bin/systemctl', 'start', '--no-
 
 
 def ha_setup_available():
-    return (not ha_enabled() and activation_supported()
+    return (not cluster.reserved() and not ha_enabled() and activation_supported()
             and Path('/etc/systemd/system/proxypermit-ha-setup.service').is_file())
 
 
@@ -61,7 +62,7 @@ def setup_fingerprint(data):
 
 
 def ha_retirement_available():
-    return (managed_ha() and Path('/etc/proxypermit/ha-firewall.json').is_file()
+    return (not cluster.reserved() and managed_ha() and Path('/etc/proxypermit/ha-firewall.json').is_file()
             and Path('/etc/systemd/system/proxypermit-ha-retire.service').is_file())
 
 
