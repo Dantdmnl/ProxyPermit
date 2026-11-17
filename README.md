@@ -10,88 +10,184 @@
 <p align="center">A clear, secure web console for Tinyproxy.</p>
 
 <p align="center">
-  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> ·
+  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> Â·
   <a href="https://dantdmnl.github.io/ProxyPermit/nl/">
-    Nederlandse documentatie</a> ·
-  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> ·
+    Nederlandse documentatie</a> Â·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> Â·
   <a href="https://github.com/Dantdmnl/ProxyPermit/issues">Report an issue</a>
 </p>
 <!-- markdownlint-enable MD033 MD041 -->
 
-ProxyPermit is a web console for managing Tinyproxy on Linux. Use it to control
-client access and destination filtering, stage and publish proxy configuration,
-and investigate traffic through live logs. Each administrator can use a personal
-account with optional two-factor authentication.
+ProxyPermit gives system administrators a web interface for managing Tinyproxy
+on Linux. Control which clients may use the proxy, choose which destinations
+they may reach, and review configuration changes before activating them.
+Tinyproxy handles the proxy connections; ProxyPermit provides the management
+console, accounts, audit trail and deployment tools.
 
-Run it on a single node or use two nodes with a shared virtual IP managed by
-Keepalived. Pair existing standalone nodes through the web console; publishing
-on the primary automatically replicates filter rules and shared Tinyproxy
-settings over pinned TLS. Each node keeps its own management accounts and host settings.
-See the installation guide for migration from an existing HA deployment.
-
-The normal HA setup does not yet configure quorum, a witness or fencing.
-Keepalived alone cannot guarantee exclusive VIP ownership during a network
-partition. See [HA protection and its limits](docs/en/high-availability.md#understand-failover-protection).
+Use it for a standalone proxy or a two-node setup with automatic policy
+synchronization and a shared virtual IP. The interface and documentation are
+available in **English and Dutch**, with light and dark themes.
 
 ![ProxyPermit management console](docs/assets/en/overview.png)
 
-*Example installation with synthetic data. [Explore the
-console](https://dantdmnl.github.io/ProxyPermit/en/user-guide/).*
+*Example installation with synthetic data. [See the console in
+use](https://dantdmnl.github.io/ProxyPermit/en/user-guide/).*
+
+## What you can manage
+
+- **Access and filtering:** manage client network access and destination
+  allowlists or blocklists, using domains, wildcard patterns or regular
+  expressions. Import, export, search and reorder filter rules.
+- **Proxy configuration:** edit native Tinyproxy settings, validate drafts,
+  review their impact and publish them with activation and recovery checks.
+- **Users and accountability:** assign Monitor, Proxy manager or System
+  administrator roles, enable optional authenticator-based 2FA, and identify
+  the account responsible for changes through audit logs.
+- **Logs and history:** filter live and retained logs by source, severity,
+  text and date. Managed installations default to 30 days for audit/management
+  logs and 7 days for Tinyproxy/traffic logs; storage limits can shorten history.
+- **Installation and maintenance:** use a guided Linux installer and documented
+  upgrade, migration, rollback and removal workflows.
+
+HTTPS destinations use Tinyproxy's CONNECT support. Destination filtering can
+match the tunnel's destination, not URL paths inside encrypted HTTPS traffic.
+See the [user guide](docs/en/user-guide.md) for examples and filter-mode behavior.
+
+## Choose your deployment
+
+| Setup | How it works |
+| --- | --- |
+| Standalone | One Linux host runs the proxy and management console. No HA peer or Keepalived is required. |
+| Two-node HA | Keepalived manages a shared virtual IP. Pair the nodes through the console, publish policy on A, and B automatically receives active filter rules and shared Tinyproxy settings over pinned TLS. |
+
+In paired HA, **A remains the policy publisher** and B stays read-only for
+shared policy, even when B serves proxy traffic. Accounts, passwords, 2FA,
+sessions and host-specific settings remain local to each node. Signing in
+through the virtual IP after takeover can require the other node's credentials.
+
+**HA protection has limits.** The normal setup configures Keepalived and policy
+synchronization, not quorum, a witness or fencing. A network partition can still
+leave both nodes owning the virtual IP. The experimental Pacemaker/Corosync
+integration is a separate, OS-prepared workflow; it is not enabled by an upgrade
+or the normal HA wizard. Read [HA protection and its
+limits](docs/en/high-availability.md#understand-failover-protection) before
+choosing a production setup.
+
+## Development preview
+
+**[v1.4.0-dev.1](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1)**
+is a prerelease for disposable or recoverable test deployments. It adds management
+HTTPS setup and further experimental HA integration. Guided protected-cluster
+provisioning and complete recovery/removal workflows remain open. Read the
+[known limitations](CHANGELOG.md#140-dev1---2026-11-17) before testing.
+**v1.3.0 remains the stable release.**
+
+## Get started
+
+For a new installation, use **Debian or Ubuntu with systemd, Python 3.10 or
+later, and root/sudo access**. Download and extract a tagged archive from
+[Releases](https://github.com/Dantdmnl/ProxyPermit/releases), then run the guided
+installer from the directory containing `install.sh`:
+
+```bash
+sudo bash install.sh
+```
+
+The wizard guides you through the installation and asks you to review the plan.
+To inspect a plan separately without applying changes:
+
+```bash
+sudo bash install.sh --plan
+```
+
+A fresh standalone installation binds the console and proxy to loopback.
+Open a management tunnel, replacing `user@proxy-host` with your SSH login:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 user@proxy-host
+```
+
+Visit **<http://127.0.0.1:8080>** and sign in with the administrator account
+configured during installation. Before connecting LAN clients, configure
+Tinyproxy's listener and client access rules for your network. The console
+address and the client proxy address serve different purposes; a console
+account alone does not configure a device to use the proxy.
+
+Use the [installation guide](docs/en/installation.md) for network access, HTTPS,
+unattended installation, upgrades and removal. For two nodes, start with the
+[HA prerequisites](docs/en/installation.md#new-two-node-ha-cluster).
+
+## Documentation
+
+The documentation website is the main guide for users and administrators.
+It follows `main` and may describe unreleased work; use the documentation
+bundled with a release when you need instructions for that exact version.
 
 | Documentation | English | Nederlands |
 | --- | --- | --- |
+| Start here / Begin hier | [Documentation](https://dantdmnl.github.io/ProxyPermit/en/) | [Documentatie](https://dantdmnl.github.io/ProxyPermit/nl/) |
 | First steps / Eerste stappen | [Get started](docs/en/getting-started.md) | [Aan de slag](docs/nl/eerste-stappen.md) |
 | Use the console / De interface gebruiken | [User guide](docs/en/user-guide.md) | [Werkinstructie](docs/nl/werkinstructie.md) |
 | Users and roles / Gebruikers en rollen | [Permissions](docs/en/roles.md) | [Rechten](docs/nl/rollen.md) |
-| Start here / Begin hier | [Documentation](docs/en/README.md) | [Documentatie](docs/nl/README.md) |
 | Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/nl/installatie.md) |
 | Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/nl/beheer.md) |
+| High availability / Hoge beschikbaarheid | [HA guide](docs/en/high-availability.md) | [HA-handleiding](docs/nl/hoge-beschikbaarheid.md) |
 | Logging, privacy and retention / Logging, privacy en bewaartermijnen | [Logging guide](docs/en/logging.md) | [Logginghandleiding](docs/nl/logging.md) |
 
-## Quick start
+## Project status and roadmap
 
-For a new standalone installation, run these commands from the repository root
-on Debian or Ubuntu with systemd and Python 3.10 or later. Review the plan
-before
-applying it.
+Use a tagged release for a versioned installation. The `main` branch contains
+ongoing development; [Unreleased in the changelog](CHANGELOG.md#unreleased)
+identifies changes that are not yet in a published release.
 
-```bash
-bash install.sh --plan
-sudo bash install.sh --apply
-```
+Current development includes direct management HTTPS with certificate setup and
+renewal in the console, and preparation for guided quorum/fencing protection.
+These are separate from Tinyproxy's support for HTTPS destinations. Protected
+cluster provisioning, witness setup and migration are not yet a complete guided
+workflow. Experimental features should be evaluated in a disposable lab first.
 
-For an interactive setup, use `sudo bash install.sh`. On a fresh installation,
-open the console through an [SSH
-tunnel](docs/en/installation.md#open-the-console).
-For two nodes, follow the [HA
-prerequisites](docs/en/installation.md#new-two-node-ha-cluster).
+Follow the [English roadmap](docs/en/planned-work.md) or
+[Nederlandse roadmap](docs/nl/vervolgwerk.md) for verified steps, experimental
+work and remaining priorities. Checked steps do not mean that an entire
+milestone is production-ready. Future work has no promised delivery dates.
 
 ## Development
 
 Use the [VM test lab](docs/en/vm-lab.md) to exercise the installer, proxy
 traffic, upgrade, recovery, or two-node HA on disposable guests.
 
-Run `python -m pip install -r requirements/dev.txt` in a Python 3.11+ virtual
-environment, then run `python scripts/check.py`. The [verification
-report](docs/en/verification.md)
-lists the Linux and HA scenarios tested so far.
+In a Python 3.11+ virtual environment, install the development dependencies and
+run the same checks used by CI:
 
-The Zensical documentation site can be previewed locally and published with
-GitHub Pages;
+```bash
+python -m pip install -r requirements/dev.txt
+python scripts/check.py
+```
+
+Use Linux or WSL for Gunicorn, shell and service checks. Windows development
+uses Granian and skips platform-specific tests. For browser changes, run the
+Playwright checks described in [AGENTS.md](AGENTS.md). The [verification
+report](docs/en/verification.md) records the environments and failure scenarios
+checked so far, along with remaining limits.
+
+Preview the Zensical documentation site locally or publish it with GitHub Pages;
 see [English](docs/en/documentation-site.md) /
 [Nederlands](docs/nl/documentatiewebsite.md).
 
-## Roadmap
-
-Follow the [English roadmap](docs/en/planned-work.md) or
-[Nederlandse roadmap](docs/nl/vervolgwerk.md) for current capabilities, experimental
-work and planned improvements. Checked steps have been verified; future work has
-no promised delivery dates.
-
-## Support the project
+## Contribute and support the project
 
 Finding ProxyPermit useful? [Give the project a
-star](https://github.com/Dantdmnl/ProxyPermit)
-to help other administrators discover it. Bug reports and improvements to the
+star](https://github.com/Dantdmnl/ProxyPermit) to help other administrators
+discover it. Bug reports and improvements to the
 [English and Dutch documentation](https://dantdmnl.github.io/ProxyPermit/) are
 welcome too.
+
+For a bug report, include the ProxyPermit version, deployment type, steps to
+reproduce and the expected result. Remove passwords, pairing codes, tokens and
+personal data from logs or screenshots before sharing them.
+
+## License
+
+ProxyPermit's own code is licensed under the [MIT License](LICENSE).
+The separately bundled ClusterLabs fencing agent is **GPL-2.0-or-later**;
+its [source, attribution and license](deploy/fence-agents/README.md) are included.

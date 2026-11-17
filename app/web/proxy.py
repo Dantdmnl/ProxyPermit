@@ -457,6 +457,12 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 audit('ha_replication_joined')
                 return jsonify(success=True)
             if action == 'disconnect' and role in ('a', 'b'):
+                data = request.get_json(silent=True)
+                if not isinstance(data, dict) or data.get('confirmed') is not True:
+                    return jsonify(error='Confirm HA pairing revocation before continuing.'), 400
+                error = app.extensions['reauthenticate_admin_change'](data)
+                if error is not None:
+                    return error
                 with file_lock(replication.state('pair-lock' if role == 'a' else 'pull-lock')):
                     for name in ('peer', 'enrollment', 'applied-policy', 'replication-status'):
                         replication.delete_state(name)

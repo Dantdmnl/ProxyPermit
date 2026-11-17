@@ -47,8 +47,28 @@ python scripts/release.py prepare 1.2.0
 Controleer de wijzigingen. De voorbereiding past `VERSION`, de gegenereerde
 bestanden en de gedateerde changelogsectie aan. Bij ongeldige notities of een
 ongeldig versienummer stopt de opdracht. Datums zijn UTC. De opdracht maakt geen
-commit of tag en pusht, publiceert of installeert niets. Verplaats een bestaande
-stabiele tag niet naar nieuwe code; geef gewijzigde code een nieuwe versie.
+commit of tag en pusht, publiceert of installeert niets. Verplaats een bestaande tag,
+ook van een prerelease, niet naar nieuwe code; geef gewijzigde code een nieuwe versie.
+
+### Prereleases voor testgebruik
+
+Gebruik `MAJOR.MINOR.PATCH-dev.N` voor een testrelease, bijvoorbeeld:
+
+```sh
+python scripts/release.py prepare 1.4.0-dev.1 --dry-run
+python scripts/release.py prepare 1.4.0-dev.1
+```
+
+Iedere genummerde prerelease moet nieuwer zijn dan de vorige versie; `.10` volgt
+op `.9`. Een stabiele `1.4.0` volgt op `1.4.0-dev.N`. Geef iedere gepubliceerde
+build een eigen tag en gedateerde notities. Vervang nooit de code of bestanden
+van een eerdere prerelease.
+
+Voor stabiele releases en prereleases gelden dezelfde CI-controles. Bij
+`-dev.N` zet publicatie het GitHub-label **Pre-release** en blijft **Latest**
+uitdrukkelijk ongewijzigd. Beschrijf de geteste functies, bekende beperkingen en
+het bedoelde testgebruik in de notities. Een prerelease is geen advies om
+productie-installaties bij te werken.
 
 ## 3. Controleer de kandidaat
 
@@ -87,12 +107,12 @@ git tag -a v1.2.0 TESTED_COMMIT_SHA -m "ProxyPermit v1.2.0"
 git push origin v1.2.0
 ```
 
-Een stabiele tag moet exact `vVERSION` heten en een gedateerde changelogsectie
+Elke releasetag moet exact `vVERSION` heten en een gedateerde changelogsectie
 hebben. De tag-build controleert beide voordat het releasearchief wordt gemaakt.
 
 ## 5. Downloads en documentatie publiceren
 
-Na een geslaagde CI-run voor een stabiele tag roept **Publish stable GitHub Release**
+Na een geslaagde CI-run voor een tag roept **Publish GitHub Release**
 de herbruikbare workflow **Publish release** aan. Die publiceert precies het archief
 en controlebestand uit **proxypermit-source-release**, met de notities uit de
 changelog van de tag. Repository, tag, commit, CI-resultaat, manifest en hashes
@@ -100,7 +120,7 @@ worden gecontroleerd. Bestaande releases worden overgeslagen; releasebestanden
 worden niet stilzwijgend vervangen.
 
 Een oudere, al geteste tag publiceren? Kies **Actions → Publish release → Run
-workflow** op `main`. Vul de stabiele tag en het run-ID van de geslaagde
+workflow** op `main`. Vul de stabiele of ontwikkeltag en het run-ID van de geslaagde
 **ProxyPermit CI**-tagrun in. Een PR- of branchrun wordt geweigerd. Zijn de
 artefacten verlopen, voer CI dan opnieuw uit op dezelfde tag; verplaats de tag niet.
 Alleen de publicatiejob heeft schrijfrechten voor releases. Actions-artefacten

@@ -1,7 +1,44 @@
 """Installer-owned journal namespaces and independent retention timers."""
 from pathlib import Path
+import os
+import stat
+
+from app.core.tinyproxy import atomic_write
 
 MARKER = '# Managed by ProxyPermit logging policy\n'
+
+
+def write_asset(path, content):
+    """Public systemd metadata stays traversable even under the helper's 0077 umask."""
+    path = Path(path)
+    missing = []
+    parent = path.parent
+    while not parent.exists():
+        if parent.is_symlink():
+            raise ValueError('Logging policy directories must not be symlinks.')
+        missing.append(parent)
+        parent = parent.parent
+    if parent.is_symlink():
+        raise ValueError('Logging policy directories must not be symlinks.')
+    for parent in reversed(missing):
+        parent.mkdir(mode=0o755)
+        parent.chmod(0o755)
+    parent = path.parent
+    if parent.is_symlink():
+        raise ValueError('Logging policy directories must not be symlinks.')
+    info = parent.lstat()
+    # Repair only the exact public, exclusively installer-owned directory made
+    # by older GUI conversions. Never widen an administrator's private folder.
+    if (getattr(os, 'geteuid', lambda: -1)() == 0
+            and parent.name == 'keepalived.service.d' and stat.S_IMODE(info.st_mode) == 0o700
+            and info.st_uid == 0 and path.name == '20-proxypermit-logging.conf'
+            and content == MARKER + '[Service]\nLogNamespace=proxypermit\n'
+            and list(parent.iterdir()) == [path] and not path.is_symlink()):
+        file_info = path.lstat()
+        if (stat.S_ISREG(file_info.st_mode) and file_info.st_uid == 0 and file_info.st_nlink == 1
+                and stat.S_IMODE(file_info.st_mode) == 0o644 and path.read_text() == content):
+            parent.chmod(0o755)
+    atomic_write(path, content, 0o644)
 
 
 def days(values, key, default):

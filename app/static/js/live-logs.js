@@ -221,6 +221,7 @@ function downloadLogs() {
         const msg = log.message || '';
         const meta = log.meta || {};
         const metaBits = [];
+        if (Number.isSafeInteger(log.repetitions) && log.repetitions > 1) metaBits.push(`repetitions=${log.repetitions}`);
         if (meta.client_ip) metaBits.push(`ip=${meta.client_ip}`);
         if (meta.client_name) metaBits.push(`system=${meta.client_name}`);
         if (meta.host) metaBits.push(`host=${meta.port ? `${meta.host}:${meta.port}` : meta.host}`);
@@ -453,6 +454,7 @@ async function refreshLogs(reason = 'page') {
         );
         let url = `/api/logs?limit=${logPageLimit}&offset=${logPageOffset}&service=${encodeURIComponent(selectedService)}&scan_limit=${requestedScanLimit}`;
         if (document.getElementById('logHealthChecks')?.checked) url += '&health=include';
+        if (document.getElementById('logRoutineMessages')?.checked) url += '&routine=include';
         if (query) url += `&q=${encodeURIComponent(query)}`;
         if (selectedLevel) url += `&level=${encodeURIComponent(selectedLevel)}`;
         for (const [name,value] of Object.entries(logPeriod)) if (value) url += `&${name}=${encodeURIComponent(value)}`;
@@ -727,7 +729,9 @@ function filterLogs() {
         const timestamp = formatTimestamp(log.timestamp);
         const highlighted = highlightLogText(log.message || '', textFilter);
         const metaChips = buildLogMetaChips(log.meta || {}, textFilter);
-        const metaBlock = metaChips ? I18n.html`<span class="log-row-meta">${metaChips}</span>` : '';
+        const repeated = Number.isSafeInteger(log.repetitions) && log.repetitions > 1
+            ? I18n.html`<span class="log-meta-chip" title="${escapeLogHtml(I18n.t('Repeated client certificate trust alerts within one minute'))}">×${log.repetitions}</span>` : '';
+        const metaBlock = metaChips || repeated ? I18n.html`<span class="log-row-meta">${metaChips}${repeated}</span>` : '';
         const levelLabel = escapeLogHtml(log.level || '');
         const serviceLabel = escapeLogHtml(log.service || '');
         const header = I18n.html`<div class="log-row-head"><span class="log-row-time">${escapeLogHtml(timestamp)}</span><span class="log-row-service">${serviceIcon} ${serviceLabel}</span><span class="log-row-level" style="color: ${color};">${icon} ${levelLabel}</span>${metaBlock}</div>`;

@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/ClusterLabs/fence-agents",
+  "revision": "c6d1b7e8892661f1204572a8b5ce1241a451fe9b",
+  "files": {
+    "COPYING.applications": "ab15fd526bd8dd18a9e77ebc139656bf4d33e97fc7238cd11bf60e2b9b8666c6",
+    "fence_pve.py.in": "a3a2501518ed11054e8bdfbaa61e76326d514cdcf3a6ca98b0607a5738ca2b79",
+    "README.licence": "037db72231df986409d2760fdc80044eebecd8ffb2d7b8d9e66d168dd70ed932",
+    "COPYRIGHT": "d8d41c8ad9b8aaf7114833eb5a70cdef81377597185e64d24a6e11f54cad42ec"
+  }
+}

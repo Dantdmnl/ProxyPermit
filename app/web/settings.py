@@ -14,12 +14,14 @@ from pathlib import Path
 import pyotp
 import segno
 from flask import Blueprint, jsonify, render_template, request, session
+from ..core.management_tls import status as management_tls_status
+from ..core.management_https import available as https_control_available
 from werkzeug.security import generate_password_hash
 
 from ..core.accounts import ROLES, account_role, admin_count, consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
 from ..core.access_safety import read_profile
-from ..core import cluster
+from ..core import cluster, cluster_setup
 from ..core.ha import HA_SETUP_ENV, HA_SETUP_REQUEST, HA_SETUP_RESULT, ha_firewall_rules, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from ..core.tinyproxy import ConfigError, atomic_write
 from .proxy import activation_supported, ha_enabled, has_pending_changes, managed_ha
@@ -83,6 +85,11 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         response.headers['Cache-Control'] = 'no-store'
         return response
 
+    @settings.get('/api/settings/cluster-readiness')
+    @requires_auth
+    def cluster_readiness():
+        return jsonify(cluster_setup.read_readiness())
+
     @settings.get('/settings')
     def page():
         path, _ = paths()
@@ -96,8 +103,11 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         if not can_admin:
             accounts = {actor: accounts[actor]} if actor in accounts else {}
         return render_template('settings.html', access_safety=read_profile(), actor=actor, accounts=accounts, account_roles={name: account_role(account) for name, account in accounts.items()},
+                               management_tls=management_tls_status(),
+                               https_control=bool(can_admin and secure_access() and https_control_available()),
                                editable=bool(path and secure_access() and os.access(path.parent, os.W_OK)),
                                ha_enabled=ha_enabled(), managed_ha=managed_ha(),
+                               cluster_reserved=cluster.reserved(),
                                ha_policy_role=os.getenv('PROXYPERMIT_HA_NODE') if managed_ha() and secure_access() and activation_supported() else None,
                                ha_policy_csrf=session.setdefault('proxy_csrf', secrets.token_urlsafe(32)) if managed_ha() else None,
                                ha_retire_available=bool(can_admin and path and secure_access() and ha_retirement_available()),

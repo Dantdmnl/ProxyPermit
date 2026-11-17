@@ -3635,6 +3635,9 @@ def reauthenticate_admin_change(data):
 
 app.extensions['has_permission'] = lambda permission: permits(current_role(), permission)
 app.extensions['reauthenticate_admin_change'] = reauthenticate_admin_change
+from .https_settings import register_https_settings
+register_https_settings(app, requires_auth, lambda: (Path(AUTH_ACCOUNTS_FILE) if AUTH_ACCOUNTS_FILE else None,
+                                                   Path(SESSION_STATE_FILE)), _audit_event)
 register_i18n(app)
 app.before_request(protect_browser_mutations)
 app.before_request(enforce_browser_permissions)

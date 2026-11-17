@@ -21,9 +21,13 @@ class ProxyApiTests(unittest.TestCase):
         self.environment.start()
         self.auth = patch.object(main, 'ENABLE_AUTH', False)
         self.auth.start()
+        self.certificate_state = patch('app.web.ha_replication.CERTIFICATE_TRANSITION',
+                                       self.config.with_name('ha-certificate-transition.json'))
+        self.certificate_state.start()
         self.client = main.app.test_client()
 
     def tearDown(self):
+        self.certificate_state.stop()
         self.auth.stop()
         self.environment.stop()
         self.temp.cleanup()
@@ -318,6 +322,14 @@ class ProxyApiTests(unittest.TestCase):
             import json
             invitation = json.loads(issued.get_json()['code'])
             token = {'Authorization': 'Bearer ' + invitation['key']}
+            import time
+            after_expiry = time.time() + 601
+            with patch('app.web.proxy.time.time', return_value=after_expiry):
+                self.assertEqual(self.client.post('/internal/ha/enroll', headers=token).status_code, 403)
+            issued = self.client.post('/api/proxy/ha-replication/invite', headers=headers, json={})
+            invitation = json.loads(issued.get_json()['code'])
+            self.assertEqual(self.client.post('/internal/ha/enroll', headers=token).status_code, 403)
+            token = {'Authorization': 'Bearer ' + invitation['key']}
             self.assertEqual(self.client.get('/internal/ha/policy', headers=token).status_code, 403)
             from concurrent.futures import ThreadPoolExecutor
             from threading import Barrier
@@ -333,7 +345,9 @@ class ProxyApiTests(unittest.TestCase):
             peer = {'Authorization': 'Bearer ' + enrolled.get_json()['key']}
             self.assertEqual(self.client.post('/internal/ha/enroll', headers=token).status_code, 403)
             self.assertEqual(self.client.get('/internal/ha/policy', headers=peer).get_json()['filters'], '*.example.com\n')
-            self.assertEqual(self.client.post('/api/proxy/ha-replication/disconnect', headers=headers, json={}).status_code, 200)
+            with patch.dict(main.app.extensions, {'reauthenticate_admin_change': lambda _data: None}):
+                self.assertEqual(self.client.post('/api/proxy/ha-replication/disconnect', headers=headers,
+                                                 json={'confirmed': True}).status_code, 200)
             self.assertEqual(self.client.get('/internal/ha/policy', headers=peer).status_code, 403)
 
     def test_standalone_status_does_not_inspect_peers(self):

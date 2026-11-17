@@ -67,6 +67,7 @@
                             <button type="button" class="button button-secondary" onclick="downloadLogs()">{{ _('💾 Download pagina') }}</button>
                         </div>
                         <label><input type="checkbox" id="logHealthChecks" onchange="resetLogPagination(); refreshLogs('page')"> {{ _('Gezondheidscontroles tonen') }}</label>
+                        <label><input type="checkbox" id="logRoutineMessages" onchange="resetLogPagination(); refreshLogs('page')"> {{ _('Show routine and repeated messages') }}</label>
                         <div id="logSummary" class="log-summary"></div>
                     </details>
                 </div>

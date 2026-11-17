@@ -30,7 +30,7 @@ from app.core.files import file_lock, access_acl, restore_access_acl
 from app.core import cluster
 from app.core.ha import ha_firewall_rules, ha_topology
 from scripts.deploy.install_terminal import InstallTerminal
-from scripts.deploy.logging_policy import MARKER as LOGGING_MARKER, assets as logging_assets
+from scripts.deploy.logging_policy import MARKER as LOGGING_MARKER, assets as logging_assets, write_asset as write_logging_asset
 from scripts.deploy.cluster_status import MARKER as CLUSTER_STATUS_MARKER, assets as cluster_status_assets
 
 KEEPALIVED_CONFIG = Path('/etc/keepalived/keepalived.conf')
@@ -592,6 +592,8 @@ Wants=tinyproxy.service
 
 [Service]
 Type=simple
+KillMode=mixed
+TimeoutStopSec=20
 {account}WorkingDirectory={release}
 EnvironmentFile=/etc/proxypermit/.env
 {binding}Environment=PYTHONDONTWRITEBYTECODE=1
@@ -793,7 +795,8 @@ def _apply_locked(plan, args, frozen=False):
         ignore = shutil.ignore_patterns(
             '.git', '.venv', 'venv', '__pycache__', '.demo', '.env', '.env.*', '.test-data',
             'accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-maintenance.json', 'cluster-protection.json', 'enroll-*.json', 'node_modules',
-            '*.key', '*.pem', '*.crt', '*.log', '*.log.*', '*.jsonl', '*.journal*', 'ha-*.json',
+            '*.key', '*.pem', '*.crt', '*.p12', '*.pfx', 'authkey', 'proxmox-fencing.json', 'cluster-plan.json', 'cluster-bootstrap.json', 'nssdb', 'proxypermit-cluster-bootstrap',
+            '*.log', '*.log.*', '*.jsonl', '*.journal*', 'ha-*.json',
             'session-state.json', 'nonce-store.json', 'nonces.json', 'whitelist_entry_log.json', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex')
         if managed or HA_RETIRE_UNIT.is_file():
             for directory in (base, *base.parents, release.parent):
@@ -966,6 +969,14 @@ def _apply_locked(plan, args, frozen=False):
             atomic_write(HA_SETUP_UNIT, ha_setup_unit_text(str(base)), 0o644)
             atomic_write(HA_SETUP_SUDOERS, HA_SETUP_RULE, 0o440)
             run('visudo', '-cf', str(HA_SETUP_SUDOERS))
+            from scripts.deploy.management_tls_web import assets as https_web_assets, SUDOERS as https_sudoers, MARKER as https_marker
+            for path, content in https_web_assets(base).items():
+                transaction.track(path)
+                if path.is_symlink() or (path.exists() and path.read_text(encoding='utf-8') != content
+                        and not path.read_text(encoding='utf-8').startswith(https_marker)):
+                    raise ValueError('An existing HTTPS control asset requires OS review.')
+                atomic_write(path, content, 0o440 if path == https_sudoers else 0o644)
+            run('visudo', '-cf', str(https_sudoers))
         # Load all migrated values via the same dotenv parser as the application,
         # and import as the service user before changing the running service.
         smoke = 'from dotenv import load_dotenv; load_dotenv("/etc/proxypermit/.env", override=True); import wsgi; import os; from app.runtime.server import build_command; build_command(os.getenv("APP_SERVER", "gunicorn"), os.environ)'
@@ -982,7 +993,7 @@ def _apply_locked(plan, args, frozen=False):
         temporary_link.symlink_to(release, target_is_directory=True)
         os.replace(temporary_link, current)
         for path, content in log_assets.items():
-            atomic_write(path, content, 0o644)
+            write_logging_asset(path, content)
         for path, content in cluster_assets.items():
             atomic_write(path, content, 0o644)
         run('systemctl', 'daemon-reload')
@@ -1098,6 +1109,20 @@ def build_uninstall_plan(root, install_dir):
         target = Path(root).resolve() / path.as_posix().lstrip('/')
         if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
             paths.append(target)
+    from scripts.deploy.proxmox_fence import TARGET as fencing_target, content as fencing_content
+    target = Path(root).resolve() / fencing_target.as_posix().lstrip('/')
+    if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == fencing_content():
+        paths.append(target)
+    from scripts.deploy.management_tls import assets as management_tls_assets
+    for path, content in management_tls_assets(Path(install_dir) / 'current').items():
+        target = Path(root).resolve() / path.as_posix().lstrip('/')
+        if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
+            paths.append(target)
+    from scripts.deploy.management_tls_web import assets as https_web_assets
+    for path, content in https_web_assets(Path(install_dir)).items():
+        target = Path(root).resolve() / path.as_posix().lstrip('/')
+        if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
+            paths.append(target)
     return {
         'action': 'uninstall', 'mode': installed.get('mode'), 'installDir': install_dir,
         'service': 'proxypermit.service', 'paths': [str(path) for path in paths],
@@ -1126,6 +1151,10 @@ def uninstall(install_dir):
         if str(HA_CERT_RECOVERY_UNIT) in plan['paths']:
             previous['auxiliary'] = {HA_CERT_RECOVERY_UNIT.name: service_state(HA_CERT_RECOVERY_UNIT.name)}
         for name in ('proxypermit-cluster-status.timer', 'proxypermit-cluster-status.service'):
+            if str(Path('/etc/systemd/system') / name) in plan['paths']:
+                previous.setdefault('auxiliary', {})[name] = service_state(name)
+        for name in ('proxypermit-management-tls-renew.timer', 'proxypermit-management-tls-renew.service',
+                     'proxypermit-management-tls-recover.service', 'proxypermit-management-tls-web.service'):
             if str(Path('/etc/systemd/system') / name) in plan['paths']:
                 previous.setdefault('auxiliary', {})[name] = service_state(name)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
@@ -1237,6 +1266,8 @@ def rollback_install(base, stamp, execute=False):
     require_linux_root('Recovery')
     with maintenance_lock():
         cluster.require_independent_control('restoring an installation backup')
+        from scripts.deploy.management_tls import rollback_values, rewrite_environment, write as tls_write, ENVIRONMENT as tls_environment
+        tls_values = rollback_values(entries)
         if state.get('ufw') and state.get('ufwRuleHashes') != ufw_rule_fingerprints():
             raise ValueError('UFW rules changed since installation. Review the firewall backup before restoring.')
         subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
@@ -1248,6 +1279,9 @@ def rollback_install(base, stamp, execute=False):
         transaction = object.__new__(Transaction)
         transaction.directory, transaction.entries = directory, entries
         transaction.restore()
+        if tls_values:
+            tls_write(tls_environment, rewrite_environment(tls_environment.read_text(encoding='utf-8'), tls_values),
+                      0o640, tls_environment.stat().st_gid)
         run('systemctl', 'daemon-reload')
         if state.get('ufw'):
             reload_ufw()

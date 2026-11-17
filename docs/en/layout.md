@@ -16,7 +16,7 @@
 | `requirements/` | Runtime, Granian, and development dependencies |
 | `tests/` | Python, JavaScript, Playwright, and fixtures |
 | `docs/nl/`, `docs/en/` | Dutch and English operator documentation |
-| `legacy/`, `docs/legacy/` | Existing HA synchronization tools and historical documentation |
+| `legacy/` | Synchronization and recovery tools for existing HA deployments |
 
 Run commands from the repository root. `bash install.sh` starts the installer.
 Use `--plan` for JSON output and run it with `sudo` if existing settings require

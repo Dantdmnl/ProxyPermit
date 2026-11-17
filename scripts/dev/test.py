@@ -19,6 +19,8 @@ def main():
             # The app loads .env without overriding these isolated settings.
             os.environ.update(FLASK_SECRET_KEY='isolated-unit-tests-only', ENABLE_AUTH='false', ENABLE_RADIUS='false',
                               AUTH_ACCOUNTS_FILE='',
+                              MANAGER_SCHEME='http', GUNICORN_USE_TLS='false',
+                              MANAGER_CERT='', MANAGER_KEY='', SESSION_COOKIE_SECURE='false',
                               PROXYPERMIT_ACCESS_SAFETY_FILE=str(state / 'access-safety.json'),
                               DEPLOYMENT_MODE='standalone', DEMO_MODE='true',
                               WHITELIST_PATH=str(state / 'filter.txt'),

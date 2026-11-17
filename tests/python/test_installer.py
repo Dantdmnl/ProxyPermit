@@ -21,6 +21,13 @@ class InstallerTests(unittest.TestCase):
         reservation = patch.object(installer.cluster, 'reserved', return_value=False)
         reservation.start()
         self.addCleanup(reservation.stop)
+        # Rollback fixtures must not discover a real node's managed TLS profile.
+        from scripts.deploy import management_tls
+        tls_state = tempfile.TemporaryDirectory()
+        self.addCleanup(tls_state.cleanup)
+        tls_folder = patch.object(management_tls, 'FOLDER', Path(tls_state.name) / 'management-tls')
+        tls_folder.start()
+        self.addCleanup(tls_folder.stop)
 
     @unittest.skipIf(os.name == 'nt', 'Directory descriptors require POSIX')
     def test_native_draft_tree_is_validated_without_privileged_recursive_migration(self):

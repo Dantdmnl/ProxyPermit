@@ -53,6 +53,15 @@ was, een regel beschadigd was of een scanlimiet is bereikt. Kies een kortere
 periode en controleer de rechten op de bronnen. Het begrensde aantal resultaten
 is niet het totale aantal records in alle bewaarde geschiedenis.
 
+De logweergave bundelt herhaalde meldingen van clients die het certificaat niet
+vertrouwen per minuut en toont het aantal. Succesvolle start- en stopmeldingen
+van de periodieke clusterstatuscontrole zijn standaard verborgen. Andere TLS-fouten
+en mislukte statuscontroles blijven zichtbaar. Kies **Weergave en export →
+Routineberichten en herhalingen tonen**, of zoek op tekst, om de afzonderlijke
+records te zien. Dit verandert alleen de weergave: journalrecords worden niet
+verwijderd en certificaatcontrole blijft ingeschakeld. Een paginadownload volgt
+de huidige weergave; schakel zo nodig eerst de afzonderlijke records in.
+
 De lezer ondersteunt ook het standaardbestand
 `/var/log/tinyproxy/tinyproxy.log` met genummerde en gzip-archieven. Bestandslogs
 hebben hun eigen logrotatebeleid van de beheerder of het pakket; de

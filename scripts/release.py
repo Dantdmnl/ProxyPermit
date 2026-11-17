@@ -23,6 +23,18 @@ def validate_version(version):
     return version
 
 
+def version_order(version):
+    """Compare supported stable/dev versions using semantic numeric ordering."""
+    validate_version(version)
+    base, _, development = version.partition('-dev.')
+    return (*map(int, base.split('.')), 0 if development else 1, int(development or 0))
+
+
+def publication_flags(version):
+    validate_version(version)
+    return ['--prerelease', '--latest=false'] if '-dev.' in version else []
+
+
 def current_version(root=ROOT):
     return validate_version((Path(root) / 'VERSION').read_text(encoding='utf-8').strip())
 
@@ -53,11 +65,7 @@ def prepare(version, root=ROOT, date=None, dry_run=False):
     root = Path(root)
     validate_version(version)
     current = current_version(root)
-    if '-dev.' in version:
-        raise ValueError('A release requires MAJOR.MINOR.PATCH.')
-    before = tuple(map(int, current.split('-')[0].split('.')))
-    after = tuple(map(int, version.split('.')))
-    if after < before or (after == before and '-dev.' not in current):
+    if version_order(version) <= version_order(current):
         raise ValueError('A release must be newer than the current version.')
     changelog = (root / 'CHANGELOG.md').read_text(encoding='utf-8')
     marker = '## [Unreleased]\n'
@@ -111,10 +119,10 @@ def archive(root=ROOT, output=None):
     with tarfile.open(target, 'w:gz') as bundle:
         for path in sorted(files):
             relative = path.relative_to(root)
-            if not path.is_file() or path.is_symlink() or '__pycache__' in relative.parts or path.suffix in ('.pyc', '.log', '.key', '.pem', '.crt'):
+            if not path.is_file() or path.is_symlink() or '__pycache__' in relative.parts or path.suffix in ('.pyc', '.log', '.key', '.pem', '.crt', '.p12', '.pfx'):
                 continue
             if any(part in ('.test-data', '.demo', '.venv', '.cache', 'node_modules', 'backups',
-                            'manual_backups', '.backups', '.proxypermit-config-backups', 'ha-tls') for part in relative.parts):
+                            'manual_backups', '.backups', '.proxypermit-config-backups', 'ha-tls', 'nssdb', 'proxypermit-cluster-bootstrap') for part in relative.parts):
                 continue
             if '.log.' in path.name or path.suffix in ('.jsonl', '.journal') or path.name.endswith('.journal~'):
                 continue
@@ -123,7 +131,8 @@ def archive(root=ROOT, output=None):
                 continue
             if path.name.startswith('.env') and path.name != '.env.example':
                 continue
-            if path.name in ('accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-protection.json', 'cluster-maintenance.json') or path.match('enroll-*.json'):
+            if path.name in ('accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-protection.json', 'cluster-maintenance.json',
+                             'cluster-plan.json', 'cluster-bootstrap.json', 'proxmox-fencing.json', 'authkey') or path.match('enroll-*.json'):
                 continue
             if 'generated' in path.name:
                 continue
@@ -201,10 +210,10 @@ def verify_release_artifact(directory, version, changelog):
 
 
 def publish(tag, run_id, repository, dry_run=False):
-    if (not re.fullmatch(r'v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', tag)
+    if (not tag.startswith('v') or not VERSION_RE.fullmatch(tag[1:])
             or not re.fullmatch(r'[1-9]\d*', run_id)
             or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository)):
-        raise ValueError('Choose a stable vMAJOR.MINOR.PATCH tag, a CI run ID and an owner/repository.')
+        raise ValueError('Choose a vMAJOR.MINOR.PATCH[-dev.N] tag, a CI run ID and an owner/repository.')
     version = tag[1:]
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=ROOT)
@@ -222,6 +231,10 @@ def publish(tag, run_id, repository, dry_run=False):
         work = Path(temporary)
         (work / 'CHANGELOG.md').write_bytes(changelog)
         notes = release_notes(version, work)
+        if publication_flags(version):
+            notes = ('> **Pre-release for testing.** Use a disposable or recoverable test deployment. '
+                     'This build does not replace the stable release. Review the known limitations below; '
+                     'experimental HA provisioning is not production-ready.\n\n' + notes)
         notes += '\n[English documentation](https://dantdmnl.github.io/ProxyPermit/en/) · [Nederlandse documentatie](https://dantdmnl.github.io/ProxyPermit/nl/)\n'
         notes += '\nFor an existing installation, review the upgrade plan first. Pass your existing `--install-dir` if it differs from the default.\n'
         notes += '\nOS-prepared quorum/fencing clusters require [protected-cluster maintenance](https://dantdmnl.github.io/ProxyPermit/en/administration/#maintenance-on-an-os-protected-cluster) instead of the ordinary upgrade commands below.\n'
@@ -244,7 +257,8 @@ def publish(tag, run_id, repository, dry_run=False):
         note_file = work / 'notes.md'
         note_file.write_text(notes, encoding='utf-8')
         subprocess.run(['gh', 'release', 'create', tag, str(bundle), str(checksum), '--repo', repository,
-                        '--verify-tag', '--title', f'ProxyPermit {tag}', '--notes-file', str(note_file)], check=True, cwd=ROOT)
+                        '--verify-tag', '--title', f'ProxyPermit {tag}', '--notes-file', str(note_file),
+                        *publication_flags(version)], check=True, cwd=ROOT)
 
 
 def main(argv=None):
@@ -272,10 +286,8 @@ def main(argv=None):
             version = sync(check=args.command == 'check')
             if args.command == 'check' and args.tag and args.tag != 'v' + version:
                 raise ValueError('Git tag must equal v' + version)
-            if args.command == 'check' and args.tag and '-dev.' not in version:
-                changelog = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
-                if not re.search(r'^## \[' + re.escape(version) + r'\] - \d{4}-\d{2}-\d{2}$', changelog, re.M):
-                    raise ValueError('A stable release tag requires dated release notes. Run the release preparation first.')
+            if args.command == 'check' and args.tag:
+                release_notes(version)
             print('Version synchronized: ' + version)
         elif args.command == 'prepare':
             print(json.dumps({'version': args.version, 'files': prepare(args.version, dry_run=args.dry_run), 'dryRun': args.dry_run}))

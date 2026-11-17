@@ -2,7 +2,8 @@
 import json
 import unittest
 
-from app.core.cluster_evidence import summarize, xml
+from app.core.cluster_evidence import summarize, xml, fencing_coverage
+from xml.etree import ElementTree as ET
 
 CIB = '''<cib><configuration><nodes><node id="1" uname="node-a"/><node id="2" uname="node-b"/></nodes><crm_config><cluster_property_set>
 <nvpair name="stonith-enabled" value="true"/>
@@ -62,6 +63,47 @@ class ClusterEvidenceTests(unittest.TestCase):
         monitor = MONITOR.replace('nodes_running_on="1"', 'nodes_running_on="2"')
         self.assertEqual(self.evidence(monitor=monitor)['state'], 'unsafe')
         self.assertEqual(self.evidence(node='node-b', local=True)['state'], 'unsafe')
+
+    def test_same_guest_cannot_cover_two_nodes_through_separate_fencers(self):
+        root = xml(CIB)
+        resources = root.find('configuration/resources')
+        first = resources.find("primitive[@id='fencer']")
+        first.find("instance_attributes/nvpair[@name='pcmk_host_list']").set('value', 'node-a')
+        first.find("instance_attributes/nvpair[@name='pcmk_host_map']").set('value', 'node-a:vm-a')
+        second = ET.fromstring(ET.tostring(first))
+        second.set('id', 'second-fencer')
+        second.find("instance_attributes/nvpair[@name='pcmk_host_list']").set('value', 'node-b')
+        second.find("instance_attributes/nvpair[@name='pcmk_host_map']").set('value', 'node-b:vm-a')
+        resources.append(second)
+        self.assertEqual(fencing_coverage([first, second], {'fencer', 'second-fencer'}, {'node-a', 'node-b'}),
+                         (False, False))
+        second.find("instance_attributes/nvpair[@name='pcmk_host_map']").set('value', 'node-b:vm-b')
+        self.assertEqual(fencing_coverage([first, second], {'fencer', 'second-fencer'}, {'node-a', 'node-b'}),
+                         (True, True))
+
+    def test_reported_agent_must_match_and_disabled_or_rule_driven_devices_are_not_proof(self):
+        wrong = MONITOR.replace('resource_agent="stonith:fence_xvm"', 'resource_agent="stonith:fence_pve"')
+        self.assertEqual(self.evidence(monitor=wrong)['state'], 'degraded')
+        for metadata in ('<meta_attributes><nvpair name="target-role" value="Stopped"/></meta_attributes>',
+                         '<meta_attributes><nvpair name="is-managed" value="false"/></meta_attributes>',
+                         '<meta_attributes><rule/></meta_attributes>'):
+            cib = CIB.replace('<primitive id="fencer" class="stonith" type="fence_xvm">',
+                              '<primitive id="fencer" class="stonith" type="fence_xvm">' + metadata)
+            self.assertFalse(self.evidence(cib=cib)['fencingConfigured'])
+
+    def test_proxmox_fencing_requires_verified_tls_and_explicit_numeric_targets(self):
+        cib = CIB.replace('fence_xvm', 'fence_pve').replace('node-a:vm-a;node-b:vm-b', 'node-a:101;node-b:102')
+        cib = cib.replace('<instance_attributes>', '<instance_attributes>'
+            '<nvpair name="ipaddr" value="pve.example.invalid"/><nvpair name="ssl" value="true"/>', 1)
+        monitor = MONITOR.replace('fence_xvm', 'fence_pve')
+        self.assertEqual(self.evidence(cib=cib, monitor=monitor)['state'], 'protected')
+        self.assertEqual(self.evidence(cib=cib.replace('fence_pve', 'fence_proxypermit_pve'),
+                                      monitor=monitor.replace('fence_pve', 'fence_proxypermit_pve'))['state'], 'protected')
+        for invalid in (cib.replace('name="ssl" value="true"', 'name="ssl" value="false"'),
+                        cib.replace('name="ssl"', 'name="ssl_insecure"'),
+                        cib.replace('node-b:102', 'node-b:named-guest'),
+                        cib.replace('name="ipaddr"', 'name="unrecognized_endpoint"')):
+            self.assertFalse(self.evidence(cib=invalid, monitor=monitor)['fencingConfigured'])
 
     def test_stopped_and_unknown_resources_are_distinct(self):
         monitor = MONITOR.replace('nodes_running_on="1"', 'nodes_running_on="0"').replace('<node name="node-a"/>', '')

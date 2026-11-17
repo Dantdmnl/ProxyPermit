@@ -37,7 +37,6 @@ reach websites. Creating a console account does not configure a client device.
 - [Roadmap](planned-work.md) distinguishes available, experimental and planned capabilities.
 
 These pages follow `main`, including work that has not been released yet.
-Historical instructions are kept in the
-[archive](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
+For an older version, consult the documentation shipped with that release.
 
 [Users and roles](roles.md) explains which permissions each account needs.

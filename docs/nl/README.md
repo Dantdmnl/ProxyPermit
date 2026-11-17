@@ -39,7 +39,6 @@ niet automatisch in.
 - De [roadmap](vervolgwerk.md) maakt onderscheid tussen beschikbare, experimentele en geplande functies.
 
 Deze pagina's volgen `main`, inclusief werk dat nog niet is uitgebracht.
-Oude instructies staan in het
-[archief](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
+Gebruik voor een oudere versie de documentatie die bij die release hoort.
 
 [Gebruikers en rollen](rollen.md) legt uit welke rechten bij welk werk passen.

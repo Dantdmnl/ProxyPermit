@@ -2,96 +2,147 @@
 
 [Nederlands](../nl/vervolgwerk.md) · [Documentation](README.md)
 
-Where ProxyPermit is heading, what you can use today, and what still needs work.
-Updated on 15 November 2026 for **v1.3.0**. Priorities may change; there are no
-promised delivery dates. A checked item means that specific step was verified,
-not that every feature in its milestone is production-ready.
+Which improvements are coming, and what will they mean for administrators? The
+main development priority is HA with protection against unsafe takeover.
+Usability, HTTPS and logging are also areas of focus.
 
-## Available in v1.3.0
+Updated on 17 November 2026, using **v1.3.0** as the baseline for released
+features. There are no promised delivery dates, and the order may change.
 
-| Area | Status | What this means for you |
-| --- | --- | --- |
-| Two-node HA | Available | Keepalived provides VIP failover; B automatically receives policy published on A. Accounts and host settings stay local. |
-| Peer-key rotation | Available after upgrading both nodes | Rotate from A's interface with password confirmation and optional 2FA; B confirms the new key automatically. |
-| Internal HA certificate renewal | OS-administrator operation | Renew the pinned HA certificate through a staged handover and recovery record. This does not enable HTTPS on the management website. |
-| Connection-preserving filter reload | Opt-in | Tested with Tinyproxy 1.11.1 and 1.11.3. Other settings still require a restart. Reload remains disabled by default. |
-| Quorum, witness and fencing | Experimental integration | Tested on a separate KVM cluster. Initial setup still requires OS cluster administration; the normal HA wizard does not provision it. |
-| Protected-cluster maintenance | Experimental integration | Rolling app upgrades and recovery are verified on an OS-prepared cluster. Complete installation/removal and other platforms remain open. |
+**How to read this page:** a checked item is an implemented or experimentally
+verified development step. It may still be unreleased. Unchecked items describe
+remaining work. The [release notes](https://github.com/Dantdmnl/ProxyPermit/releases)
+identify what has shipped; the [verification report](verification.md) records
+technical test results and limitations.
 
-**Why does the interface say “Quorum and fencing are not configured”?**
-The normal HA setup configures Keepalived and policy synchronization. It does not
-yet configure a witness or fencing. The message is expected on those installations
-and does not mean policy synchronization is broken. Two-node VRRP alone cannot
-guarantee exclusive VIP ownership during a network partition.
+## What you can use today
 
-See [HA setup and its limits](high-availability.md#understand-failover-protection)
-before choosing a production deployment. Upgrading does not silently convert an
-existing HA installation to a quorum-managed cluster.
+The following capabilities are included in v1.3.0:
 
-## Next: guided split-brain protection
+| Capability | What it means for you |
+| --- | --- |
+| Two-node HA | Keepalived can move the shared virtual IP address (VIP) to the other node. Node A publishes filter rules and shared proxy settings; node B receives them automatically. Accounts and host settings stay local. |
+| Peer-key rotation | You can renew the key used between nodes from A's interface, with password confirmation and an authenticator code when 2FA is enabled. Both nodes must support the feature. |
+| Internal HA certificate renewal | An OS administrator can renew the synchronization connection's certificate through a controlled process. This is separate from HTTPS for the management website. |
+| Filter reload without dropping connections | Available as an opt-in for Tinyproxy 1.11.1 and 1.11.3. Other settings still require a restart; reload is disabled by default. |
 
-**Goal:** help an administrator provision and maintain a cluster that can stop
-or power off a node before allowing unsafe takeover.
+There is also an **experimental integration with a cluster configured in advance
+at OS level**, including protection status and maintenance one node at a time.
+The normal HA wizard does not yet configure that cluster for you.
 
-- [x] Test the Pacemaker/Corosync design with a TLS witness and restricted libvirt fencing.
-- [x] Verify hung proxies, leftover VIPs, asymmetric/full peer partitions, witness loss and unavailable fencing in separate VMs.
-- [x] Show expiring protection evidence without exposing cluster credentials to the web account.
-- [x] Verify exclusive rolling-maintenance reservations, peer takeover and explicit recovery after failure.
-- [ ] Add guided initial provisioning and joining, with clear witness and fencing prerequisites.
-- [ ] Add safe migration from an existing Keepalived-only installation and a reviewed recovery path.
-- [ ] Complete cluster-aware rollback, node retirement and uninstallation; preserve management access and remove only owned firewall rules.
-- [ ] Validate platform-specific fencing and narrowly scoped credentials for additional hypervisors and physical hosts.
-- [ ] Complete end-to-end recovery tests for stale nodes, interrupted setup and unavailable decision infrastructure.
+!!! warning "Ordinary HA does not yet rule out split-brain"
+    During a network partition, both nodes can believe they should be active.
+    This is called split-brain. Keepalived with two nodes alone cannot rule it
+    out. Upgrading does not enable additional protection automatically. Read
+    [HA setup and its limits](high-availability.md#understand-failover-protection)
+    before choosing a production deployment.
 
-**Before calling this ready:** demonstrate exclusive VIP ownership within the
-documented failure model, withhold takeover when required fencing cannot be
-confirmed, and keep B read-only for policy after traffic failover. A witness on
-the same physical host does not provide an independent failure domain.
+## Available for testing in v1.4.0-dev.1
 
-## Next: complete reload and credential recovery testing
+- **Safer HA administration:** revoking pairing requires the administrator password again and a fresh authenticator code when 2FA is enabled. Protection status checks more strictly whether the cluster evidence is trustworthy.
+- **Protected HA preparation:** system administrators can check prerequisites. The experimental cluster integration has been extended, but complete setup through the web interface is still missing.
+- **HTTPS setup through the web interface:** system administrators can prepare and renew certificates and enable HTTPS. HTTPS is not yet the installation default. See [Management HTTPS](management-https.md).
 
-**Goal:** make routine policy changes less disruptive without weakening recovery
-or peer authentication.
+These capabilities are included in the [v1.4.0-dev.1 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1),
+not in stable v1.3.0. Use a disposable or recoverable test deployment for the
+prerelease and the guide that corresponds to your installed version.
 
-- [x] Preserve continuous HTTP transfers and CONNECT tunnels during supported filter reloads.
-- [x] Verify automatic A-to-B application, publication ordering and native read permissions without exposing management secrets.
-- [x] Verify real peer-key rotation and pinned certificate renewal on the HA pair, including old-key/pin removal.
-- [x] Reject wrong or expired certificates and certificate changes between handshakes before sending the peer key.
-- [x] Test isolated storage failures and lost commit replies.
-- [ ] Finish VM power-loss/restart tests in every key, certificate and activation phase.
-- [ ] Complete full-disk, permission, interrupted-transfer and concurrent-publication regression coverage.
-- [ ] Complete revocation, re-pairing and one-time invitation lifecycle acceptance on both nodes.
-- [ ] Review actor attribution and failure reporting across every credential workflow.
-- [ ] Enable reload by default only after the remaining acceptance checks pass.
+## HA with protection against unsafe takeover
 
-Existing tunnels remain open during a supported reload: a new filter rule does
-not retroactively close them. See [Reload configuration](administration.md#optional-filter-reload)
-and the [verification report](verification.md) for tested scenarios and limits.
+**What you gain:** the other node takes over traffic only when it is safe to do
+so. Setup guidance helps identify missing components and required permissions.
 
-## After that: HTTPS management by default
+An independent **witness** helps decide which node may continue. Together with
+the nodes, it enables a majority decision: **quorum**. **Fencing** can
+power off an unreachable or frozen node before the other node receives the VIP.
+This requires suitable infrastructure and limited access rights on the chosen
+platform.
 
-**Goal:** offer a secure management URL on fresh installations and an explicit,
-recoverable migration for existing HTTP deployments.
+- [x] Provide an experimental cluster integration with quorum, a secure witness connection and fencing for configuration by the OS administrator.
+- [x] Show protection status that stops reporting healthy when its evidence becomes stale.
+- [x] Check prerequisites before activation and support maintenance one node at a time on a preconfigured cluster.
+- [ ] Guide initial setup and node joining through the web interface, explaining the required hosts, network access and permissions.
+- [ ] Help existing HA installations migrate in a controlled way, with an understandable recovery procedure if migration is interrupted.
+- [ ] Complete rollback, node retirement and uninstallation for protected clusters while preserving management access.
+- [ ] Support additional virtualization platforms and physical hosts, documenting each platform's capabilities and limitations.
+- [ ] Extend recovery checks for power loss, network partitions and nodes returning after a long absence before offering the full setup as production-ready.
 
-- [ ] Generate a unique self-signed certificate and protected private key per node; display the fingerprint through the trusted installer/console.
-- [ ] Support administrator-provided certificates and internal CAs; assess optional ACME where appropriate.
-- [ ] Add expiry warnings and controlled renewal, separate from HA replication pins.
-- [ ] Preserve anti-lockout access during migration; validate TLS before activation and provide rollback.
-- [ ] Apply HSTS only to verified HTTPS responses; review secure cookies, redirects and server-identification headers.
-- [ ] Test installation, upgrade, trust, renewal and recovery on standalone and HA nodes in NL/EN.
+B remains read-only for shared proxy policy after traffic takeover. A witness
+should not depend on the same point of failure as the proxy nodes. See the
+[HA guide](high-availability.md) for prerequisites and the
+[verification report](verification.md) for current test coverage.
 
-## Later: account replication and additional authentication
+## Faster, clearer logs
 
-- [ ] Design optional account replication with explicit handling of existing usernames, password changes, 2FA, session revocation and local recovery accounts. Never silently overwrite a local account.
-- [ ] Assess whether request-level HMAC-SHA256 adds useful protection beyond pinned TLS. Require replay and clock-skew tests before adopting it.
+**What you gain:** investigate problems quickly, without long waits or having
+to read the same messages repeatedly.
 
-These are design topics, not currently supported features. HA policy replication
-does not replicate accounts. HMAC would not replace TLS, key rotation, quorum or fencing.
+- [ ] Make the log window open and respond faster, including with a long retained history.
+- [ ] Load new records without repeatedly fetching the whole list or unnecessarily changing your reading position.
+- [ ] Make searching and filtering by source, level and date fast and reliable, including archives within the retention period.
+- [ ] Present repeated certificate-trust messages compactly, with a count, time range and explanation of what you can do. Keep raw records available for investigation.
+- [ ] Clearly distinguish important TLS failures from repeated browser messages, so expired certificates or unsafe connections stand out.
+- [ ] Clearly indicate when the connection is lost or the displayed logs are no longer current.
 
-## Follow progress or contribute
+Role checks, redaction and retention limits remain in place: defaults are 30 days
+for management/audit logs and 7 days for Tinyproxy/traffic logs. Certificate
+verification will not be disabled to reduce messages. See [Logging](logging.md)
+for the current capabilities.
 
-Read the [release notes](https://github.com/Dantdmnl/ProxyPermit/releases) for
-shipped changes and [verification](verification.md) for evidence and remaining
-limits. Use [GitHub issues](https://github.com/Dantdmnl/ProxyPermit/issues) to report
-reproducible problems or discuss a planned feature. Include the version and
-deployment type; never include pairing codes, passwords, keys or private logs.
+## HTTPS management by default
+
+**What you gain:** a secure management address on new installations and
+certificate administration without needing the terminal for every operation.
+
+- [x] Offer HTTPS with a certificate authority (CA) for each node in the development version, including controlled activation, expiry warnings, renewal and recovery.
+- [x] Let system administrators perform these certificate operations through the web interface, with password confirmation and optional 2FA.
+- [ ] Make HTTPS the default for new installations and guide existing HTTP installations through migration.
+- [ ] Support administrator-provided certificates and internal CAs; investigate automated issuance through ACME where appropriate.
+- [ ] Apply HTTPS security headers, including HSTS, carefully and align cookies and redirects with them.
+- [ ] Complete the installation, upgrade and recovery workflow for standalone nodes and HA deployments.
+
+A locally issued certificate must first be trusted on the computers used to
+access the management interface. See [Management HTTPS](management-https.md).
+
+## Reliable policy changes and credential renewal
+
+**What you gain:** filter rules and shared settings reach the other node
+reliably. Key and certificate changes have a clear outcome, even when the
+connection drops during an operation.
+
+- [x] Support automatic policy synchronization and optional filter reload that preserves existing connections.
+- [x] Renew peer keys and internal HA certificates through a controlled process, then remove trust in the previous keys or certificates.
+- [x] Further secure revocation and re-pairing in the development version, including protection against invitation reuse.
+- [ ] Extend recovery checks for power loss, full disks, interrupted transfers and simultaneous changes.
+- [ ] Clearly record who performed each administrative operation and whether it completed or requires recovery.
+- [ ] Enable filter reload by default only after the remaining reliability checks are complete.
+
+Existing connections stay open during reload. New filter rules therefore do
+not close existing tunnels retroactively. See [Filter reload](administration.md#optional-filter-reload).
+
+## Clearer management through the shared address
+
+**What you gain:** after an HA takeover, know which node you are managing and
+why you may need to sign in again.
+
+- [ ] Show a recognizable node label before sign-in without disclosing internal network details or accounts.
+- [ ] Clearly distinguish fixed node identity from current VIP ownership after sign-in.
+- [ ] Explain node changes and preserve unsaved input where safe, without transferring passwords or 2FA codes.
+- [ ] Complete the sign-in and session experience during takeover for different local accounts, optional 2FA and mobile use.
+
+Accounts and sessions are currently local. Traffic takeover does not
+automatically make an account available on the other node.
+
+## Topics for later investigation
+
+These are design topics; the eventual implementation has not been decided.
+
+- [ ] **Optional account replication:** manage users across nodes, with explicit choices for existing usernames and preservation of local recovery accounts. Passwords and 2FA settings must not be silently overwritten.
+- [ ] **Additional message signing:** assess whether it demonstrably strengthens the existing secure synchronization and what it means for key management and recovery.
+
+## Discuss or contribute
+
+Report a reproducible problem or discuss a proposal through
+[GitHub issues](https://github.com/Dantdmnl/ProxyPermit/issues). Describe what you
+are trying to do, your version and whether you use standalone or HA deployment.
+Do not share passwords, pairing codes, keys or unredacted private logs.

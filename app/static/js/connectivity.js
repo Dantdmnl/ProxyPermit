@@ -103,6 +103,18 @@
     document.addEventListener('DOMContentLoaded', () => {
         notice = document.getElementById('connectivityNotice');
         if (!notice) return;
+        window.addEventListener('proxypermit:https-transition', event => {
+            try {
+                const url = new URL(event.detail.url);
+                const currentPort = location.port || (location.protocol === 'http:' ? '80' : '443');
+                if (url.protocol !== 'https:' || url.hostname !== location.hostname
+                        || (url.port || '443') !== currentPort || url.pathname !== '/settings'
+                        || url.username || url.password || url.search || url.hash) return;
+                const link = notice.querySelector('[data-https-transition]');
+                link.href = url.href;
+                link.hidden = false;
+            } catch { /* Only a same-host, same-port HTTPS upgrade is accepted. */ }
+        });
         notice.querySelector('[data-connection-retry]').addEventListener('click', check);
         new MutationObserver(() => {
             if ('visible' in notice.dataset) show();

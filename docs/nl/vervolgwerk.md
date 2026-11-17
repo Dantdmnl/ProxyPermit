@@ -2,96 +2,149 @@
 
 [English](../en/planned-work.md) · [Documentatie](README.md)
 
-Waar ProxyPermit naartoe werkt, wat je nu kunt gebruiken en wat nog moet gebeuren.
-Bijgewerkt op 15 november 2026 voor **v1.3.0**. Prioriteiten kunnen veranderen;
-er zijn geen toegezegde opleverdatums. Een vinkje betekent dat die specifieke
-stap is gecontroleerd, niet dat het hele onderdeel klaar is voor productie.
+Welke verbeteringen komen eraan en wat heb je daar als beheerder aan? De
+belangrijkste ontwikkelprioriteit is HA met bescherming tegen onveilige overname.
+Ook gebruiksgemak, HTTPS en logging krijgen aandacht.
 
-## Beschikbaar in v1.3.0
+Bijgewerkt op 17 november 2026, met **v1.3.0** als uitgangspunt voor uitgebrachte
+functies. Er zijn geen toegezegde opleverdatums; de volgorde kan veranderen.
 
-| Onderdeel | Status | Wat betekent dit voor jou? |
-| --- | --- | --- |
-| HA met twee nodes | Beschikbaar | Keepalived verzorgt VIP-overname; B ontvangt automatisch het beleid dat A publiceert. Accounts en hostinstellingen blijven lokaal. |
-| Peersleutel vernieuwen | Beschikbaar na bijwerken van beide nodes | Vernieuw de sleutel via A’s interface met wachtwoordbevestiging en optionele 2FA; B bevestigt de nieuwe sleutel automatisch. |
-| Intern HA-certificaat vernieuwen | Handeling voor de OS-beheerder | Vernieuw het gepinde HA-certificaat via een voorbereide overgang met herstelregistratie. Dit schakelt HTTPS voor de beheerwebsite niet in. |
-| Filter herladen met behoud van verbindingen | Optioneel inschakelen | Getest met Tinyproxy 1.11.1 en 1.11.3. Andere instellingen vereisen nog een herstart. Reload staat standaard uit. |
-| Quorum, witness en fencing | Experimentele integratie | Getest op een afzonderlijk KVM-cluster. De eerste inrichting vereist nog OS-clusterbeheer; de gewone HA-wizard regelt dit niet. |
-| Onderhoud aan een beveiligd cluster | Experimentele integratie | Applicatie-updates per node en herstel zijn gecontroleerd op een door het OS voorbereid cluster. Volledige installatie/verwijdering en andere platformen staan nog open. |
+**Zo lees je deze pagina:** een vinkje betekent dat een ontwikkelstap is afgerond
+of experimenteel gecontroleerd. Dat onderdeel kan dus nog onuitgebracht zijn.
+Open vakjes beschrijven resterend werk. De
+[release notes](https://github.com/Dantdmnl/ProxyPermit/releases) vermelden wat
+is uitgebracht; het [verificatierapport](verification.md) bevat technische
+proefresultaten en beperkingen.
 
-**Waarom toont de interface ‘Quorum en fencing zijn niet ingesteld’?**
-De gewone HA-inrichting stelt Keepalived en beleidsynchronisatie in. Een witness
-en fencing worden nog niet ingericht. De melding is bij zulke installaties dus
-te verwachten en betekent niet dat de synchronisatie stuk is. VRRP met twee
-nodes alleen kan bij een netwerkonderbreking geen exclusief VIP-bezit garanderen.
+## Wat je nu kunt gebruiken
 
-Lees vóór productiegebruik [HA instellen en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname).
-Een upgrade zet een bestaande HA-installatie niet ongemerkt om naar een
-cluster dat quorum gebruikt.
+De volgende mogelijkheden zitten in v1.3.0:
 
-## Als volgende: begeleide split-brainbescherming
+| Mogelijkheid | Wat betekent dit voor jou? |
+| --- | --- |
+| HA met twee nodes | Keepalived kan het gedeelde virtuele IP-adres (VIP) laten overnemen door de andere node. Node A publiceert filterregels en gedeelde proxyinstellingen; node B ontvangt die automatisch. Accounts en hostinstellingen blijven lokaal. |
+| Peersleutel vernieuwen | Je kunt de sleutel voor de verbinding tussen de nodes via A vernieuwen, met wachtwoordbevestiging en een authenticatorcode als 2FA aanstaat. Beide nodes moeten de functie ondersteunen. |
+| Intern HA-certificaat vernieuwen | Een OS-beheerder kan het certificaat voor de synchronisatieverbinding gecontroleerd vernieuwen. Dit staat los van HTTPS voor de beheerwebsite. |
+| Filters herladen met behoud van verbindingen | Optioneel beschikbaar voor Tinyproxy 1.11.1 en 1.11.3. Andere instellingen vereisen nog een herstart; herladen staat standaard uit. |
 
-**Doel:** een beheerder helpen een cluster in te richten en te onderhouden dat
-een node kan stoppen of uitschakelen voordat een onveilige overname plaatsvindt.
+Er is ook een **experimentele integratie met een vooraf op OS-niveau ingericht
+cluster**, inclusief beschermingsstatus en onderhoud per node. De gewone
+HA-wizard richt dit cluster nog niet voor je in.
 
-- [x] Het Pacemaker/Corosync-ontwerp testen met een TLS-witness en afgeschermde libvirt-fencing.
-- [x] Vastgelopen proxy’s, achtergebleven VIP’s, eenzijdige/volledige peeronderbrekingen, witnessverlies en onbereikbare fencing op afzonderlijke VM’s controleren.
-- [x] Automatisch verouderende beschermingsstatus tonen zonder clustergeheimen toegankelijk te maken voor de webaccount.
-- [x] Exclusieve onderhoudsreservering, VIP-overname en expliciet herstel na fouten controleren.
-- [ ] Begeleide eerste inrichting en toetreding toevoegen, met duidelijke voorwaarden voor witness en fencing.
-- [ ] Een veilige migratie vanuit bestaande Keepalived-installaties en een gecontroleerde herstelroute toevoegen.
-- [ ] Clusterbewust terugdraaien, uit bedrijf nemen en verwijderen afronden; beheertoegang behouden en alleen eigen firewallregels opruimen.
-- [ ] Platformspecifieke fencing en beperkt bevoegde accounts voor andere hypervisors en fysieke hosts controleren.
-- [ ] Volledige herstelproeven afronden voor verouderde nodes, onderbroken inrichting en onbereikbare beslissende infrastructuur.
+!!! warning "Gewone HA sluit split-brain nog niet uit"
+    Bij een netwerkonderbreking kunnen twee nodes allebei denken dat ze actief
+    moeten zijn. Dit heet split-brain. Keepalived met twee nodes alleen kan dat
+    niet uitsluiten. Een upgrade schakelt aanvullende bescherming niet automatisch
+    in. Lees [HA instellen en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname)
+    voordat je een productieopstelling kiest.
 
-**Voordat dit klaar is:** exclusief VIP-bezit aantonen binnen het beschreven
-foutmodel, overname tegenhouden zolang noodzakelijke fencing niet is bevestigd
-en B na verkeersovername alleen-lezen houden voor beleid. Een witness op dezelfde
-fysieke host biedt geen onafhankelijk storingsdomein.
+## Beschikbaar om te testen in v1.4.0-dev.1
 
-## Als volgende: herstel van reload en sleutels verder testen
+- **Veiliger HA-beheer:** de koppeling intrekken vraagt opnieuw om het beheerderswachtwoord en, als 2FA aanstaat, een verse authenticatorcode. De beschermingsstatus controleert strenger of de clustergegevens betrouwbaar zijn.
+- **Voorbereiding van beschermde HA:** systeembeheerders kunnen voorwaarden laten controleren. De experimentele clusterintegratie is uitgebreid, maar de volledige inrichting via de webinterface ontbreekt nog.
+- **HTTPS instellen via de webinterface:** systeembeheerders kunnen certificaten voorbereiden en vernieuwen en HTTPS activeren. HTTPS is nog niet standaard bij installatie. Zie [HTTPS voor beheer](beheer-https.md).
 
-**Doel:** normale beleidswijzigingen minder verstorend maken, met betrouwbaar
-herstel en behoud van veilige authenticatie tussen de nodes.
+Deze functies zitten in de [prerelease v1.4.0-dev.1](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1),
+naast de stabiele v1.3.0. Gebruik voor de prerelease een tijdelijke of herstelbare
+testomgeving en de handleiding die bij de geïnstalleerde versie hoort.
 
-- [x] Doorlopende HTTP-overdrachten en CONNECT-tunnels behouden tijdens ondersteunde filterreloads.
-- [x] Automatische toepassing van A naar B, publicatievolgorde en native leesrechten controleren zonder beheergeheimen bloot te stellen.
-- [x] Echte peersleutelrotatie en gepinde certificaatvernieuwing op het HA-paar controleren, inclusief intrekking van oude sleutels/pins.
-- [x] Verkeerde of verlopen certificaten en certificaatwissels tussen handshakes weigeren voordat de peersleutel wordt verstuurd.
-- [x] Opslagfouten en verloren bevestigingsantwoorden geïsoleerd testen.
-- [ ] Stroomuitval en herstarten tijdens elke sleutel-, certificaat- en activeringsfase op VM’s controleren.
-- [ ] Regressietests voor volle schijven, rechten, onderbroken overdrachten en gelijktijdige publicaties afronden.
-- [ ] Intrekking, opnieuw koppelen en eenmalige uitnodigingen op beide nodes volledig controleren.
-- [ ] Registratie van de uitvoerende beheerder en foutmeldingen voor alle sleutelhandelingen nalopen.
-- [ ] Reload pas standaard inschakelen nadat de overige acceptatiecontroles slagen.
+## HA met bescherming tegen onveilige overname
 
-Bestaande tunnels blijven bij een ondersteunde reload open: een nieuwe filterregel
-sluit ze niet achteraf af. Zie [Reload instellen](beheer.md#optioneel-filters-herladen)
-en het [verificatierapport](verification.md) voor gecontroleerde situaties en beperkingen.
+**Wat je eraan hebt:** de andere node neemt het verkeer pas over wanneer dat
+veilig kan. De inrichting helpt je ontbrekende onderdelen en benodigde rechten
+te herkennen.
 
-## Daarna: standaard HTTPS voor beheer
+Een onafhankelijke **witness** helpt bepalen welke node mag doorgaan. Samen met
+de nodes maakt die een meerderheidsbesluit mogelijk: **quorum**. **Fencing**
+kan een onbereikbare of vastgelopen node uitschakelen voordat de andere node het
+VIP krijgt. Dit vereist passende infrastructuur en beperkte toegangsrechten op
+het gebruikte platform.
 
-**Doel:** bij nieuwe installaties een beveiligd beheeradres aanbieden en bestaande
-HTTP-installaties via een bewuste, herstelbare wijziging laten overstappen.
+- [x] Een experimentele clusterintegratie met quorum, beveiligde witnessverbinding en fencing aanbieden voor inrichting door de OS-beheerder.
+- [x] Een beschermingsstatus tonen die bij verouderde gegevens geen gezonde toestand blijft melden.
+- [x] Voorwaarden vóór activering controleren en onderhoud per node ondersteunen op een vooraf ingericht cluster.
+- [ ] De eerste inrichting en het toevoegen van een node begeleiden via de webinterface, met duidelijke uitleg over benodigde hosts, netwerktoegang en rechten.
+- [ ] Bestaande HA-installaties gecontroleerd laten overstappen, met een begrijpelijke herstelprocedure als de omzetting wordt onderbroken.
+- [ ] Terugdraaien, een node verwijderen en de-installatie afronden voor beschermde clusters, met behoud van beheertoegang.
+- [ ] Aanvullende virtualisatieplatformen en fysieke hosts ondersteunen, met per platform de mogelijkheden en beperkingen.
+- [ ] Herstel na stroomuitval, netwerkonderbrekingen en een lang offline gebleven node verder controleren voordat de volledige inrichting als productieklaar wordt aangeboden.
 
-- [ ] Per node een uniek zelfondertekend certificaat en afgeschermde privésleutel maken; de vingerafdruk via de vertrouwde installer/console tonen.
-- [ ] Eigen certificaten en interne CA’s ondersteunen; optioneel ACME beoordelen waar dat past.
-- [ ] Waarschuwingen vóór verlopen en gecontroleerde vernieuwing toevoegen, los van HA-replicatiepins.
-- [ ] Anti-lockouttoegang bij migratie behouden, TLS vóór activering controleren en terugdraaien mogelijk maken.
-- [ ] HSTS alleen bij gecontroleerde HTTPS-antwoorden toepassen; veilige cookies, redirects en herkenbare serverheaders nalopen.
-- [ ] Installatie, upgrade, vertrouwen, vernieuwing en herstel op zelfstandige en HA-nodes testen in NL/EN.
+B blijft na verkeersovername alleen-lezen voor gedeeld proxybeleid. Een witness
+moet niet afhankelijk zijn van hetzelfde storingspunt als de proxynodes.
+Zie de [HA-handleiding](hoge-beschikbaarheid.md) voor de voorwaarden en het
+[verificatierapport](verification.md) voor de huidige testdekking.
 
-## Later: accountsynchronisatie en extra authenticatie
+## Snellere en duidelijkere logs
 
-- [ ] Optionele accountsynchronisatie ontwerpen met expliciete afspraken voor bestaande gebruikersnamen, wachtwoordwijzigingen, 2FA, sessie-intrekking en lokale herstelaccounts. Nooit ongemerkt een lokaal account overschrijven.
-- [ ] Beoordelen of HMAC-SHA256 per verzoek iets toevoegt aan gepinde TLS. Eerst tests voor herhaalde verzoeken en klokafwijkingen eisen.
+**Wat je eraan hebt:** problemen snel onderzoeken, zonder lang te wachten of
+steeds dezelfde meldingen door te moeten lezen.
 
-Dit zijn ontwerponderwerpen, geen ondersteunde functies. HA-beleidsreplicatie
-repliceert geen accounts. HMAC zou TLS, sleutelrotatie, quorum en fencing niet vervangen.
+- [ ] Het logvenster sneller openen en laten reageren, ook bij een lange bewaarde geschiedenis.
+- [ ] Nieuwe logregels bijladen zonder steeds de hele lijst op te halen of je leespositie onnodig te veranderen.
+- [ ] Zoeken en filteren op bron, niveau en datum vlot en betrouwbaar laten werken, ook voor archieven binnen de bewaartermijn.
+- [ ] Herhaalde certificaatvertrouwensmeldingen compact tonen, met een teller, tijdvak en uitleg over wat je kunt doen. De ruwe records blijven beschikbaar voor onderzoek.
+- [ ] Belangrijke TLS-fouten duidelijk onderscheiden van herhaalde browsermeldingen, zodat een verlopen certificaat of onveilige verbinding opvalt.
+- [ ] Duidelijk aangeven wanneer de verbinding is verbroken of de getoonde logs niet meer actueel zijn.
 
-## Voortgang volgen of bijdragen
+Rolcontroles, afscherming van gegevens en bewaartermijnen blijven behouden:
+standaard 30 dagen voor beheer- en auditlogs en 7 dagen voor Tinyproxy- en
+verkeerslogs. Certificaatcontrole wordt niet uitgeschakeld om meldingen te
+verminderen. Zie [Logging](logging.md) voor de huidige mogelijkheden.
 
-Bekijk de [release notes](https://github.com/Dantdmnl/ProxyPermit/releases) voor
-uitgebrachte wijzigingen en [verificatie](verification.md) voor testresultaten en
-beperkingen. Meld reproduceerbare problemen of bespreek voorstellen via
-[GitHub-issues](https://github.com/Dantdmnl/ProxyPermit/issues). Vermeld de versie en
-het type installatie; deel geen koppelcodes, wachtwoorden, sleutels of privatelogs.
+## HTTPS als standaard voor beheer
+
+**Wat je eraan hebt:** een beveiligd beheeradres bij nieuwe installaties en
+certificaatbeheer zonder voor elke handeling de terminal te gebruiken.
+
+- [x] In de ontwikkelversie HTTPS met een eigen certificaatautoriteit (CA) per node aanbieden, inclusief gecontroleerde activering, vervalwaarschuwingen, vernieuwing en herstel.
+- [x] Systeembeheerders deze certificaathandelingen via de webinterface laten uitvoeren, met wachtwoordbevestiging en optionele 2FA.
+- [ ] HTTPS standaard maken bij nieuwe installaties en bestaande HTTP-installaties begeleid laten overstappen.
+- [ ] Eigen certificaten en interne CA’s ondersteunen; automatische uitgifte via ACME onderzoeken waar dat past.
+- [ ] HTTPS-beveiligingsheaders, waaronder HSTS, zorgvuldig toepassen en cookies en doorverwijzingen daarop afstemmen.
+- [ ] De volledige installatie-, upgrade- en herstelprocedure afronden voor zelfstandige nodes en HA-opstellingen.
+
+Een lokaal uitgegeven certificaat moet eerst worden vertrouwd op de computers
+waarmee je de beheerinterface gebruikt. Zie [HTTPS voor beheer](beheer-https.md).
+
+## Betrouwbare beleidswijzigingen en sleutelvernieuwing
+
+**Wat je eraan hebt:** filterregels en gedeelde instellingen komen betrouwbaar
+op de andere node aan. Sleutel- en certificaatwijzigingen hebben een duidelijke
+uitkomst, ook als de verbinding tussentijds wegvalt.
+
+- [x] Automatische beleidssynchronisatie en optioneel herladen van filters met behoud van bestaande verbindingen ondersteunen.
+- [x] Peersleutels en interne HA-certificaten gecontroleerd vernieuwen en daarna het vertrouwen in de oude sleutels of certificaten intrekken.
+- [x] In de ontwikkelversie het intrekken en opnieuw koppelen verder beveiligen, inclusief bescherming tegen hergebruik van uitnodigingen.
+- [ ] Herstel bij stroomuitval, volle schijven, onderbroken overdrachten en gelijktijdige wijzigingen verder controleren.
+- [ ] Voor iedere beheerhandeling duidelijk registreren wie die uitvoerde en of ze is voltooid of herstel nodig heeft.
+- [ ] Herladen van filters pas standaard inschakelen zodra de resterende betrouwbaarheidscontroles zijn afgerond.
+
+Bij herladen blijven bestaande verbindingen open. Nieuwe filterregels sluiten
+bestaande tunnels dus niet achteraf. Zie [Filters herladen](beheer.md#optioneel-filters-herladen).
+
+## Duidelijker beheer via het gedeelde adres
+
+**Wat je eraan hebt:** na een HA-overname weten welke node je beheert en waarom
+je eventueel opnieuw moet inloggen.
+
+- [ ] Vóór het inloggen een herkenbare nodeaanduiding tonen zonder interne netwerkgegevens of accounts openbaar te maken.
+- [ ] Na het inloggen de vaste node-identiteit en de actuele VIP-eigenaar duidelijk van elkaar onderscheiden.
+- [ ] Een nodewissel uitleggen en onopgeslagen invoer behouden waar dat veilig kan, zonder wachtwoorden of 2FA-codes over te dragen.
+- [ ] De inlog- en sessie-ervaring bij overname afronden voor verschillende lokale accounts, optionele 2FA en mobiel gebruik.
+
+Accounts en sessies zijn nu lokaal. Verkeersovername maakt een account op de
+andere node niet automatisch beschikbaar.
+
+## Later te onderzoeken
+
+Dit zijn ontwerponderwerpen; de uiteindelijke uitvoering staat nog niet vast.
+
+- [ ] **Optionele accountsynchronisatie:** gebruikers op meerdere nodes beheren, met expliciete keuzes bij bestaande gebruikersnamen en behoud van lokale herstelaccounts. Wachtwoorden en 2FA-instellingen mogen niet ongemerkt worden overschreven.
+- [ ] **Aanvullende berichtondertekening:** beoordelen of dit de bestaande beveiligde synchronisatie aantoonbaar versterkt en wat dit betekent voor sleutelbeheer en herstel.
+
+## Meedenken of bijdragen
+
+Meld een reproduceerbaar probleem of bespreek een voorstel via
+[GitHub-issues](https://github.com/Dantdmnl/ProxyPermit/issues). Beschrijf wat je
+probeert te doen, de gebruikte versie en of het om een zelfstandige node of HA
+gaat. Deel geen wachtwoorden, koppelcodes, sleutels of onbewerkte privatelogs.

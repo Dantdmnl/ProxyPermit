@@ -10,6 +10,7 @@
     const buttons = panel.closest('.settings-panel').querySelectorAll('[data-ha-policy]');
     const disconnect = document.querySelector('[data-ha-policy="disconnect"]');
     const disconnectDialog = document.getElementById('ha-disconnect-dialog');
+    const disconnectForm = document.getElementById('ha-disconnect-form');
     const rotate = panel.querySelector('[data-ha-policy="rotate-key"]');
     const keyDialog = document.getElementById('ha-key-dialog');
     const keyForm = document.getElementById('ha-key-form');
@@ -150,15 +151,30 @@
             keyDialog.showModal();
             keyForm.elements.password.focus();
         } else if (button === disconnect) {
-            disconnectDialog.returnValue = '';
+            disconnectForm.reset();
+            document.getElementById('ha-disconnect-error').textContent = '';
             disconnectDialog.showModal();
+            disconnectForm.elements.password.focus();
         } else {
             perform(button.dataset.haPolicy);
         }
     });
-    disconnectDialog?.addEventListener('close', () => {
-        if (disconnectDialog.returnValue === 'disconnect') perform('disconnect');
-    });
+    if (disconnectForm) {
+        protectDialogDismiss(disconnectDialog, [document.getElementById('ha-disconnect-cancel')],
+            () => [...disconnectForm.querySelectorAll('input')].some(input => input.value), () => pending);
+        disconnectDialog.addEventListener('close', () => disconnectForm.reset());
+        disconnectForm.addEventListener('submit', async event => {
+            event.preventDefault();
+            if (pending || !disconnectForm.reportValidity()) return;
+            const submit = disconnectForm.querySelector('[type="submit"]');
+            submit.disabled = true;
+            const success = await perform('disconnect', { confirmed: true,
+                password: disconnectForm.elements.password.value, otp: disconnectForm.elements.otp?.value || '' });
+            submit.disabled = false;
+            if (success) disconnectDialog.close();
+            else document.getElementById('ha-disconnect-error').textContent = feedback.textContent;
+        });
+    }
     if (keyForm) {
         protectDialogDismiss(keyDialog, [document.getElementById('ha-key-cancel')],
             () => [...keyForm.querySelectorAll('input')].some(input => input.value), () => pending);

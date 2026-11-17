@@ -72,7 +72,7 @@ def assets(release):
             'RuntimeDirectory=proxypermit-cluster\nRuntimeDirectoryMode=0750\nRuntimeDirectoryPreserve=yes\n'
             'UMask=0027\nNoNewPrivileges=yes\nProtectHome=yes\nPrivateTmp=yes\nProtectSystem=strict\n'
             'ProtectKernelTunables=yes\nProtectKernelModules=yes\nProtectControlGroups=yes\n'
-            'RestrictAddressFamilies=AF_UNIX AF_NETLINK\n'
+            'RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6\n'
             'ReadWritePaths=/run/proxypermit-cluster\nTimeoutStartSec=20\n'),
         Path('/etc/systemd/system/proxypermit-cluster-status.timer'): (
             '[Unit]\nDescription=Refresh ProxyPermit cluster evidence\n[Timer]\n'
@@ -86,6 +86,10 @@ def main():
         return 1
     try:
         publish(evidence())
+        if not cluster.reserved():
+            from dotenv import dotenv_values
+            from scripts.deploy.cluster_setup import refresh
+            refresh(cluster.STATUS.parent, dotenv_values('/etc/proxypermit/.env', interpolate=False))
         return 0
     except (OSError, ValueError):
         print('Cluster status could not be exported. Review root-owned status storage.')

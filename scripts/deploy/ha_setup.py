@@ -245,7 +245,7 @@ def _configure_locked(base, request, topology):
             atomic_write(deploy.HA_RETIRE_SUDOERS, deploy.HA_RETIRE_RULE, 0o440)
             deploy.run('visudo', '-cf', str(deploy.HA_RETIRE_SUDOERS))
             if logging_content:
-                atomic_write(logging_dropin, logging_content, 0o644)
+                deploy.write_logging_asset(logging_dropin, logging_content)
             deploy.run('systemctl', 'daemon-reload')
             deploy.run('systemctl', 'restart', 'tinyproxy.service')
             deploy.start_ha()

@@ -26,6 +26,19 @@ class ClusterBoundaryTests(unittest.TestCase):
         cluster.require_independent_control('upgrading')
         self.assertEqual(cluster.read_status(), {'state': 'not-configured'})
 
+    def test_unreadable_reservation_fails_closed_without_crashing_status(self):
+        real_exists = Path.exists
+        for target in (self.profile, cluster.SERVICE_RESERVATION):
+            def exists(path):
+                if path == target:
+                    raise PermissionError('isolated inaccessible parent')
+                return real_exists(path)
+            with self.subTest(target=target), patch.object(Path, 'exists', exists):
+                self.assertTrue(cluster.reserved())
+                self.assertEqual(cluster.read_status(), {'state': 'unknown'})
+                with self.assertRaises(ConfigError):
+                    cluster.require_independent_control('retiring')
+
     def test_reserved_nodes_are_guarded_even_if_the_profile_is_malformed(self):
         self.profile.write_text('invalid')
         with self.assertRaises(ConfigError):

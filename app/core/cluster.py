@@ -15,8 +15,15 @@ MAX_STATUS_AGE = 20
 
 def reserved(profile=None):
     path = PROFILE if profile is None else Path(profile)
-    return (path.exists() or path.is_symlink()
-            or SERVICE_RESERVATION.exists() or SERVICE_RESERVATION.is_symlink())
+    for candidate in (path, SERVICE_RESERVATION):
+        try:
+            if candidate.exists() or candidate.is_symlink():
+                return True
+        except OSError:
+            # An unreadable reservation is uncertain, never permission to
+            # independently control cluster-owned services. Keep the UI usable.
+            return True
+    return False
 
 
 def require_independent_control(action, profile=None):

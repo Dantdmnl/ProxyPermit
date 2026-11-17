@@ -173,6 +173,8 @@ let lastWhitelistMtime;
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('reloadRuleInterface')?.addEventListener('click', () => location.reload());
+    ruleRendererAvailable();
     // Log connection mode
     console.log('[Init] Base URL:', currentBaseUrl);
     console.log('[Init] Window location:', window.location.origin);
@@ -1525,7 +1527,17 @@ async function loadEntries() {
 }
 
 // Render entries
+function ruleRendererAvailable() {
+ const available = typeof window.RuleView?.render === 'function';
+ const notice = document.getElementById('ruleAssetNotice');
+ if (notice) notice.hidden = available;
+ const list = document.getElementById('entriesList');
+ if (list) list.hidden = !available;
+ return available;
+}
+
 function renderEntries() {
+ if (!ruleRendererAvailable()) return;
  const container = document.getElementById('entriesList');
  const items = searchQuery ? filteredEntries : entries;
  container.innerHTML = items.length ? items.map(entry => RuleView.render(entry, !rulesWritable())).join('') : '<p class="help-text">' + escapeHtml(I18n.t(searchQuery ? 'Geen entries gevonden voor deze zoekopdracht' : 'Geen entries gevonden')) + '</p>';

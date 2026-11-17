@@ -1,6 +1,255 @@
-# Verificatie op 6 november 2026
+# Verificatierapport
 
 [English](../en/verification.md) · [Documentatie](README.md)
+
+Het ontwikkelwerk hieronder zit in **v1.4.0-dev.1**, een prerelease voor
+testgebruik. Historische vermeldingen beschrijven de stand tijdens die proef.
+De laatste kandidaatcontroles slaagden met 342 Python-tests op Linux,
+Windows-tests met verwachte platformskips, beide browserproeven voor instellingen
+en HA, workflowlint, installerplannen en de strikte documentatiebuild. Zie de
+[release notes](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1)
+voor de inhoud en bekende beperkingen; v1.3.0 blijft de stabiele release.
+
+## 17 november 2026 — beheerbeveiliging en clustervoorbereiding
+
+### Clustervoorbereiding en Proxmox-fencing
+
+De volgende build voegt verlopende, door root verzamelde OS-controles toe en
+een afzonderlijk voorbereid node-/witnessplan zonder geheimen. Browserproeven
+controleren NL/EN, beide thema’s, mobiel/desktop, statusverval en toegang alleen
+voor systeembeheerders. Dit stelt Pacemaker, een witness of quorum nog niet in.
+Een gekopieerd plan telt nooit als bewijs dat fencing werkt. De volledige
+Linux-rootproef slaagt met 324 tests.
+
+In het Proxmox-lab maakte de host-roothelper twee tokens met gescheiden rechten.
+De effectieve bevoegdheden zijn gecontroleerd: ieder token mag alleen de andere
+HA-VM beheren, zonder hostbeheer of toegang tot andere guests. Na expliciete
+toestemming zijn de tokens alleen in lokale root-only bestanden geplaatst.
+De afzonderlijk benoemde, via de bronhash vastgepinde ClusterLabs-agent
+controleerde de Proxmox-CA en certificaathostnaam. Geïsoleerde tests weigeren
+andere doelen en uitgeschakelde TLS-controle.
+Praktijkproeven weigerden ook een verkeerde CA en een verkeerd doel. De juiste
+CA is hersteld; foutuitvoer bevatte geen token.
+
+De echte agent op A schakelde B uit. In een afzonderlijke proef schakelde B
+vervolgens A uit. De hypervisor bevestigde beide gestopte VM’s, de overblijvende
+node voerde het VIP en herstel via de onafhankelijke lab-API bracht alle
+applicatieservices terug. De hashes van filterregels, native configuratie en
+accounts bleven gelijk. De webaccount kon geen van beide tokens lezen.
+Dit zijn agentproeven, geen afgeronde onderbrekingsmatrix voor een beschermd
+cluster. Begeleide quorum-/witnessactivering staat nog open. Deze externe labscripts vinken de
+voorwaarde voor de fencing-proef niet automatisch af in de interface.
+
+De experimentele variant behoudt de distributie-agent en bevat de GPL-broncode,
+licentie en exacte upstream-revisie. Labtokens verlopen na 14 dagen.
+Productievernieuwing van credentials en de volledige clusterlevenscyclus staan
+nog open.
+
+### Native quorumactivering in het tijdelijke Proxmox-lab
+
+Alle vier de labguests gebruiken nu een bereikbare NTP-bron via de bestaande
+OS-tijdservice. Vóór het instellen is de bron vergeleken met onafhankelijk via
+HTTPS gecontroleerde Date-antwoorden. Het guest-OS meldt gesynchroniseerde
+netwerktijd. De tijdinstellingen van de Proxmox-host en gateway zijn niet gewijzigd.
+
+Root-only hulpmiddelen bereidden de pakketten voor terwijl de clusterservices
+eerst gemaskeerd en uitgeschakeld bleven. De bestaande witness-CA ondertekende
+het clientcertificaat voor het cluster. Privésleutelbundels en een verse Corosync-
+sleutel van 1024 bytes zijn uitsluitend via vertrouwde SSH-verbindingen naar
+root-only opslag overgedragen. Qnetd eist TLS en een clientcertificaat, luistert
+op het witnessadres en laat via de firewall alleen de twee nodes toe. Het eigen
+beheerjournal van de witness heeft een limiet van 30 dagen/100 MiB. Er is geen
+PCSD-beheerservice opengesteld of clusterwachtwoord ingesteld.
+
+Eerst is de standby gestopt, daarna de actieve VIP-eigenaar. Blijvende reserveringen
+voorkomen dat Keepalived zelfstandig start zolang de inrichting niet is afgerond.
+Beide nodes bevestigden vervolgens versleutelde Corosync-verbindingen, twee leden,
+drie verwachte stemmen en een geauthenticeerde witnessverbinding. Pacemaker kreeg
+uitsluitend een nieuwe, lege configuratie, met verplichte fencing en een aanvankelijk
+gestopt VIP. Activering was een afzonderlijke stap met revisiecontrole, nadat beide
+nodes veilig beleid en gereedstaande fencing hadden bevestigd. Daarna meldden
+beide bescherming met precies één VIP-eigenaar. Keepalived start bij het opstarten
+van de VM niet meer zelfstandig.
+
+De native fencing-agent van de peer schakelde een gepauzeerde actieve VM uit.
+Onafhankelijke hypervisorcontroles bevestigden dat die uit stond voordat de peer
+het gezonde VIP overnam. Onafhankelijk herstel bracht de VM terug; beide nodes
+meldden weer bescherming en de hashes van filterregels, native configuratie en
+accounts bleven gelijk. Na het stoppen van de witness behielden de twee verbonden
+leden quorum en exclusief VIP-bezit, terwijl de beschermingsstatus verslechterde.
+Het opnieuw starten van de witness herstelde de beschermingsstatus.
+
+Een aanvullende proef controleerde onbereikbare fencing. Eerst is bewezen dat
+een tijdelijke regel op de guest een nieuwe verbinding naar de fencing-API
+blokkeerde. Na het pauzeren van de actieve VM hield de peer de VIP-overname
+45 seconden tegen. Na het verwijderen van uitsluitend de testregel kon fencing
+voltooien. Ook nu bevestigde de hypervisor het uitschakelen voordat VIP-bezit op
+de peer werd waargenomen. Beide nodes herstelden met één eigenaar en ongewijzigd
+beleid en accounts. Een eerdere poging waarbij de conflicterende testregel niet
+daadwerkelijk werd geïnstalleerd, is afgewezen als ongeldig testbewijs.
+
+Dit zijn experimentele labresultaten met coördinatie door de OS-beheerder. De
+GUI-inrichting, alle herstelpaden bij onderbroken inrichting en de Proxmox-
+onderbrekingsmatrix zijn hiermee nog niet afgerond. Alle labguests delen één
+fysieke host; in productie blijven onafhankelijke storingsdomeinen nodig voor
+witness en fencing.
+
+De laatste regressieproef slaagde met 340 Python-tests zonder overgeslagen tests,
+lint en installertypecontroles. Frontendcontroles draaiden op Windows omdat de
+WSL-image geen Node bevat; de Linux-versie- en shellcontroles slaagden afzonderlijk.
+De Playwright-proef voor instellingen en de strikte NL/EN-documentatiebuild
+slaagden ook. Daarna zijn A en B achtereenvolgens bijgewerkt via ondersteund
+clusteronderhoud; de zelfstandige node kreeg een gewone upgrade. Browserproeven
+bevestigden HTTPS met controle van de juiste CA, gesynchroniseerd beleid en een
+actuele beschermingsstatus op beide HA-nodes. Er bleven geen testfirewallregels,
+onderhoudscontrolepunten of fencing-tokens in de CIB/auditrecords achter.
+
+De laatste tijdcontrole vond na een herstart ook een onbereikbaar adres in de
+DNS-tijdpool van het lab. De configuratie op de guests probeert nu eerst een
+opnieuw gecontroleerd, bereikbaar adres en bevat terugvalopties. Alle vier de
+guests meldden daarna weer gesynchroniseerde tijd. Dit is een labinstelling,
+geen vast ingebouwde tijdserver in de installer.
+
+### HTTPS-beheer en browserbetrouwbaarheid
+
+De zelfstandige Proxmox-node doorliep de volledige browserprocedure:
+certificaat voorbereiden, de openbare CA downloaden, vertrouwen bevestigen,
+HTTPS activeren en het beveiligde adres openen. De sessiecookie kreeg Secure
+en HttpOnly. Alle drie de applicatienodes vernieuwden hun certificaat ook via
+Instellingen, na wachtwoordbevestiging voor deze handeling. Afzonderlijke CA-controle
+slaagde, de CA bleef gelijk en het auditlog vermeldde de uitvoerende beheerder.
+Tijdens TLS-onderhoud bleven het proxyproces, de native configuratie, filterregels
+en accounts ongewijzigd.
+
+De praktijkproef vond een verschil tussen de stoptermijnen. De beheerde webservice
+gebruikt nu gerichte beëindiging via systemd en een begrensde Gunicorn-wachttijd.
+Rechtstreekse Gunicorn-TLS gebruikt workers met meerdere threads. Beide ondersteunde
+servers beantwoordden gelijktijdige, via de CA gecontroleerde bestandsverzoeken
+terwijl zes ongebruikte TCP-verbindingen openstonden. Ook de bestaande HTTP/HTTPS-
+proeven voor accounts, optionele 2FA, auditregistratie en configuratie slaagden.
+
+Browserproeven blokkeerden bewust `rules.js`: beide talen toonden een actie om de
+pagina opnieuw te laden, zonder `RuleView`-fout. Daarna herstelde de regelweergave.
+De HTTPS-dialogen slaagden voor beide talen en thema’s, mobiel en desktop, focus,
+bevestiging bij niet-opgeslagen invoer en rolbeperkingen. Bij een verloren antwoord
+op activering bleef de HTTPS-link beschikbaar, zonder de aanvraag te herhalen. Logtests controleren
+behoud van ruwe geschiedenis en afscherming van gegevens bij het bundelen van
+herhaalde vertrouwensmeldingen; andere fouten blijven zichtbaar. Op Linux slagen
+324 tests zonder overgeslagen tests, plus lint, installertypes, frontendcontroles
+en de strikte documentatiebuild. Deze wijzigingen zijn nog niet uitgebracht.
+
+## 16 november 2026 — nieuw Proxmox-lab
+
+In een aparte Proxmox-pool zijn vier tijdelijke Ubuntu 24.04-VM’s ingericht:
+een zelfstandige node, twee HA-nodes en een voorbereide witness-host. De
+ondersteunde installer installeerde v1.3.0 op de drie applicatienodes. Bestaande
+VM’s, het hostnetwerk en de bovenliggende firewall zijn niet gewijzigd. De
+beheerinterfaces luisteren alleen op loopback binnen de VM en zijn bereikbaar
+via SSH-tunnels.
+
+Via de browserinterface is A omgezet van zelfstandig naar beheerde HA en
+is B met een eenmalige uitnodigingscode gekoppeld. Daarbij zijn het netwerkplan
+en het beheerderswachtwoord gecontroleerd. De UFW-regels zijn in de VM’s
+toegepast. De afzonderlijke beheerderswachtwoorden bleven werken. Toevoegen en
+verwijderen van filterregels en het publiceren van een gedeelde Tinyproxy-instelling
+werden automatisch van A naar B gesynchroniseerd. Rechtstreeks wijzigen van
+regels op B werd geweigerd. Alle tijdelijke beleidswijzigingen zijn teruggedraaid.
+
+Na het stoppen van Tinyproxy op A nam B het virtuele IP over en beantwoordde B
+een echte proxy-aanvraag. Na het starten van Tinyproxy werd A weer de voorkeursnode;
+precies één node had het virtuele IP en de services waren op beide nodes gezond.
+Dit controleert service-uitval, niet een netwerkscheiding of uitval van de fysieke
+host. De witness is alleen voorbereid: quorum en fencing zijn in dit lab
+**niet ingesteld**.
+
+De schone HA-omzetting vond een rechtenprobleem in v1.3.0: door de afgeschermde
+umask van de root-helper was een openbare systemd-map voor Keepalived niet
+toegankelijk voor de applicatie. Daardoor gaf de instellingenpagina HTTP 500.
+Een lokale, nog niet uitgebrachte correctie maakt nieuwe openbare configuratiemappen
+toegankelijk en herstelt uitsluitend de exact herkende installermap met dit probleem.
+Onleesbare clusterreserveringen blokkeren nu zelfstandig servicebeheer zonder de
+instellingenpagina te laten vastlopen. De ondersteunde updater heeft deze correctie
+op alle drie de applicatienodes toegepast voordat bovenstaande proeven slaagden.
+De gepubliceerde tag v1.3.0 is niet gewijzigd.
+
+Op Linux slaagden alle 286 Python-tests, zonder overgeslagen tests, plus de lint-
+en installertypecontroles. De Playwright-proeven voor instellingen en HA slaagden
+voor beide talen, beide thema’s, toetsenbordbediening en kleine schermen.
+
+### Koppelen, intrekken en beschermingsstatus
+
+De volgende lokale build vraagt bij intrekken op beide nodes om bevestiging en
+het beheerderswachtwoord, plus een verse TOTP-code als 2FA aanstaat. Geïsoleerde
+tests controleren ontbrekende CSRF/bevestiging, verkeerde wachtwoorden en
+hergebruik van TOTP-codes. Playwright controleert beide talen en thema’s,
+mobiel/desktop, focus, behoud van invoer na fouten, bevestiging bij verwerpen,
+succesvol intrekken en auditregistratie zonder geheimen.
+
+Op het Proxmox-paar werkte de oude peersleutel na intrekken niet meer. Beide
+nodes zijn daarna opnieuw gekoppeld. Verlopen, vervangen en hergebruikte
+uitnodigingen werden geweigerd; van twee gelijktijdige koppelpogingen slaagde
+er precies één. De native filter- en configuratiebestanden en afzonderlijke
+inloggegevens bleven behouden. Automatische synchronisatie werd hervat. De
+praktijkproef gebruikt een ondubbelzinnig verlopen tijdstip; geïsoleerde tests
+zetten ook de klok van de uitgever voorbij de oorspronkelijke geldigheidsduur.
+
+Regressietests voor de beschermingsstatus weigeren dubbele doelen tussen
+afzonderlijke fencing-apparaten, afwijkende draaiende agents, uitgeschakelde
+of regelgestuurde apparaten en Proxmox-toewijzingen zonder gecontroleerde TLS
+of expliciete numerieke VM-ID’s. Dit controleert statusgegevens en bewijst
+niet dat uitschakelen via Proxmox al is getest. Op Linux slagen nu 290
+Python-tests, zonder overgeslagen tests.
+
+De in dit lab beschikbare Ubuntu 24.04-versie van `fence_pve` ondersteunt geen
+API-tokenauthenticatie. Het automatiseringstoken voor de labpool is niet naar de
+proxynodes gekopieerd. Proxmox-fencing, activering van de witness en begeleide
+inrichting van een beschermd cluster staan nog open.
+
+Bij de tijdcontrole reageerde externe NTP niet; de gateway antwoordde wel, maar
+had een vergelijkbare klokafwijking. De vier VM-klokken zijn eenmalig vooruitgezet
+naar de tijd van de vertrouwde werk-pc, na vergelijking met een datumheader via
+gecontroleerde HTTPS. De Proxmox-host en NTP-instellingen zijn niet gewijzigd.
+Dit is een tijdelijke labcorrectie, geen doorlopende tijdsynchronisatie. Een
+betrouwbare tijdbron blijft een beheervoorwaarde, vooral voor 2FA en
+certificaatvernieuwing.
+
+### HTTPS voor beheer
+
+De volgende lokale build biedt rechtstreeks beheer-HTTPS aan, zonder reverse
+proxy, op de zelfstandige node en beide Proxmox-HA-nodes. Iedere node heeft een
+andere CA. De applicatieaccount kan de CA-sleutel niet lezen. Inschakelen en
+vernieuwen behielden het Tinyproxy-proces-ID. Een daaropvolgende ondersteunde
+applicatie-update behield de HTTPS-interface en certificaatkoppeling op de
+zelfstandige node.
+
+De foutproeven op de zelfstandige node vernieuwden voortijdig, boden bewust een
+verlopen servercertificaat aan en controleerden dat een client dit weigerde.
+Daarna herstelde de normale vernieuwingsservice geldige HTTPS. De CA bleef
+gelijk. De echte systemd-opstartcontrole herstelde een voorbereide onderbroken
+activering. Bij een opzettelijk mislukte bereikbaarheidscontrole werd de vorige
+geldige HTTPS-configuratie teruggezet. Native proxybestanden en accounts bleven
+behouden. Dit waren gecontroleerde certificaat- en servicefouten, geen fysieke
+stroomuitvalproeven.
+
+De browserproeven controleerden op alle drie de nodes afzonderlijk CA-vertrouwen,
+HTTPS-inloggen, Secure/HttpOnly/SameSite-sessiecookies, NL/EN, beide thema’s en een
+mobiel scherm. Een tijdelijke regel via HTTPS kwam op B aan en is daarna verwijderd.
+De oorspronkelijke filterrevisie en gezonde synchronisatie zijn hersteld.
+Het browservertrouwen voor de test was beperkt tot de verwachte publieke
+certificaatsleutels; de vertrouwde certificaten van de werk-pc zijn niet gewijzigd.
+De openbare node-CA’s zijn via vertrouwde SSH opgehaald.
+
+Op Linux slagen 302 Python-tests, lint, installertypecontroles en shellcontroles.
+Beide WSGI-servers met twee workers slaagden voor echte HTTP- en CA-gecontroleerde
+HTTPS-proeven voor accounts, 2FA, audit en configuratie, inclusief HSTS en
+beveiligde cookies. De strikte documentatiebuild en vertaalde responsieve
+browserproeven slagen. Installerzelftests isoleren TLS-detectie nu van het echte
+hostprofiel.
+
+HTTPS blijft optioneel. Standaardinstallatie, begeleide CA-import/vervanging en
+ACME staan nog open. HSTS wordt bij de lokale node-CA niet automatisch aangezet.
+
+## 6 november 2026
 
 Omgeving: Ubuntu 26.04.1 LTS onder WSL 2, systemd als PID 1, Python 3.14.4,
 Tinyproxy 1.11.3. De Python-dependencies staan in een aparte Linux-virtualenv

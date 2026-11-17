@@ -1,10 +1,13 @@
 import hashlib
 import importlib.util
 import json
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('release_tool', ROOT / 'scripts/release.py')
@@ -47,6 +50,53 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'VERSION').write_text('2.0.0-dev.3\n')
         release.prepare('2.0.0', self.root)
         self.assertEqual(release.current_version(self.root), '2.0.0')
+
+    def test_prerelease_preparation_uses_numeric_order_and_cannot_downgrade_stable(self):
+        release.prepare('1.1.0-dev.2', self.root, date='2026-11-17')
+        self.assertEqual(release.sync(self.root, check=True), '1.1.0-dev.2')
+        self.assertIn('## [1.1.0-dev.2] - 2026-11-17', (self.root/'CHANGELOG.md').read_text())
+        self.assertIn('Preserve configured ports.', release.release_notes('1.1.0-dev.2', self.root))
+        self.assertLess(release.version_order('1.1.0-dev.2'), release.version_order('1.1.0-dev.10'))
+        for target in ('1.1.0-dev.1', '1.1.0-dev.2', '1.0.1-dev.1'):
+            with self.subTest(target=target), self.assertRaises(ValueError):release.prepare(target, self.root)
+        (self.root/'VERSION').write_text('1.1.0\n')
+        with self.assertRaises(ValueError):release.prepare('1.1.0-dev.3', self.root)
+
+    def test_prerelease_publication_uses_verified_artifact_without_replacing_latest(self):
+        version='1.1.0-dev.1';tag='v'+version;repository='example/ProxyPermit'
+        release.prepare(version, self.root, date='2026-11-17')
+        bundle=release.archive(self.root)
+        created=[]
+        def output(args, **_kwargs):
+            if args[:2]==['git','rev-parse']:return (('a' if args[-1].endswith('^{commit}') else 'b')*40).encode()
+            if args[:2]==['git','show']:
+                return (self.root/args[2].split(':')[1]).read_bytes()
+            if args[:2]==['gh','api']:
+                value=(dict(event='push',status='completed',conclusion='success',head_branch=tag,head_sha='a'*40,
+                            path='.github/workflows/ci.yml',name='ProxyPermit CI',head_repository=dict(full_name=repository))
+                       if '/actions/runs/' in args[2] else dict(object=dict(sha='b'*40)))
+                return json.dumps(value).encode()
+            raise AssertionError(args)
+        def run(args, **_kwargs):
+            if args[:3]==['gh','run','download']:
+                target=Path(args[args.index('--dir')+1]);target.mkdir()
+                for path in bundle.parent.iterdir():shutil.copy2(path,target/path.name)
+            elif args[:3]==['gh','release','view']:return subprocess.CompletedProcess(args,1)
+            elif args[:3]==['gh','release','create']:
+                created.append((args,Path(args[args.index('--notes-file')+1]).read_text()))
+            else:raise AssertionError(args)
+            return subprocess.CompletedProcess(args,0)
+        with patch.object(release,'ROOT',self.root),patch.object(release.subprocess,'check_output',side_effect=output), \
+             patch.object(release.subprocess,'run',side_effect=run):
+            release.publish(tag,'123',repository)
+        self.assertEqual(len(created),1)
+        command,notes=created[0]
+        self.assertIn('--prerelease',command);self.assertIn('--latest=false',command)
+        self.assertIn('--verify-tag',command)
+        self.assertIn('Pre-release for testing',notes)
+        self.assertEqual(release.publication_flags('1.1.0'),[])
+        for invalid in ('1.1.0-dev.01','1.1.0-rc.1','1.1.0-dev.-1'):
+            with self.assertRaises(ValueError):release.publication_flags(invalid)
 
     def test_notes_select_only_the_requested_dated_section(self):
         release.prepare('1.0.1', self.root, date='2026-11-13')
@@ -92,6 +142,10 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'ha-tls/maintenance/plan.json').write_text('{"runtime":"fixture"}')
         (self.root / 'cluster-protection.json').write_text('{"runtime":"fixture"}')
         (self.root / 'app/cluster-maintenance.json').write_text('{"runtime":"fixture"}')
+        for name in ('cluster-plan.json','cluster-bootstrap.json','proxmox-fencing.json','authkey','cluster.p12','cluster.pfx'):
+            (self.root/'app'/name).write_text('private fixture')
+        for name in ('nssdb','proxypermit-cluster-bootstrap'):
+            (self.root/'app'/name).mkdir();(self.root/'app'/name/'private.json').write_text('private fixture')
         archive = release.archive(self.root)
         with tarfile.open(archive) as bundle:
             names = bundle.getnames()
@@ -99,6 +153,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('.log.' in name or 'ha-peer.json' in name or '/.test-data/' in name for name in names))
             self.assertFalse(any('/ha-tls/' in name or name.endswith('/cluster-protection.json') for name in names))
             self.assertFalse(any(name.endswith('/cluster-maintenance.json') for name in names))
+            self.assertFalse(any(name.endswith(('/cluster-plan.json','/cluster-bootstrap.json','/proxmox-fencing.json','/authkey','.p12','.pfx'))
+                                 or '/nssdb/' in name or '/proxypermit-cluster-bootstrap/' in name for name in names))
             manifest = json.load(bundle.extractfile('proxypermit-1.0.0/release-manifest.json'))
             for name, digest in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.extractfile('proxypermit-1.0.0/' + name).read()).hexdigest(), digest)
