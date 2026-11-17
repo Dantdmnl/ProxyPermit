@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run isolated unit tests; do not read or write production state."""
 import logging
+import argparse
 import os
 import sys
 import tempfile
@@ -12,6 +13,12 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--require-root', action='store_true')
+    parser.add_argument('--fail-on-skip', action='store_true')
+    args = parser.parse_args()
+    if args.require_root and (os.name != 'posix' or getattr(os, 'geteuid', lambda: -1)() != 0):
+        parser.error('This isolated test run requires Linux root privileges.')
     original = dict(os.environ)
     try:
         with tempfile.TemporaryDirectory(prefix='proxypermit-tests-') as directory:
@@ -35,6 +42,9 @@ def main():
             logging.disable(logging.CRITICAL)
             try:
                 result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.discover(str(ROOT / 'tests/python')))
+                if args.fail_on_skip and result.skipped:
+                    print('Required test coverage incomplete: skipped tests are not allowed.', file=sys.stderr)
+                    return 1
                 return 0 if result.wasSuccessful() else 1
             finally:
                 logging.shutdown()  # Close Windows file handles before cleanup.

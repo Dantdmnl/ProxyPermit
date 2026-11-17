@@ -74,20 +74,40 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y acl
       - run: python -m pip install -r requirements/base.txt
-      - if: matrix.os != 'ubuntu-latest' || matrix.python != '3.14'
-        run: python scripts/dev/test.py
-      - name: Tests with coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+      - run: python scripts/dev/test.py
+
+  privileged:
+    name: Isolated root tests & coverage
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare disposable test container
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          python -m pip install coverage==7.17.2
-          python -m coverage run scripts/dev/test.py
-          python -m coverage xml -o artifacts/coverage.xml
-          python -m coverage report >> "$GITHUB_STEP_SUMMARY"
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates acl openssl tzdata
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run every isolated test as root
+        env:
+          COVERAGE_FILE: artifacts/coverage.data
+        run: |
+          python3 -m venv /tmp/proxypermit-ci-venv
+          /tmp/proxypermit-ci-venv/bin/python -m pip install -r requirements/base.txt coverage==7.17.2
+          mkdir -p artifacts
+          /tmp/proxypermit-ci-venv/bin/python -m coverage run scripts/dev/test.py --require-root --fail-on-skip
+          /tmp/proxypermit-ci-venv/bin/python -m coverage xml -o artifacts/coverage.xml
+          /tmp/proxypermit-ci-venv/bin/python -m coverage json -o artifacts/coverage.json
+          /tmp/proxypermit-ci-venv/bin/python -m coverage report --precision=2 --fail-under=48 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        if: always()
         with:
           name: proxypermit-coverage
-          path: artifacts/coverage.xml
+          path: artifacts/coverage.*
+          if-no-files-found: error
           retention-days: 14
 
   frontend:
@@ -186,7 +206,7 @@ jobs:
 
   release:
     name: Release archive & tag validation
-    needs: [workflow, quality, unit, frontend, http, documentation, dependencies]
+    needs: [workflow, quality, unit, privileged, frontend, http, documentation, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

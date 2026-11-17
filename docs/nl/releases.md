@@ -146,6 +146,20 @@ staat in **proxypermit-coverage**. De aparte Pages-publicatiejob krijgt
 schrijfrechten voor Pages en het identiteitstoken.
 Dependabot stelt updates van Actions en Python-dependencies voor.
 
+## Root-tests en coverage
+
+Een afzonderlijke tijdelijke Ubuntu-container voert de volledige geïsoleerde
+suite als root uit. Met `--require-root --fail-on-skip` faalt die job bij ontbrekende
+rechten of overgeslagen tests. De gewone Linux-/Windows-matrix blijft gedrag
+zonder root controleren. Het releasearchief wacht op beide jobs.
+
+Coverage omvat `app`, `scripts`, `legacy` en `deploy`, inclusief namespacepackages.
+De gecombineerde score voor regels en branches moet minimaal 48% blijven,
+gebaseerd op de eerste bredere meting van ongeveer 49%. Dit is een ondergrens
+tegen terugval, geen bewijs van voldoende testdekking. Het artefact
+`proxypermit-coverage` bevat XML, JSON en ruwe meetgegevens, zodat ontbrekende
+dekking van deploymenthelpers zichtbaar blijft.
+
 ## Oude workflowruns en broncodegeschiedenis
 
 De vervallen `.github/workflows/pylint.yml` hoort bij het eerdere project.

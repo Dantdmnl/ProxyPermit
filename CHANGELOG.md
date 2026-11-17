@@ -4,6 +4,11 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+### Changed
+
+- Gate releases on an isolated Linux-root CI job with no skipped tests, measure application and deployment/tooling coverage, and enforce a coverage baseline.
+- Quiet expected disconnects in TLS test servers while making unexpected server-thread errors fail their tests.
+
 ## [1.4.0-dev.1] - 2026-11-17
 
 ### Pre-release status

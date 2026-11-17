@@ -19,6 +19,22 @@ from app.web import ha_replication as replication
 from app.core.tinyproxy import ConfigError
 
 
+class TlsFixtureServer(ThreadingHTTPServer):
+    """Expected probe disconnects are quiet; other thread errors fail cleanup."""
+    daemon_threads = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.unexpected_errors = []
+
+    def handle_error(self, request, client_address):
+        error = sys.exc_info()[1]
+        if isinstance(error, (BrokenPipeError, ConnectionResetError)):
+            return
+        self.unexpected_errors.append(type(error).__name__)
+        super().handle_error(request, client_address)
+
+
 class CertificateMetadataPermissionsTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix' and getattr(os, 'geteuid', lambda: -1)() == 0, 'Root-owned legacy TLS fixture.')
     def test_optional_metadata_does_not_require_access_to_private_legacy_tls_directory(self):
@@ -72,14 +88,18 @@ class PeerTlsTests(unittest.TestCase):
 
             def log_message(self, *_args):
                 pass
-        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        server = TlsFixtureServer(('127.0.0.1', 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(str(self.root / (name + '.crt')), str(self.root / (name + '.key')))
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
+        def stop():
+            server.shutdown()
+            server.server_close()
+            thread.join(2)
+            self.assertEqual(server.unexpected_errors, [], 'Unexpected TLS fixture thread failure')
+        self.addCleanup(stop)
         return server.server_port, seen
 
     def pin(self, name):

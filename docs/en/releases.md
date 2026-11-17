@@ -138,6 +138,19 @@ available as **proxypermit-coverage**. The release publication job receives cont
 deployment job receives Pages and identity-token write permissions. Dependabot proposes Action
 and Python dependency updates.
 
+## Root tests and coverage
+
+A separate disposable Ubuntu container runs the full isolated suite as root.
+`--require-root --fail-on-skip` makes missing privileges or skipped tests fail
+that job. The ordinary Linux/Windows matrix still checks unprivileged behavior.
+The release archive waits for both jobs.
+
+Coverage includes `app`, `scripts`, `legacy` and `deploy`, including namespace
+packages. The combined line/branch score must stay at least 48%, based on the
+initial broader measurement of about 49%. This is a regression baseline, not a
+claim of sufficient coverage. The `proxypermit-coverage` artifact contains XML,
+JSON and the raw data so deployment-helper gaps remain visible.
+
 ## Old workflow runs and source history
 
 The obsolete `.github/workflows/pylint.yml` belongs to the earlier project.
