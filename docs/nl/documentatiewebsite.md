@@ -93,9 +93,10 @@ alternatieve tekst. Voeg `docs-figure--dialog`, `docs-figure--signin` of
 originele breedte/hoogte in pixels op de Markdown-afbeelding, zodat de pagina
 ruimte reserveert tijdens het laden. Rek kleine screenshots niet uit.
 
-De ingebouwde GLightbox van Zensical verzorgt de galerij en zoom. Lokale
-JavaScript voegt vertaalde labels en focusbeheer toe; lokale CSS verzorgt de
-opmaak. Zonder JavaScript opent de afbeeldingslink nog steeds het originele
+Kies **Vergroten** op een screenshot om de galerij van Zensical te openen.
+**Inzoomen** verschijnt wanneer de galerij het screenshot groter kan weergeven.
+Met **Open origineel** bekijk je het bestand op ware grootte in een apart
+tabblad, ook op mobiel. Zonder JavaScript opent de afbeeldingslink het originele
 bestand. Er zijn geen externe viewerscripts, analytics of afbeeldingsdiensten
 nodig. De uitnodiging om een GitHub-ster te geven staat kort onder de paginatekst.
 
