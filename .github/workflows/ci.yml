@@ -96,7 +96,7 @@ jobs:
           COVERAGE_FILE: artifacts/coverage.data
         run: |
           python3 -m venv /tmp/proxypermit-ci-venv
-          /tmp/proxypermit-ci-venv/bin/python -m pip install -r requirements/base.txt coverage==7.17.2
+          /tmp/proxypermit-ci-venv/bin/python -m pip install -r requirements/base.txt -r requirements/coverage.txt
           mkdir -p artifacts
           /tmp/proxypermit-ci-venv/bin/python -m coverage run scripts/dev/test.py --require-root --fail-on-skip
           /tmp/proxypermit-ci-venv/bin/python -m coverage xml -o artifacts/coverage.xml
