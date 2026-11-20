@@ -36,10 +36,9 @@ niet automatisch in.
 - [Releases en CI](releases.md) beschrijft controles en het maken van releases.
 - [Documentatiewebsite](documentatiewebsite.md) legt lokaal bekijken en publiceren uit.
 - [Verificatie](verification.md) beschrijft wat daadwerkelijk is getest.
-- [Vervolgwerk](vervolgwerk.md) bevat functies die nog niet beschikbaar zijn.
+- De [roadmap](vervolgwerk.md) maakt onderscheid tussen beschikbare, experimentele en geplande functies.
 
 Deze pagina's volgen `main`, inclusief werk dat nog niet is uitgebracht.
-Oude instructies staan in het
-[archief](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
+Gebruik voor een oudere versie de documentatie die bij die release hoort.
 
 [Gebruikers en rollen](rollen.md) legt uit welke rechten bij welk werk passen.

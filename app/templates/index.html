@@ -136,6 +136,10 @@
                 <div class="search-results-info" id="searchInfo" style="display: none;"></div>
 
                 <div id="alertContainer"></div>
+                <div id="ruleAssetNotice" class="notice rule-asset-notice" role="alert" hidden>
+                    <p>{{ _('The rule interface could not be loaded. Reload this page; your saved rules are unchanged.') }}</p>
+                    <button type="button" id="reloadRuleInterface" class="button button-secondary">{{ _('Reload interface') }}</button>
+                </div>
 
                 <div class="entries-list" id="entriesList">
                     <p style="text-align: center; color: var(--muted, #666);">

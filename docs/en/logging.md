@@ -51,6 +51,14 @@ that a source was unreadable, a record was malformed, or a scan limit was
 reached. Narrow the date range and check source permissions. A bounded result
 count is not the total size of all retained history.
 
+The viewer groups repeated client certificate-trust warnings within each minute
+and displays their count. Successful periodic cluster-status start/finish messages
+are hidden by default. Other TLS failures and failed status jobs remain visible.
+Choose **Display and export → Show routine and repeated messages**, or search
+for text, to see individual records. This only changes the view: it does not
+delete journal entries or weaken certificate validation. Page downloads follow
+the current view; enable individual records before downloading them if needed.
+
 The reader also supports the standard Tinyproxy file
 `/var/log/tinyproxy/tinyproxy.log` and numbered/gzip backups. File logging has
 its own operator/package logrotate policy; the namespace policy does not

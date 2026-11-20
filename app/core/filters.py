@@ -1,17 +1,18 @@
 """Manage Tinyproxy filter files with validation, backups, and atomic writes."""
 import os
+import stat
 import re
 import shutil
 import subprocess
 import logging
 import ipaddress
-import tempfile
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 from functools import wraps
 
 from .validators import WhitelistValidator
+from .tinyproxy import atomic_write
 from .files import file_lock
 
 
@@ -311,57 +312,24 @@ class WhitelistManager:
             validated_entries.append(entry)
         
         # Back up the current file if requested.
-        backup_path = None
         if create_backup:
             try:
-                backup_path = self._create_backup()
+                self._create_backup()
             except Exception as e:
                 return False, f'Could not create backup: {str(e)}'
         
-        # Write through a temporary file.
-        temp_path = None
-        
         try:
-            self.whitelist_path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temp_name = tempfile.mkstemp(
-                prefix=f'.{self.whitelist_path.name}.',
-                suffix='.tmp',
-                dir=str(self.whitelist_path.parent),
-                text=True,
-            )
-            temp_path = Path(temp_name)
-            with os.fdopen(fd, 'w', encoding='utf-8') as f:
-                for entry in validated_entries:
-                    f.write(entry + '\n')
-                f.flush()
-                os.fsync(f.fileno())
-            
-            # Atomische rename (overschrijf origineel)
-            os.replace(temp_path, self.whitelist_path)
-            
-            # Keep the file readable by Tinyproxy.
-            os.chmod(self.whitelist_path, 0o644)
-            
-            logger.info(f'Wrote {len(validated_entries)} rules to the filter file')
+            mode = stat.S_IMODE(self.whitelist_path.stat().st_mode) if self.whitelist_path.exists() else 0o644
+            atomic_write(self.whitelist_path, ''.join(entry + '\n' for entry in validated_entries), mode)
+            logger.info('Wrote %d rules to the filter file', len(validated_entries))
             return True, None
-            
-        except Exception as e:
-            logger.error(f'Could not write filter file: {e}')
-            
-            # Try to restore the backup.
-            if backup_path and backup_path.exists():
-                try:
-                    shutil.copy2(backup_path, self.whitelist_path)
-                    logger.info("Whitelist hersteld vanuit backup")
-                except Exception as restore_err:
-                    logger.critical(f'Could not restore backup: {restore_err}')
-            
-            return False, f'Write failed: {str(e)}'
-        finally:
-            # Remove the temporary file if it remains.
-            if temp_path and temp_path.exists():
-                temp_path.unlink()
-    
+        except OSError as error:
+            # Never acknowledge activation after a failed or uncertain write.
+            # A durability error can leave the replacement visible; its backup
+            # remains available for explicit operator recovery.
+            logger.error('Could not write filter file: %s', error)
+            return False, 'Could not write the filter file.'
+
     @serialized_change
     def add_entry(self, domain_or_pattern: str, is_comment: bool = False, description: Optional[str] = None) -> Tuple[bool, Optional[str]]:
         """Add a domain, regular expression, or comment to the filter file."""
@@ -651,6 +619,12 @@ class WhitelistManager:
             logger.error(f'Could not restart Tinyproxy: {e}')
             return False, f'Unexpected error: {str(e)}'
     
+    def reload_tinyproxy(self):
+        """Reload supported filter policy without silently restarting the service."""
+        from .activation import acknowledged_reload
+        configuration = os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf')
+        return acknowledged_reload(configuration, self.service_name)
+
     def get_service_status(self) -> Dict[str, Any]:
         """Get the Tinyproxy service status."""
         # Windows mock

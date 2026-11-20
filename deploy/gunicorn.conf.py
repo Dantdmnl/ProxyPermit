@@ -1,7 +1,16 @@
 # Gunicorn configuratie voor ProxyPermit
 import os
 import sys
+import ssl
+import gunicorn
+from gunicorn.http import wsgi as gunicorn_wsgi
 from dotenv import load_dotenv
+
+# Hide server implementation/version on ordinary and server-generated responses.
+gunicorn.SERVER = 'ProxyPermit'
+gunicorn.SERVER_SOFTWARE = 'ProxyPermit'
+gunicorn_wsgi.SERVER = 'ProxyPermit'
+gunicorn_wsgi.SERVER_SOFTWARE = 'ProxyPermit'
 
 # Laad .env (indien aanwezig)
 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env')
@@ -45,11 +54,19 @@ if tls_enabled:
         certfile = MANAGER_CERT
         keyfile = MANAGER_KEY
     else:
-        raise RuntimeError('Gunicorn TLS vereist MANAGER_CERT en MANAGER_KEY in .env')
+        raise RuntimeError('Gunicorn TLS requires MANAGER_CERT and MANAGER_KEY in .env')
+
+
+def ssl_context(conf, default_ssl_context_factory):
+    context = default_ssl_context_factory()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 # Worker processen
 workers = int(os.getenv('GUNICORN_WORKERS', '2'))
-worker_class = "sync"
+worker_class = 'gthread' if tls_enabled else 'sync'
+threads = 4 if tls_enabled else 1
+graceful_timeout = 10
 worker_connections = 1000
 timeout = 120
 keepalive = 2
@@ -74,14 +91,14 @@ tmp_upload_dir = None
 
 # Server hooks voor graceful restart
 def on_starting(server):
-    server.log.info("ProxyPermit wordt gestart...")
+    server.log.info("Starting ProxyPermit")
 
 def on_reload(server):
-    server.log.info("Gunicorn wordt herladen...")
+    server.log.info("Reloading the management server")
 
 def worker_int(worker):
-    worker.log.info("Worker ontvangen interrupt signaal")
+    worker.log.info("Management worker received an interrupt")
 
 def worker_abort(worker):
     """Called when a worker receives the SIGABRT signal."""
-    worker.log.info("Worker afgebroken")
+    worker.log.info("Management worker aborted")

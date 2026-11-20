@@ -29,6 +29,11 @@ async function main() {
                         assert.equal(await image.evaluate(async element => { element.loading = 'eager'; await element.decode(); return element.naturalWidth > 0; }), true);
                     }
                     const opener = screenshots.first();
+                    const enlarge = opener.locator('.docs-figure-enlarge');
+                    assert.equal(await enlarge.innerText(), language === 'nl' ? 'Vergroten' : 'Enlarge');
+                    assert.ok((await enlarge.boundingBox()).height >= 44, 'Enlarge control must have a touch-sized target');
+                    const preview = await opener.locator('img').boundingBox();
+                    assert.ok((await enlarge.boundingBox()).y >= preview.y + preview.height, 'Enlarge control must stay below the image');
                     for (const image of await screenshots.locator('img').all()) {
                         assert.equal(await image.evaluate(element => element.clientWidth <= element.naturalWidth), true, 'Do not upscale screenshots');
                     }
@@ -38,6 +43,13 @@ async function main() {
                     await dialog.waitFor();
                     const visibleImage = () => dialog.locator('.current .gslide-image img');
                     await visibleImage().evaluate(element => element.decode());
+                    const zoomIn = dialog.getByRole('button', { name: language === 'nl' ? 'Inzoomen' : 'Zoom in', exact: true });
+                    const zoomOut = dialog.getByRole('button', { name: language === 'nl' ? 'Uitzoomen' : 'Zoom out' });
+                    const fit = dialog.getByRole('button', { name: language === 'nl' ? 'Aan venster aanpassen' : 'Fit to window' });
+                    const level = dialog.locator('.docs-gallery-tools [role="status"]');
+                    const zoomViewport = dialog.locator('.docs-gallery-viewport');
+                    const enlarged = zoomViewport.locator('img');
+                    await zoomIn.waitFor();
                     assert.equal(await dialog.getAttribute('aria-modal'), 'true');
                     assert.equal(await dialog.locator('.gclose').getAttribute('aria-label'), language === 'nl' ? 'Sluiten' : 'Close');
                     for (let step = 0; step < 5; step++) {
@@ -48,15 +60,34 @@ async function main() {
                     await page.waitForFunction(() => document.querySelector('#glightbox-body .current img')?.src.includes('new-rule.png'));
                     await page.keyboard.press('ArrowLeft');
                     await page.waitForFunction(() => document.querySelector('#glightbox-body .current img')?.src.includes('overview.png'));
-                    if (width === 1024) {
-                        await visibleImage().click();
-                        await page.waitForFunction(() => document.querySelector('#glightbox-body .zoomed'));
-                        await visibleImage().click();
-                    }
+                    await visibleImage().evaluate(element => element.decode());
+                    const fitWidth = await visibleImage().evaluate(element => element.offsetWidth);
+                    await zoomIn.focus();
+                    await page.keyboard.press('Enter');
+                    await zoomViewport.waitFor();
+                    assert.equal(await level.innerText(), '125%');
+                    assert.ok(await enlarged.evaluate(element => element.offsetWidth) > fitWidth);
+                    await zoomIn.click();
+                    assert.equal(await level.innerText(), '150%');
+                    assert.ok(await zoomViewport.evaluate(element => element.scrollWidth > element.clientWidth));
+                    await zoomViewport.focus();
+                    await page.keyboard.press('ArrowRight');
+                    assert.match(await enlarged.getAttribute('src'), /overview\.png$/);
+                    await zoomOut.click();
+                    assert.equal(await level.innerText(), '125%');
+                    await fit.click();
+                    await zoomViewport.waitFor({ state: 'hidden' });
+                    assert.equal(await level.innerText(), '100%');
+                    await visibleImage().dispatchEvent('wheel', { ctrlKey: true, deltaY: -100, bubbles: true, cancelable: true });
+                    assert.equal(await level.innerText(), '125%');
+                    await dialog.locator('.gnext').click();
+                    await zoomViewport.waitFor({ state: 'hidden' });
+                    assert.equal(await level.innerText(), '100%');
+                    assert.match(await visibleImage().getAttribute('src'), /new-rule\.png$/);
                     await page.keyboard.press('Escape');
                     await dialog.waitFor({ state: 'hidden' });
                     assert.equal(await opener.evaluate(element => element === document.activeElement), true);
-                    await opener.click();
+                    await enlarge.click();
                     await dialog.locator('.gclose').click();
                     await dialog.waitFor({ state: 'hidden' });
                     await opener.click();

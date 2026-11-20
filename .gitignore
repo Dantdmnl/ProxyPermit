@@ -69,6 +69,17 @@ nginx/*.generated.conf
 *.journal
 *.journal~
 ha-*.json
+ha-tls/
+cluster-protection.json
+cluster-maintenance.json
+cluster-plan.json
+cluster-bootstrap.json
+proxmox-fencing.json
+authkey
+*.p12
+*.pfx
+nssdb/
+proxypermit-cluster-bootstrap/
 session-state.json
 nonce-store.json
 nonces.json

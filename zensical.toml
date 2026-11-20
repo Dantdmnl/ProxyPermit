@@ -6,18 +6,19 @@ repo_url = "https://github.com/Dantdmnl/ProxyPermit"
 repo_name = "Dantdmnl/ProxyPermit"
 docs_dir = "docs"
 site_dir = "site"
-exclude_docs = "legacy/"
 extra_css = ["stylesheets/docs.css"]
 extra_javascript = ["javascripts/docs.js"]
 nav = [
   { "Start / Begin" = "README.md" },
   { "English" = [
     { "Start here" = "en/README.md" },
+    { "Roadmap" = "en/planned-work.md" },
     { "First steps" = "en/getting-started.md" },
     { "Use the console" = "en/user-guide.md" },
     { "Install and maintain" = [
       { "Install, upgrade or remove" = "en/installation.md" },
       { "Set up high availability" = "en/high-availability.md" },
+      { "Management HTTPS" = "en/management-https.md" },
       { "Administrator guide" = "en/administration.md" },
       { "Logs and privacy" = "en/logging.md" },
       { "Users and roles" = "en/roles.md" },
@@ -31,16 +32,17 @@ nav = [
       { "Releases and CI" = "en/releases.md" },
       { "Documentation website" = "en/documentation-site.md" },
       { "Verification" = "en/verification.md" },
-      { "Planned work" = "en/planned-work.md" },
     ] },
   ] },
   { "Nederlands" = [
     { "Begin hier" = "nl/README.md" },
+    { "Roadmap" = "nl/vervolgwerk.md" },
     { "Eerste stappen" = "nl/eerste-stappen.md" },
     { "De interface gebruiken" = "nl/werkinstructie.md" },
     { "Installeren en beheren" = [
       { "Installeren, bijwerken of verwijderen" = "nl/installatie.md" },
       { "Hoge beschikbaarheid instellen" = "nl/hoge-beschikbaarheid.md" },
+      { "HTTPS voor beheer" = "nl/beheer-https.md" },
       { "Beheerdershandleiding" = "nl/beheer.md" },
       { "Logs en privacy" = "nl/logging.md" },
       { "Gebruikers en rollen" = "nl/rollen.md" },
@@ -54,7 +56,6 @@ nav = [
       { "Releases en CI" = "nl/releases.md" },
       { "Documentatiewebsite" = "nl/documentatiewebsite.md" },
       { "Verificatie" = "nl/verification.md" },
-      { "Vervolgwerk" = "nl/vervolgwerk.md" },
     ] },
   ] },
 ]

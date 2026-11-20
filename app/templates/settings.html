@@ -17,6 +17,8 @@
     <script src="{{ url_for('static', filename='js/settings.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/ha-settings.js', v=app_version) }}" defer></script>
     <script src="{{ url_for('static', filename='js/ha-policy.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/cluster-setup.js', v=app_version) }}" defer></script>
+    <script src="{{ url_for('static', filename='js/management-https.js', v=app_version) }}" defer></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/connectivity.css', v=app_version) }}">
     <script src="{{ url_for('static', filename='js/connectivity.js', v=app_version) }}"></script>
 </head>
@@ -81,17 +83,48 @@
             <span class="settings-badge">{{ _('Beheerde HA') if managed_ha else _('Bestaande HA') if ha_enabled else _('Zelfstandige node') }}</span>
         </header>
         {% if ha_policy_role in ('a', 'b') %}
+        {% if permissions.admin and not cluster_reserved %}
+        <details id="cluster-preparation" class="ha-settings">
+            <summary>{{ _('Prepare split-brain protection') }}</summary>
+            <p>{{ _('These local checks prepare quorum and fencing. They do not activate protection or prove the peer and witness are safe.') }}</p>
+            <p id="cluster-readiness-message" role="status">{{ _('Waiting for OS prerequisite checks.') }}</p>
+            <dl class="settings-facts cluster-prerequisites">
+                {% for key, label in [('managedHa', 'Managed two-node HA'), ('time', 'OS reports synchronized network time'), ('packages', 'Cluster packages installed'), ('plan', 'OS-approved cluster and witness plan'), ('agent', 'Supported fencing agent installed'), ('authentication', 'Fencing authentication and TLS verified'), ('powerTest', 'Real power-off and recovery test')] %}
+                <div><dt>{{ _(label) }}</dt><dd data-cluster-check="{{ key }}">{{ _('Not confirmed') }}</dd></div>
+                {% endfor %}
+            </dl>
+            <p class="hint">{{ _('The OS administrator stages the plan and supplies fencing credentials. Ordinary HA and policy synchronization continue unchanged. Never use a hypervisor administrator account for fencing.') }}</p>
+        </details>
+        {% endif %}
         <div class="ha-settings" id="ha-policy" data-csrf="{{ ha_policy_csrf }}" data-role="{{ ha_policy_role }}">
             <p>{{ _('Koppel de nodes eenmalig. Publiceer op A om de actieve filterregels en gedeelde Tinyproxy-instellingen automatisch naar B te sturen.') }}</p>
             <dl class="ha-status-grid">
                 <div><dt>{{ _('Beleid synchroniseren') }}</dt><dd id="ha-policy-status" role="status">—</dd></div>
                 <div><dt>{{ _('Virtueel IP') }}</dt><dd id="ha-policy-vip">—</dd></div>
+                <div><dt>{{ _('Failover protection') }}</dt><dd id="ha-protection-status" role="status">—</dd></div>
                 <div id="ha-policy-published-row" hidden><dt>{{ _('Laatst opgehaalde revisie van A') if ha_policy_role == 'b' else _('Gepubliceerde revisie') }}</dt><dd><code id="ha-policy-published"></code></dd></div>
                 <div id="ha-policy-applied-row" hidden><dt>{{ _('Toegepaste revisie op B') }}</dt><dd><code id="ha-policy-applied"></code></dd></div>
                 <div id="ha-policy-checked-row" hidden><dt>{{ _('Laatste succesvolle contact') }}</dt><dd><time id="ha-policy-checked"></time></dd></div>
+                <div id="ha-key-state-row" hidden><dt>{{ _('Peer key') }}</dt><dd id="ha-key-state" role="status">—</dd></div>
             </dl>
             {% if ha_policy_role == 'a' and permissions.admin %}
             <button type="button" data-ha-policy="invite">{{ _('Node toevoegen') }}</button>
+            <button type="button" class="button-secondary" data-ha-policy="rotate-key" hidden>{{ _('Rotate peer key') }}</button>
+            <dialog id="ha-key-dialog" class="workspace-dialog" aria-labelledby="ha-key-title">
+                <form id="ha-key-form">
+                    <header class="workspace-dialog-header"><h3 id="ha-key-title">{{ _('Rotate peer key') }}</h3></header>
+                    <div class="workspace-dialog-body">
+                        <p>{{ _('B receives and verifies the new key automatically. The current key expires after ten minutes if the transition cannot finish. Re-pair the nodes if the transition expires.') }}</p>
+                        <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                        {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>{% endif %}
+                        <p id="ha-key-error" role="alert"></p>
+                    </div>
+                    <footer class="workspace-dialog-footer">
+                        <button type="button" id="ha-key-cancel" class="button-secondary">{{ _('Annuleren') }}</button>
+                        <button type="submit">{{ _('Rotate peer key') }}</button>
+                    </footer>
+                </form>
+            </dialog>
             <div id="ha-policy-result" hidden>
                 <label for="ha-policy-code">{{ _('Kopieer deze code') }}</label>
                 <textarea id="ha-policy-code" readonly spellcheck="false" autocomplete="off"></textarea>
@@ -172,12 +205,17 @@
             {% if ha_policy_role in ('a', 'b') %}
             <button type="button" class="button button-danger" data-ha-policy="disconnect" aria-haspopup="dialog" hidden>{{ _('Koppeling intrekken') }}</button>
             <dialog id="ha-disconnect-dialog" class="workspace-dialog" aria-labelledby="ha-disconnect-title" aria-describedby="ha-disconnect-description">
-                <form method="dialog" class="workspace-panel">
+                <form id="ha-disconnect-form" class="workspace-panel">
                     <header class="workspace-dialog-header"><h3 id="ha-disconnect-title">{{ _('HA-koppeling intrekken?') }}</h3></header>
-                    <div class="workspace-dialog-body"><p id="ha-disconnect-description">{{ _('Automatische synchronisatie stopt. Beide nodes behouden hun laatst actieve proxybeleid. Voor synchronisatie moet je de nodes opnieuw koppelen.') }}</p></div>
+                    <div class="workspace-dialog-body">
+                        <p id="ha-disconnect-description">{{ _('Automatische synchronisatie stopt. Beide nodes behouden hun laatst actieve proxybeleid. Voor synchronisatie moet je de nodes opnieuw koppelen.') }}</p>
+                        <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                        {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>{% endif %}
+                        <p id="ha-disconnect-error" role="alert"></p>
+                    </div>
                     <footer class="workspace-dialog-footer">
-                        <button class="button button-secondary" value="cancel" autofocus>{{ _('Annuleren') }}</button>
-                        <button class="button button-danger" value="disconnect">{{ _('Koppeling intrekken') }}</button>
+                        <button type="button" id="ha-disconnect-cancel" class="button button-secondary">{{ _('Annuleren') }}</button>
+                        <button type="submit" class="button button-danger">{{ _('Koppeling intrekken') }}</button>
                     </footer>
                 </form>
             </dialog>
@@ -203,6 +241,53 @@
         {% endif %}
     </section>
     {% if not editable %}<p class="settings-notice">{{ _('Accountbeheer via de browser is hier niet beschikbaar.') }}</p>{% endif %}
+    {% if management_tls or https_control %}
+    <section class="card settings-panel" aria-labelledby="management-tls-title">
+        <header><div><h2 id="management-tls-title">{{ _('Management HTTPS') }}</h2>
+            <p>{{ _('System administrators manage HTTPS on this node. HA pairing uses a separate certificate.') }}</p></div>
+            {% if management_tls %}<span class="settings-badge" data-enabled="{{ 'true' if management_tls.state == 'valid' else 'false' }}">
+                {{ _('Certificate valid') if management_tls.state == 'valid' else _('Certificate expires soon') if management_tls.state == 'due' else _('Certificate expired') if management_tls.state == 'expired' else _('Certificate status unavailable') }}
+            </span>{% endif %}
+        </header>
+        {% if management_tls and management_tls.state != 'unknown' %}
+        <dl class="settings-facts"><div><dt>{{ _('Expires at') }}</dt><dd>{{ management_tls.expires }}</dd></div></dl>
+        <details class="ha-settings"><summary>{{ _('Certificate fingerprint (SHA-256)') }}</summary><code class="management-tls-fingerprint">{{ management_tls.fingerprint }}</code></details>
+        {% endif %}
+        {% if https_control %}
+        <div id="https-control" data-csrf="{{ csrf }}">
+            <p id="https-node" class="muted"></p>
+            <div class="settings-actions">
+                <button type="button" id="https-prepare" hidden>{{ _('Prepare HTTPS') }}</button>
+                <button type="button" id="https-renew" hidden>{{ _('Renew certificate') }}</button>
+                <a id="https-ca" class="button button-secondary" href="/api/settings/https/ca" download hidden>{{ _('Download node CA') }}</a>
+            </div>
+            <div id="https-plan" hidden>
+                <p>{{ _('Trust the node CA before activating HTTPS. The management interface will briefly restart; proxy traffic continues.') }}</p>
+                <p>{{ _('CA fingerprint (SHA-256)') }} <code id="https-ca-fingerprint" class="management-tls-fingerprint"></code></p>
+                <label class="ha-confirm"><input id="https-trusted" type="checkbox"> {{ _('I have verified and trusted this node CA.') }}</label>
+                <button type="button" id="https-activate" disabled>{{ _('Activate HTTPS') }}</button>
+            </div>
+            <details class="ha-settings"><summary>{{ _('OS-approved management names') }}</summary><ul id="https-names"></ul></details>
+            <p id="https-feedback" role="status" aria-live="polite"></p>
+            <dialog id="https-dialog" class="workspace-dialog" aria-labelledby="https-dialog-title">
+                <form id="https-form" class="workspace-panel">
+                    <header class="workspace-dialog-header"><h3 id="https-dialog-title">{{ _('Confirm HTTPS maintenance') }}</h3></header>
+                    <div class="workspace-dialog-body">
+                        <p>{{ _('This changes HTTPS only on the node shown above. Review the node before continuing through a virtual IP.') }}</p>
+                        <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                        {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>{% endif %}
+                        <p id="https-error" role="alert"></p>
+                    </div>
+                    <footer class="workspace-dialog-footer">
+                        <button type="button" id="https-cancel" class="button-secondary">{{ _('Annuleren') }}</button>
+                        <button type="submit">{{ _('Doorgaan') }}</button>
+                    </footer>
+                </form>
+            </dialog>
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
     <section class="card settings-panel" aria-labelledby="profile-title">
         <header><div><h2 id="profile-title">{{ _('Mijn account') }}</h2><p>{{ actor }} · {{ _(role_labels.get(current_role, 'Monitor')) }}</p></div>
             {% if own %}<span class="settings-badge" data-enabled="{{ 'true' if mfa else 'false' }}">{{ _('2FA aan') if mfa else _('2FA uit') }}</span>{% endif %}

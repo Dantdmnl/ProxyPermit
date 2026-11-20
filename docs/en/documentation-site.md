@@ -91,8 +91,10 @@ Place screenshots beside the task they explain. Use a `figure` with the
 captures. Set `loading=lazy` and the original pixel width/height on the Markdown
 image to reserve space while it loads. Never stretch a small screenshot.
 
-Zensical's bundled GLightbox supplies the gallery and zoom. Local JavaScript
-adds translated labels and focus handling; local CSS styles the figures.
+Use **Enlarge** on a screenshot to open the Zensical gallery. Use **+** and
+**−** to adjust the zoom, scroll to inspect the enlarged image, or choose
+**Fit** to return to the initial view. The controls also work on mobile.
+With a mouse, hold **Ctrl** (or **Command** on macOS) and scroll to zoom.
 Without JavaScript the image links still open the original file. No external
 viewer script, analytics or image service is needed. The GitHub star invitation
 appears as a short footer after the page content.

@@ -8,7 +8,7 @@ server {
     ssl_certificate_key /etc/proxypermit/ha-tls/key.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
 
-    location ~ ^/internal/ha/(enroll|policy)$ {
+    location ~ ^/internal/ha/(enroll|policy|credential-commit)$ {
         allow 192.0.2.12;
         deny all;
         access_log off;

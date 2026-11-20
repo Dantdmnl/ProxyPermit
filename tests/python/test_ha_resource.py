@@ -1,0 +1,86 @@
+"""A protected VIP is healthy only with service, address and HTTP evidence."""
+import json
+import os
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+from subprocess import CompletedProcess
+
+from scripts.deploy import ha_resource as agent
+
+
+class ProtectedResourceTests(unittest.TestCase):
+    value = {'interface': 'ens3', 'address': '192.0.2.10'}
+
+    def runner(self, active=True, vip=True, healthy=True, stop=True, mode='control-group'):
+        def command(*args, **_options):
+            code, output = 0, ''
+            if args[:3] == ('systemctl', 'is-active', '--quiet'):
+                code = 0 if active else 3
+            elif args[0] == 'ip':
+                output = json.dumps([{'addr_info': [{'local': '192.0.2.10'}] if vip else []}])
+            elif args[0] == 'runuser':
+                code = 0 if healthy else 1
+            elif args[:2] == ('systemctl', 'stop'):
+                code = 0 if stop else 1
+            elif args[:2] == ('systemctl', 'show'):
+                output = {'KillMode': mode, 'SendSIGKILL': 'yes', 'Restart': 'no'}[args[-2]]
+            elif args[:2] == ('systemctl', 'is-enabled'):
+                code, output = 1, 'disabled'
+            return CompletedProcess(args, code, output, '')
+        return command
+
+    def test_monitor_requires_real_service_vip_and_proxy_health(self):
+        for active, vip, healthy, expected in ((True, True, True, 0), (True, True, False, 1),
+                (True, False, True, 1), (False, True, True, 1), (False, False, True, 7)):
+            with self.subTest(active=active, vip=vip, healthy=healthy), \
+                    patch.object(agent, 'command', side_effect=self.runner(active, vip, healthy)):
+                self.assertEqual(agent.monitor(self.value), expected)
+
+    def test_leftover_vip_or_failed_stop_never_counts_as_safe_stop(self):
+        for vip, stop, expected in ((True, True, 1), (False, False, 1), (False, True, 0)):
+            with patch.object(agent, 'command', side_effect=self.runner(False, vip, stop=stop)):
+                self.assertEqual(agent.resource('stop', self.value), expected)
+
+    def test_running_children_do_not_count_as_stopped(self):
+        with patch.object(agent, 'command', side_effect=self.runner(active=True, vip=False)):
+            self.assertEqual(agent.resource('stop', self.value), 1)
+
+    def test_unsafe_kill_mode_is_rejected_before_start(self):
+        with patch.object(agent, 'command', side_effect=self.runner(mode='process')) as command:
+            with self.assertRaises(ValueError):
+                agent.resource('start', self.value)
+            self.assertFalse(any(call.args[:2] == ('systemctl', 'start') for call in command.call_args_list))
+
+    def test_independent_boot_activation_is_rejected(self):
+        original = self.runner()
+        def command(*args):
+            if args[:2] == ('systemctl', 'is-enabled'):
+                return CompletedProcess(args, 0, 'enabled', '')
+            return original(*args)
+        with patch.object(agent, 'command', side_effect=command):
+            with self.assertRaises(ValueError):
+                agent.validate_service()
+
+    def test_missing_interface_is_an_error(self):
+        with patch.object(agent, 'command', return_value=CompletedProcess([], 1, '', '')):
+            with self.assertRaises(ValueError):
+                agent.owns_vip(self.value)
+
+    @unittest.skipUnless(os.name == 'posix' and getattr(os, 'geteuid', lambda: -1)() == 0, 'Root-owned Linux profile check.')
+    def test_profile_rejects_writable_files_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'profile.json'
+            path.write_text(json.dumps(dict(version=1, interface='ens3', vip='192.0.2.10/24')))
+            path.chmod(0o600)
+            with patch.object(agent, 'PROFILE', path):
+                self.assertEqual(agent.profile()['address'], '192.0.2.10')
+                path.chmod(0o666)
+                with self.assertRaises(ValueError):
+                    agent.profile()
+            link = path.with_name('link')
+            link.symlink_to(path)
+            with patch.object(agent, 'PROFILE', link):
+                with self.assertRaises(OSError):
+                    agent.profile()

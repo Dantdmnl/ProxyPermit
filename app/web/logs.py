@@ -19,8 +19,39 @@ from ..core.audit import audit_lock, audit_paths, bounded_setting, open_audit, r
 
 SERVICES = ('manager', 'tinyproxy', 'proxy_traffic', 'keepalived', 'audit')
 UNITS = ('proxypermit.service', 'proxypermit-ha-policy.service', 'proxypermit-ha-tls.service',
-         'proxypermit-ha-setup.service', 'proxypermit-ha-retire.service', 'tinyproxy.service', 'keepalived.service')
+         'proxypermit-ha-setup.service', 'proxypermit-ha-retire.service', 'proxypermit-ha-cert-recover.service',
+         'proxypermit-cluster-status.service', 'tinyproxy.service', 'keepalived.service')
+UNITS += ('proxypermit-management-tls-renew.service', 'proxypermit-management-tls-recover.service',
+          'proxypermit-management-tls-web.service')
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+
+
+def presentation_records(records, include_routine=False):
+    """Collapse only known client trust alerts; leave retained journals untouched."""
+    result, groups, hidden = [], {}, 0
+    for source in records:
+        item = dict(source)
+        raw = item.get('_raw', '')
+        unit = item.get('_unit', '')
+        if not include_routine and item['level'] in ('DEBUG', 'INFO') and (
+                unit == 'proxypermit-cluster-status.service' and raw in (
+                    'proxypermit-cluster-status.service: Deactivated successfully.',
+                    'Starting proxypermit-cluster-status.service - Export private ProxyPermit cluster status...',
+                    'Finished proxypermit-cluster-status.service - Export private ProxyPermit cluster status.')):
+            hidden += 1
+            continue
+        if (not include_routine and unit == 'proxypermit.service' and item['level'] == 'WARNING'
+                and re.fullmatch(r'\[[^\]\n]+\] \[\d+\] \[WARNING\] Invalid request from ip=\S+: '
+                                 r'\[SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN\] sslv3 alert certificate unknown '
+                                 r'\(_ssl\.c:\d+\)', raw)):
+            key = (unit, int(item['_time'] // 60))
+            if key in groups:
+                groups[key]['repetitions'] += 1
+                continue
+            item['repetitions'] = 1
+            groups[key] = item
+        result.append(item)
+    return result, hidden
 
 
 def identify_health_checks(records):
@@ -224,15 +255,18 @@ def journal_records(namespace, since, until, maximum):
                 continue
             if re.search(r'\b(?:AUTH_AUDIT|AUDIT)\s+[^\n]*\bevent=', raw):
                 continue
-            unit = item.get('_SYSTEMD_UNIT') or item.get('UNIT', '')
+            unit = item['UNIT'] if item.get('UNIT') in UNITS else item.get('_SYSTEMD_UNIT', '')
             identifier = item.get('SYSLOG_IDENTIFIER', '')
             service = 'keepalived' if 'keepalived' in unit or identifier == 'Keepalived' else 'manager'
             if 'tinyproxy' in unit or identifier == 'tinyproxy':
                 service = 'proxy_traffic' if re.search(r'(?i)request \(|connect \(|filtered domain|unauthorized connection|established connection|opensock:', raw) else 'tinyproxy'
             priority = int(item.get('PRIORITY', 6))
             level = 'ERROR' if priority <= 3 else 'WARNING' if priority == 4 else 'DEBUG' if priority == 7 else 'INFO'
+            embedded = re.match(r'^\[[^\]\n]+\] \[\d+\] \[(WARNING|ERROR|CRITICAL)\] ', raw)
+            if unit == 'proxypermit.service' and embedded and level != 'ERROR':
+                level = 'WARNING' if embedded[1] == 'WARNING' else 'ERROR'
             records.append(dict(timestamp=iso(timestamp), level=level, service=service, message=scrub_message(raw),
-                                _raw=raw, _pid=item.get('_PID'), _origin=namespace or 'host',
+                                _raw=raw, _unit=unit, _pid=item.get('_PID'), _origin=namespace or 'host',
                                 _time=timestamp, _id=item['__CURSOR'] if isinstance(item.get('__CURSOR'), str) else hashlib.sha256(line.encode()).hexdigest()))
         except (ValueError, KeyError, TypeError, OverflowError, RecursionError):
             incomplete = True
@@ -399,8 +433,9 @@ def query_logs(arguments, audit_path):
         seen.add(item['_id'])
         filtered.append(item)
     filtered.sort(key=lambda item: (item['_time'], item['_id']), reverse=True)
+    filtered, hidden_routine = presentation_records(filtered, arguments.get('routine') == 'include' or bool(query))
     page = [{key: value for key, value in item.items() if not key.startswith('_')} for item in filtered[offset:offset + limit]]
-    return dict(success=True, logs=page, healthChecksHidden=hidden_health, pagination=dict(offset=offset, limit=limit, total=len(filtered), returned=len(page),
+    return dict(success=True, logs=page, healthChecksHidden=hidden_health, routineMessagesHidden=hidden_routine, pagination=dict(offset=offset, limit=limit, total=len(filtered), returned=len(page),
                 hasMore=offset + len(page) < len(filtered), query=query, anchor=iso(until), truncated=truncated),
                 serviceCounts={name: sum(item['service'] == name for item in filtered) for name in SERVICES},
                 coverage=dict(since=iso(since), until=iso(until), incomplete=bool(truncated or errors or malformed),

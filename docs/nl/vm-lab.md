@@ -42,10 +42,21 @@ Gebruik op beide de naam `proxypermit-ha` en stel op die adapters de statische
 adressen uit het HA-voorbeeld hieronder in, zonder extra standaardgateway.
 Geef een testclient op dat interne netwerk bijvoorbeeld `10.77.0.20/24`.
 
-Voor beheer via SSH kun je op de NAT-adapter hostpoort 2221 voor A en 2222
-voor B naar gastpoort 22 doorsturen. Bind beide doorstuurregels op Windows
+Voor beheer via SSH kun je op de NAT-adapter vrije hostpoorten, bijvoorbeeld
+12222 voor A en 12223 voor B, naar gastpoort 22 doorsturen. Bind beide doorstuurregels op Windows
 aan `127.0.0.1` en gebruik die hostpoort met `ssh -p`.
 [VirtualBox-netwerkmodi](https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/networkingdetails.html)
+
+Windows kan na een herstart poortbereiken reserveren voor Hyper-V/WSL. Is een
+ingestelde doorstuurpoort niet bereikbaar? Controleer de reserveringen in PowerShell:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+Kies hostpoorten buiten deze bereiken en pas je SSH-commando’s aan. Dat een regel
+in VirtualBox staat, betekent niet dat Windows het openen van de poort toestond.
+Bewaar de privésleutel van het lab buiten de repository en maak een beveiligde reservekopie.
 
 ## Eén zelfstandige node
 

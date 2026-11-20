@@ -15,6 +15,44 @@ from scripts.deploy.logging_policy import assets
 
 
 class LoggingTests(unittest.TestCase):
+    def test_tls_warning_priority_and_grouping_preserve_raw_search(self):
+        raw = '[2026-11-17 11:12:44 +0000] [42] [WARNING] Invalid request from ip=10.0.0.4: [SSL: SSLV3_ALERT_CERTIFICATE_UNKNOWN] sslv3 alert certificate unknown (_ssl.c:2570)'
+        timestamp = int(self.now // 60) * 60 - 59
+        items = [dict(__REALTIME_TIMESTAMP=str(int((timestamp + index) * 1000000)), MESSAGE=message,
+                      PRIORITY='6', _SYSTEMD_UNIT=unit, __CURSOR=str(index))
+                 for index, (message, unit) in enumerate([
+                     (raw, 'proxypermit.service'), (raw.replace('[42]', '[43]'), 'proxypermit.service'),
+                     (raw.replace('SSLV3_ALERT_CERTIFICATE_UNKNOWN', 'UNSUPPORTED_PROTOCOL'), 'proxypermit.service'),
+                     ('proxypermit-cluster-status.service: Deactivated successfully.', 'proxypermit-cluster-status.service'),
+                     ('proxypermit-cluster-status.service: Failed with result timeout.', 'proxypermit-cluster-status.service')])]
+        items[3].update(_SYSTEMD_UNIT='init.scope', UNIT='proxypermit-cluster-status.service')
+        with patch.object(logs, 'journal_lines', return_value=([json.dumps(item) for item in items], False)):
+            records, _ = logs.journal_records('proxypermit', timestamp - 1, timestamp + 10, 20)
+        self.assertEqual(records[0]['level'], 'WARNING')
+        with patch.object(logs.sys, 'platform', 'linux'), \
+                patch.object(logs, 'journal_records', return_value=(records, False)):
+            normal = logs.query_logs({'service': 'manager', 'until': logs.iso(timestamp + 10)}, self.path)
+            raw_view = logs.query_logs({'service': 'manager', 'routine': 'include', 'until': logs.iso(timestamp + 10)}, self.path)
+            search = logs.query_logs({'service': 'manager', 'q': 'certificate_unknown', 'until': logs.iso(timestamp + 10)}, self.path)
+        self.assertEqual(len(normal['logs']), 3)
+        self.assertEqual(normal['routineMessagesHidden'], 1)
+        self.assertEqual(next(item for item in normal['logs'] if item.get('repetitions'))['repetitions'], 2)
+        self.assertTrue(any('UNSUPPORTED_PROTOCOL' in item['message'] for item in normal['logs']))
+        self.assertTrue(any('Failed' in item['message'] for item in normal['logs']))
+        self.assertEqual(len(raw_view['logs']), 5)
+        self.assertEqual(len(search['logs']), 2)
+        self.assertNotIn('10.0.0.4:', json.dumps(raw_view))
+        self.assertNotIn('_raw', json.dumps(normal))
+        self.assertNotIn('repetitions', records[0])
+
+    def test_embedded_warning_never_downgrades_native_error(self):
+        item = dict(__REALTIME_TIMESTAMP=str(int(self.now * 1000000)),
+                    MESSAGE='[2026-11-17 11:12:44 +0000] [42] [WARNING] example',
+                    PRIORITY='3', _SYSTEMD_UNIT='proxypermit.service', __CURSOR='native-error')
+        with patch.object(logs, 'journal_lines', return_value=([json.dumps(item)], False)):
+            records, _ = logs.journal_records('proxypermit', self.now - 1, self.now, 20)
+        self.assertEqual(records[0]['level'], 'ERROR')
+
     def test_health_visibility_preserves_raw_history_search_and_redaction(self):
         timestamp = time.time() - 1
         records = [dict(timestamp=logs.iso(timestamp), level='INFO', service='proxy_traffic',

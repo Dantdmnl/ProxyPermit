@@ -1291,3 +1291,5 @@ body.modal-open {
         /* Behouden: clear blue to indicate kept/ok */
         .chip.unchanged { background:#2563eb; color:#fff; }
         .merge-preview-empty { color:#9aa4b2; padding:12px; text-align:center; }
+        .rule-asset-notice { margin:16px 0; padding:16px; border:1px solid var(--line); border-left:4px solid var(--warning, #956400); background:var(--surface, #fff); color:var(--ink); }
+        .rule-asset-notice p { margin:0 0 12px; }

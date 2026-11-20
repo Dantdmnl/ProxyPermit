@@ -18,7 +18,7 @@ Before choosing the release version:
   management source and host-side ports. A NAT source is not the node's own address.
 - Verify standalone and paired HA behavior. Compare policy revisions and test
   actual client traffic; a green status alone is insufficient.
-- Review [verification](verification.md) and [planned work](planned-work.md).
+- Review [verification](verification.md) and the [roadmap](planned-work.md).
   Do not describe a planned feature as available in the release.
 - Check backup and recovery instructions before asking operators to upgrade.
 
@@ -46,8 +46,26 @@ python scripts/release.py prepare 1.2.0
 
 Review the diff. Preparation updates `VERSION`, generated files and the dated
 changelog section. It stops if the notes or version are invalid. Dates use UTC.
-It does not commit, tag, push, publish or deploy anything. Published stable tags
+It does not commit, tag, push, publish or deploy anything. Published tags, including prereleases,
 must not be moved to new code; give changed code a new version.
+
+### Development prereleases
+
+Use `MAJOR.MINOR.PATCH-dev.N` for a test release, for example:
+
+```sh
+python scripts/release.py prepare 1.4.0-dev.1 --dry-run
+python scripts/release.py prepare 1.4.0-dev.1
+```
+
+Each numbered prerelease must be newer than the previous version; `.10` follows
+`.9`. A stable `1.4.0` follows `1.4.0-dev.N`. Give every published build its own
+tag and dated notes; never replace an earlier prerelease's code or assets.
+
+The same CI checks apply to stable and development releases. Publication adds
+GitHub's **Pre-release** flag and explicitly leaves **Latest** unchanged for
+`-dev.N`. Include tested capabilities, known limitations and test-deployment
+advice in the notes. A prerelease is not a recommendation to upgrade production.
 
 ## 3. Validate the candidate
 
@@ -84,19 +102,19 @@ git tag -a v1.2.0 TESTED_COMMIT_SHA -m "ProxyPermit v1.2.0"
 git push origin v1.2.0
 ```
 
-A stable tag must be exactly `vVERSION` and have a dated changelog section.
+Every release tag must be exactly `vVERSION` and have a dated changelog section.
 Tag CI verifies both before producing the release archive.
 
 ## 5. Publish the download and documentation
 
-Once stable tag CI passes, **Publish stable GitHub Release** calls the reusable
+Once tag CI passes, **Publish GitHub Release** calls the reusable
 **Publish release** workflow. It publishes the exact **proxypermit-source-release**
 archive and checksum from that successful run, with notes from the tagged changelog.
 It verifies repository, tag, commit, CI result, archive manifest and checksums.
 Existing releases are left unchanged; release assets are never silently replaced.
 
 To publish an older tested tag whose CI did not yet publish releases, run
-**Actions → Publish release → Run workflow** on `main`. Enter the stable tag and
+**Actions → Publish release → Run workflow** on `main`. Enter the stable or development tag and
 its successful **ProxyPermit CI** tag-push run ID. A PR or branch run is rejected.
 Expired artifacts require a new successful CI run on that same tag; do not move it.
 Only the publication job has release write permission. Actions artifacts expire
@@ -119,6 +137,19 @@ Actions are pinned to commits and ordinary CI jobs use a read-only token. Covera
 available as **proxypermit-coverage**. The release publication job receives contents write access; the separate Pages
 deployment job receives Pages and identity-token write permissions. Dependabot proposes Action
 and Python dependency updates.
+
+## Root tests and coverage
+
+A separate disposable Ubuntu container runs the full isolated suite as root.
+`--require-root --fail-on-skip` makes missing privileges or skipped tests fail
+that job. The ordinary Linux/Windows matrix still checks unprivileged behavior.
+The release archive waits for both jobs.
+
+Coverage includes `app`, `scripts`, `legacy` and `deploy`, including namespace
+packages. The combined line/branch score must stay at least 48%, based on the
+initial broader measurement of about 49%. This is a regression baseline, not a
+claim of sufficient coverage. The `proxypermit-coverage` artifact contains XML,
+JSON and the raw data so deployment-helper gaps remain visible.
 
 ## Old workflow runs and source history
 

@@ -6,15 +6,95 @@ Historical deployments are not assigned retrospective release tags.
 
 ### Changed
 
-- Use build-time VS Code Light+ / Dark+ syntax highlighting for documentation commands, preserving copied text and code anchors.
-- Remove decorative screenshot frames and capture overview screenshots without a truncated sidebar.
+- Gate releases on an isolated Linux-root CI job with no skipped tests, measure application and deployment/tooling coverage, and enforce a coverage baseline.
+- Quiet expected disconnects in TLS test servers while making unexpected server-thread errors fail their tests.
+- Add visible, translated controls to enlarge documentation screenshots and adjust the zoom in the gallery on desktop and mobile.
 
-- Publish stable GitHub Releases automatically after successful tag CI, using verified CI artifacts and the tagged changelog.
+## [1.4.0-dev.1] - 2026-11-17
 
-- Present documentation screenshots as consistently sized, captioned figures with focused example data and reserved image dimensions.
-- Replace the custom screenshot dialog with Zensical's bundled lightbox gallery, adding localized controls and keyboard focus handling.
-- Self-host gallery assets through the documentation privacy build and check the gallery, focus, sizing and JavaScript-free fallback in CI.
-- Move the sign-in illustration to first steps and use a quieter documentation support footer.
+### Pre-release status
+
+This development release is intended for disposable or recoverable test deployments.
+It does not replace v1.3.0 as the stable release. Management HTTPS and stricter HA
+administration are available for testing; protected-cluster provisioning remains
+experimental and requires OS administration.
+
+### Changed
+
+- Support numbered development releases with dated notes, numeric version ordering and CI-gated GitHub prerelease publication that preserves the latest stable release.
+- Rewrite the Dutch and English roadmap around administrator benefits, released versus unreleased capabilities and remaining product work; keep detailed lab procedures in the verification report.
+- Expand the repository README with a capability overview, deployment guidance, a guided first-install path, release/development boundaries and third-party licensing information.
+
+### Added
+
+- Add experimental root-coordinated Proxmox cluster preparation: inert package installation, mandatory client-authenticated witness TLS, encrypted Corosync transport and separately verified activation of a stopped Pacemaker VIP. Retain private operation checkpoints and refuse changed plans, credentials, existing resources or administrator configuration.
+- Record live-log performance and clearer certificate-trust warnings as explicit Dutch/English roadmap work, including incremental reads, archive/date searches and preservation of raw records and retention limits.
+- Add root-exported, expiring cluster-preparation checks for system administrators, secret-free node/witness plans and separate peer-only Proxmox lab credential delegation. Checks do not activate quorum or imply a completed power-off test.
+- Add an experimental opt-in, SHA-256-pinned ClusterLabs Proxmox agent backport with node-local root-only tokens, strict CA/hostname verification and peer-target checks. Keep the distribution agent intact and remove only the exact owned executable during supported uninstall.
+- Add system-administrator-only HTTPS setup and renewal in Settings: prepare a certificate, download and acknowledge the node CA, activate HTTPS and renew without handing the web app CA keys or arbitrary root commands. Require fresh authentication, optional 2FA, CSRF and revision checks; record the requesting administrator in privileged audit events.
+- Add opt-in direct management HTTPS for Gunicorn and Granian, with a unique node CA, 90-day server certificates, daily renewal checks and a read-only expiry/fingerprint card in settings.
+- Add root-operated certificate renewal, verified activation rollback, durable boot recovery and OS-UID audit events. Keep management certificates separate from HA replication trust and leave proxy/VIP services untouched during TLS maintenance.
+- Document HTTPS trust, renewal, recovery and explicit HSTS activation in Dutch and English. Preserve managed TLS across upgrades and supported app rollbacks; remove only matching owned TLS units on uninstall.
+
+### Fixed
+
+- Exclude cluster credentials, Corosync keys, NSS databases and private certificate bundles from Git, source archives and installer copies.
+- Use threaded Gunicorn workers for direct HTTPS so browser preconnections do not occupy the only two request workers. Verify parallel static requests with idle TCP connections for both supported servers.
+- Bound management service shutdown below the TLS helper's timeout and refuse a second web job while the previous root service is still exiting.
+- Show a localized reload action when the rule renderer fails to download instead of reporting a secondary JavaScript exception as an API error.
+- Correct embedded Gunicorn warning/error severity in journal responses. Group repeated client certificate-trust warnings per minute and hide successful cluster-status housekeeping by default; searching or showing routine messages retains access to individual records.
+- Require explicit confirmation, the current administrator password and optional fresh 2FA before revoking HA pairing on either node. Preserve typed input on authentication failure and audit the actor without credentials.
+- Reject ambiguous fencing coverage across separate devices, mismatched running agent identities and unverified Proxmox TLS when deriving cluster-protection status.
+- Keep public systemd logging directories traversable under the HA setup helper's private umask. Repair only the exact affected installer-owned public Keepalived directory.
+- Treat unreadable cluster reservations as uncertain and block independent lifecycle actions, while keeping settings and status pages available.
+- Isolate installer self-tests from a host's managed management-TLS profile and transport settings.
+
+### Removed
+
+- Remove obsolete historical documentation under `docs/legacy` and its archive links; current Dutch/English guides and legacy HA compatibility tools remain available.
+
+### Known limitations
+
+- The ordinary HA wizard still configures Keepalived and policy synchronization without quorum or fencing. Experimental protected-cluster setup requires trusted OS coordination; guided GUI provisioning and complete protected-cluster rollback, retirement and removal remain open.
+- Controlled Proxmox tests cover real peer power-off/recovery, a frozen active VM, witness loss and unavailable fencing. The full interruption/partition matrix and additional platform adapters are not complete. A witness must have a suitable independent failure domain for production.
+- Management HTTPS is opt-in. Clients must trust the node CA. HTTPS by default, broader certificate-provider support and remaining web-hardening checks are still planned.
+- Repeated certificate-trust warnings are grouped, but further log-loading performance and presentation improvements remain on the roadmap. Raw records and existing retention controls remain available.
+- Accounts and sessions remain local to each node. B stays read-only for shared policy after traffic takeover. The lab fencing-token helper uses expiring credentials and is not a production credential-renewal system.
+
+## [1.3.0] - 2026-11-15
+
+### Added
+
+- Rotate the HA peer key from A's interface with password confirmation, optional fresh TOTP, automatic acknowledgement by B and bounded recovery after a lost response.
+- Renew internal HA certificates through an OS-operated staged pin handover, durable commit/recovery records and OS-UID audit attribution.
+- Protect HA publication order with membership-scoped generations so B rejects stale, conflicting or downgraded policy publications.
+- Add opt-in connection-preserving filter reload for Tinyproxy 1.11.1 and 1.11.3, with fresh journal acknowledgements and native HTTP health checks.
+- Show expiring, root-verified failover-protection status without giving the web account access to cluster credentials.
+- Add an experimental Pacemaker/Corosync Keepalived resource and guarded rolling app upgrades for OS-prepared two-node clusters, including an exclusive maintenance reservation and explicit recovery.
+
+### Fixed
+
+- Preserve ACLs across native filter updates and recovery, granting Tinyproxy read access only to its own configuration and filter files.
+- Reject native filter lines that Tinyproxy would split or interpret differently; never silently restart after a rejected reload or a changed activation plan.
+- Persist credential/state replacements and removals before acknowledging changes; redact incomplete peer responses and translate HA dialog errors.
+- Keep public certificate-transition metadata outside private TLS directories so existing deployments continue synchronizing without exposing keys.
+- Prepare fresh-install backup directories before the service-account import check; refuse backup symlinks and unsafe recursive root migration of application-owned draft files.
+- Preserve service-account access when installing from private source directories and isolate installer self-tests from the real host's cluster and certificate state.
+- Permit the narrowly scoped peer-key commit endpoint in the legacy internal nginx example.
+
+### Changed
+
+- Publish a bilingual public roadmap with available, opt-in, experimental and planned capabilities, verified checklists and explicit HA limitations.
+- Improve documentation screenshots, the lightbox gallery, localized controls and keyboard focus; render command blocks with VS Code Light+ / Dark+ colors.
+- Publish stable GitHub Releases automatically from successful tag CI using verified archives, checksums and dated release notes.
+
+### Upgrade notes and limitations
+
+- Upgrade both HA nodes before rotating peer keys or internal certificates. Older internal nginx deployments must allow the peer-restricted `/internal/ha/credential-commit` endpoint; see the administrator guide.
+- Normal HA setup still configures Keepalived and automatic policy sync. It does not automatically configure quorum, a witness or fencing; VRRP alone does not guarantee exclusive VIP ownership during a network partition.
+- Protected-cluster integration remains experimental. Initial OS provisioning, additional fencing platforms and complete cluster-aware rollback/removal are not yet provided by the GUI or normal installer.
+- Reload remains disabled by default. Enable it only on verified supported hosts; other changes require restart and existing tunnels are not retroactively closed by new filter rules.
+- Default management HTTPS remains planned. This release preserves existing management listeners; internal HA certificate renewal does not enable HTTPS on the website.
 
 ## [1.2.1] - 2026-11-13
 

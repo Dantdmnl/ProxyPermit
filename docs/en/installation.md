@@ -88,6 +88,11 @@ requires a separate header filter.
 
 ## New two-node HA cluster
 
+This workflow configures Keepalived and policy synchronization. It does not
+automatically configure quorum, a witness or fencing. Read
+[HA protection and its limits](high-availability.md#understand-failover-protection)
+before production deployment.
+
 ### Join existing standalone nodes through the web interface
 
 Install or upgrade both hosts as standalone nodes first. Assign static
@@ -243,6 +248,16 @@ Share an authenticator secret only with the account owner.
 ## Upgrade, migration, and recovery
 
 ### Upgrade a managed installation
+
+For an OS-prepared quorum/fencing cluster, use
+[protected-cluster maintenance](administration.md#maintenance-on-an-os-protected-cluster)
+instead of the ordinary upgrade commands below. Independent setup, rollback,
+retirement and uninstallation are blocked on those protected nodes.
+
+When upgrading to v1.3.0, upgrade **both** HA nodes before rotating their peer
+key or internal certificate. Existing HA remains Keepalived-based unless you
+separately provision the experimental protected cluster. Reload remains opt-in;
+existing HTTP management listeners are preserved.
 
 For an installer-managed deployment, obtain the release you want and run the
 upgrade from that source directory. The installer uses the source in that
