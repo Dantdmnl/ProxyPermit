@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing stable version tag to publish
+        description: Existing stable or dev.N version tag to publish
         required: true
         type: string
       ci_run_id:

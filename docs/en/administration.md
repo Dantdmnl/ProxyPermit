@@ -51,8 +51,9 @@ Verify actual proxy traffic in addition to checking systemd and console health.
 1. Record which destinations must be reachable after the change.
 2. Open **Proxy configuration**. Select **Validate draft**, review errors and
    warnings, then select **Save draft**.
-3. Select **Publish and activate** during the maintenance window. Tinyproxy
-   restarts and may interrupt existing connections.
+3. Select **Publish and activate** during the maintenance window. Review the
+   confirmation: the default restart may interrupt existing connections. A
+   verified, enabled reload path preserves them for compatible filter changes.
 4. Retest client traffic and verify the change in **Live logs**.
 
 On paired managed HA nodes, publish shared policy on A. B retrieves and
@@ -60,7 +61,31 @@ activates it automatically; verify matching revisions before testing failover.
 Unpaired nodes retain independent policy. Keep account and software maintenance
 separate from policy publication.
 
+## Optional filter reload
+
+By default, publishing restarts Tinyproxy and may interrupt connections.
+v1.3.0 adds an opt-in reload path for compatible filter changes on **Tinyproxy
+1.11.1 and 1.11.3** with managed journal logging. Other changes still require a
+restart; a failed reload never silently falls back to one.
+
+To opt in, have the OS administrator set `TINYPROXY_RELOAD_ENABLED=true` in
+`/etc/proxypermit/.env`, then run the supported installer upgrade from the new
+release. On a protected cluster, use the cluster-maintenance workflow below.
+The installer grants Tinyproxy read-only ACL access to its native configuration
+and filter file without adding it to the management group. Existing custom ACL
+masks that block reading require OS review. Recheck permissions if you change
+Tinyproxy's operating-system account.
+
+Verify allowed/blocked destinations, a continuous HTTP transfer and a CONNECT
+tunnel on your hosts before relying on this option. Existing tunnels remain
+open; new rules do not retroactively close them. Extended power-loss and storage
+acceptance remains on the [roadmap](planned-work.md).
+
 ## Troubleshoot a deployment
+
+See [HA protection and its limits](high-availability.md#understand-failover-protection)
+if the console says quorum and fencing are not configured. This does not indicate
+a policy synchronization failure.
 
 Open **Live logs** and filter by source and level. Type to filter loaded
 entries or select **Search server** to include older entries. Expand an audit
@@ -107,8 +132,9 @@ recovery.
 - Three local roles are supported. Central identity and account replication
   are separate from the current local account model.
 - Audit logs are local. Define collection and retention for your organization.
-- The WSL lab verified virtual IP failover. Validate installation, host loss,
-  network partitions, and recovery on the separate hosts you intend to use.
+- VirtualBox HA and a separate KVM quorum/fencing prototype have been tested.
+  The normal HA workflow does not provision that protected cluster. Validate
+  installation, host loss, network partitions and recovery on your intended platform.
   [Verification report](verification.md)
 
 ## Connection loss
@@ -171,3 +197,114 @@ is why the standalone and HA nodes can correctly show the same value. It does
 not imply that their HA addresses or identities are identical. Behind a shared
 NAT or reverse proxy, enforce any per-client network restrictions at that entry
 point too; the source rule never replaces authentication or HTTPS.
+
+## Renewing the HA peer key
+
+Upgrade both nodes first and wait for successful automatic synchronization.
+On A, open **Settings → High availability → Rotate peer key**. Confirm with your
+current password and, if enabled for your account, a fresh authenticator code.
+B receives the new key automatically through the existing pinned TLS connection.
+It saves the candidate before asking A to revoke the old key. The interface shows
+the transition and its completion; it never displays either peer key.
+
+The transition expires after ten minutes. If it expires before B commits, both
+keys are rejected and the nodes must be paired again. A lost commit response can
+be retried with B's saved candidate. Policy and existing proxy connections remain
+unchanged during key rotation. Certificate renewal is a separate operation.
+
+If you use the older nginx-based internal TLS example, allow
+`/internal/ha/credential-commit` alongside `enroll` and `policy` before rotating.
+Keep the peer source-address restriction and all other paths denied. Back up the
+configuration, run `sudo nginx -t`, then reload nginx. The updated example is
+`deploy/nginx/proxypermit-ha.conf.example`. The managed Gunicorn TLS endpoint
+already restricts access to these three machine endpoints. Do not expose the
+management interface through this internal listener.
+
+## Renewing the internal HA certificate
+
+This is an OS-administrator operation on A, separate from the certificate used
+by the management website. Upgrade both nodes and check successful synchronization
+first. The current internal certificate must remain valid for at least eleven
+minutes. The following commands use the default installation directory:
+
+```bash
+cd /opt/proxypermit/current
+sudo .venv/bin/python -m scripts.deploy.ha_certificates plan
+sudo .venv/bin/python -m scripts.deploy.ha_certificates stage
+sudo .venv/bin/python -m scripts.deploy.ha_certificates activate
+```
+
+Allow B to poll after staging. Activation refuses to commit until B has saved
+the candidate pin; retry `activate` after the next synchronization if needed.
+For an older nginx-based internal listener, add `--tls-service nginx.service` to
+`stage`. With a custom installation path, also pass `--install-dir /your/path`.
+Management restarts briefly; Tinyproxy and Keepalived are preserved.
+
+Before commitment, `cancel` withdraws the offer without changing the active
+certificate. After commitment, recovery must finish the new certificate; never
+restore only the old certificate or old pin. An OS recovery unit completes an
+interrupted commit at boot. Use `recover` to retry it manually, then `activate`
+to obtain B's confirmation. An expired handover or changed peer may require
+out-of-band review and pairing again. Verification is never disabled.
+
+Candidate keys, original certificate/key/environment backups and the recovery
+plan remain root-private under `/etc/proxypermit/ha-tls/maintenance`. Public
+handover metadata is stored separately in
+`/etc/proxypermit/ha-certificate-transition.json`; the web service does not need
+access to a legacy private TLS directory. Maintenance events include the OS UID
+and operation ID in the existing private audit log and follow its retention policy.
+
+## Maintenance on an OS-protected cluster
+
+This workflow is for an OS administrator who has already configured the tested
+Pacemaker/Corosync resource, independent TLS witness and fencing. The normal HA
+setup wizard does **not** provision these components yet. Keepalived must have
+independent boot activation and automatic restarts disabled: Pacemaker owns it.
+
+**Failover protection** in the interface shows recent root-verified cluster
+evidence. It distinguishes protection not configured, uncertain state, degraded
+protection, a stopped resource and conflicting ownership. Healthy evidence expires
+after at most twenty seconds without a successful refresh. A configured fencer
+must explicitly map both nodes to distinct targets and be monitored as available.
+This does not replace a real fencing test or verify the independence of the
+hypervisor, witness and power infrastructure.
+
+For an app upgrade, extract the new release and run its installer on one node:
+
+```bash
+sudo bash install.sh --upgrade --cluster-maintenance --plan
+sudo bash install.sh --upgrade --cluster-maintenance --apply
+```
+
+Use `--install-dir /your/path` for a custom installation. The installer requires
+healthy quorum, witness and fencing, reserves maintenance for the whole cluster,
+then puts this node in standby. Local changes start only after the peer owns the
+protected VIP. OS packages, Keepalived configuration and cluster services are
+preserved. After checking the manager and native proxy, it restores the exact
+previous standby setting and releases the reservation. Wait for stable cluster
+status before updating the second node. Shared policy is still published on A;
+moving the VIP does not give B write authority.
+
+An interrupted or failed upgrade leaves the reservation in place. It has no
+automatic expiry, so the other node cannot also enter maintenance. Review the
+installer's backup manifest and repair the local installation first. Then use the
+installed release to verify recovery:
+
+```bash
+cd /opt/proxypermit/current
+sudo .venv/bin/python -m scripts.deploy.cluster_maintenance --recover
+```
+
+Recovery verifies local manager/proxy health, peer protection and matching
+reservation ownership before restoring standby. It refuses changed operator
+settings or an ambiguous checkpoint. Do not delete
+`/etc/proxypermit/cluster-maintenance.json`, clear another node's reservation or
+start Keepalived directly to bypass a refusal. Review unresolved cases through OS
+cluster administration and out-of-band access. Independent installer rollback,
+HA setup, node retirement and uninstallation remain blocked on protected nodes;
+their complete cluster-aware workflows and other fencing platforms remain open.
+
+The installer also validates private native draft backups. It refuses symlinks,
+linked files and legacy drafts with unsuitable ownership or permissions instead
+of recursively changing application-writable paths as root. Review those files
+through OS administration; do not apply a broad recursive permission command.

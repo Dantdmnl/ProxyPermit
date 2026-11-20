@@ -8,6 +8,12 @@ from stat import S_IMODE
 from pathlib import Path
 
 from flask import Blueprint, jsonify, render_template, request, session, redirect
+from ..core.activation import service_activation_action
+from ..core import ha_credentials as credentials
+from ..core.ha_policy_order import PolicyOrderError
+from ..core import ha_certificates as certificates
+from ..core import cluster
+from ..core.native_filter import validate_filter
 from ..core.files import file_lock
 from ..core.access_safety import ensure_access, read_profile
 from ..core.ha_policy import MAX_TRANSFER, baseline, issue_invite, merge_policy, parse_invite, sign_policy, verify_policy
@@ -50,29 +56,6 @@ def domain_editor_error(filter_path):
     return None
 
 
-def validate_filter(content, pattern_type):
-    """Check native regex on Linux using the same POSIX family; never log rules."""
-    import subprocess
-    import tempfile
-    if not isinstance(content, str) or len(content.encode('utf-8')) > 1024 * 1024 or '\x00' in content:
-        return dict(valid=False, errors=['The filter must be text without NUL characters and no larger than 1 MiB.'], warnings=[])
-    errors, warnings = [], []
-    if pattern_type not in ('ere', 'bre', 'fnmatch'):
-        errors.append('Unknown filter type.')
-    elif pattern_type != 'fnmatch' and os.name != 'nt':
-        try:
-            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as patterns:
-                patterns.write('\n'.join(line for line in content.splitlines() if line.strip() and not line.lstrip().startswith('#')))
-                patterns.flush()
-                result = subprocess.run(['grep', '-E' if pattern_type == 'ere' else '-G', '-f', patterns.name],
-                                        input='', text=True, capture_output=True, timeout=5, env={**os.environ, 'LC_ALL': 'C'})
-            if result.returncode == 2:
-                errors.append('One or more filter rules contain an invalid POSIX pattern.')
-        except (OSError, subprocess.TimeoutExpired):
-            errors.append('POSIX validation is unavailable on this server.')
-    elif pattern_type != 'fnmatch':
-        warnings.append('POSIX regex validation is only available on Linux; check before activation.')
-    return dict(valid=not errors, errors=errors, warnings=warnings)
 
 
 def ha_enabled():
@@ -172,6 +155,10 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             return jsonify(error='content must be text.'), 400
         result = validate(data['content'])
         try:
+            result['activationAction'] = service_activation_action(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
+        except (OSError, ConfigError):
+            result['activationAction'] = 'restart'
+        try:
             ensure_access(data['content'])
             if not app.extensions['has_permission']('admin'):
                 with file_lock(str(manager.whitelist_path) + '.lock'):
@@ -202,6 +189,9 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 filters = TinyproxyConfigStore(manager.whitelist_path, mode=0o644)
                 if activating and filters.draft_path.exists():
                     filters, _ = filter_store(data['content'])
+                action = service_activation_action(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
+                if activating and data.get('activationAction') == 'reload' and action != 'reload':
+                    return jsonify(error='Activation requirements changed. Review the configuration again.'), 409
                 attempts = 0
 
                 def activate():
@@ -211,13 +201,15 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                         filters.restore_pending()
                     else:
                         filters.publish_draft()
-                    return manager.restart_tinyproxy()
+                    return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
 
                 result = config_store().save(data['content'], data['revision'], activate if activating else None)
                 if activating:
                     filters.finish_activation()
                     filters.draft_path.unlink(missing_ok=True)
                     record_published_policy(manager.whitelist_path, app.logger)
+            if activating:
+                result['activationAction'] = action
             audit('tinyproxy_config_saved', revision=result['revision'], activated=activating)
             return jsonify(success=True, **result)
         except RevisionConflict as exc:
@@ -248,6 +240,7 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         backup_name = 'ha-policy-' + secrets.token_hex(12) + '.json'
         store.backup_dir.mkdir(exist_ok=True, mode=0o700)
         atomic_write(store.backup_dir / backup_name, json.dumps(dict(config=config, filters=content)))
+        action = service_activation_action(config, updated)
         attempts = 0
 
         def apply_and_recover():
@@ -257,7 +250,7 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 filters.publish_content(rules, content)
             else:
                 filters.restore_pending()
-            return manager.restart_tinyproxy()
+            return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
 
         result = store.save(updated, config_revision(config), apply_and_recover)
         filters.finish_activation()
@@ -276,11 +269,44 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             last_status = replication.read_state('replication-status') or {}
             primary = {key: last_status[key] for key in ('primaryRevision', 'primaryChecked') if key in last_status}
             try:
-                policy = replication.fetch_primary(peer['pin'], peer['key'], 'policy',
-                                                   previous['revision'] if previous else '')
-                if (not isinstance(policy, dict) or policy.get('cluster') != replication.cluster_id()
-                        or any(not isinstance(policy.get(key), str) for key in ('config', 'filters', 'revision'))):
-                    raise ConfigError('Invalid published HA policy.')
+                if peer.get('rotation'):
+                    peer = replication.finish_key_rotation(peer)
+                pruned = certificates.prune(peer)
+                if pruned != peer:
+                    replication.write_state('peer', pruned)
+                    peer = pruned
+                def fetch_policy():
+                    return replication.fetch_primary(certificates.allowed_pins(peer), peer['key'], 'policy',
+                                                   previous['revision'] if previous else '',
+                        credential_version=peer.get('credentialVersion', ''),
+                        certificate_prepared=(peer.get('certificatePending') or {}).get('id', ''),
+                        certificate_version=peer.get('certificateVersion', ''))
+                policy = fetch_policy()
+                replication.validate_published(policy, previous)
+                if policy.get('certificateTransition') is not None:
+                    offer = policy['certificateTransition']
+                    updated = certificates.stage(peer, offer, getattr(policy, 'verified_pin', None))
+                    updated = certificates.promote(updated, offer, getattr(policy, 'verified_pin', None))
+                    if updated != peer:
+                        replication.write_state('peer', updated)
+                        peer = updated
+                        audit('ha_certificate_pin_updated', operation=offer['id'],
+                              phase='confirmed' if peer.get('certificateVersion') == offer['id'] else 'staged')
+                if policy.get('credentialRotation') is not None:
+                    if type(policy.get('credentialProtocol')) is not int or policy['credentialProtocol'] != 1:
+                        raise ConfigError('Unsupported peer-key transition protocol.')
+                    offer = credentials.validate_offer(policy['credentialRotation'])
+                    peer = {**peer, 'rotation': offer}
+                    replication.write_state('peer', peer)
+                    peer = replication.finish_key_rotation(peer)
+                    policy = fetch_policy()
+                    replication.validate_published(policy, previous)
+                    audit('ha_peer_key_received')
+                if (peer.get('credentialState') == 'committed'
+                        and policy.get('credentialVersion') == peer.get('credentialVersion')):
+                    peer = {**peer, 'credentialState': 'complete'}
+                    replication.write_state('peer', peer)
+                    audit('ha_peer_key_confirmed')
                 primary = dict(primaryRevision=policy['revision'], primaryChecked=int(time.time()))
                 with file_lock(str(manager.whitelist_path) + '.lock'):
                     store = config_store()
@@ -297,13 +323,18 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                     if not previous or previous['revision'] != policy['revision']:
                         filters, _ = filter_store(updated)
                         activate_shared_policy(store, filters, config, content, updated, policy['filters'])
-                        replication.write_state('applied-policy', dict(revision=policy['revision'],
-                                                                        baseline=desired))
+                    if (not previous or previous['revision'] != policy['revision']
+                            or previous.get('generation') != policy.get('generation')):
+                        applied = dict(revision=policy['revision'], baseline=desired)
+                        if policy.get('generation') is not None:
+                            applied['generation'] = policy['generation']
+                        replication.write_state('applied-policy', applied)
                 replication.write_state('replication-status', dict(state='synchronized', revision=policy['revision'],
                     checked=int(time.time()), **primary))
-            except (OSError, ValueError, KeyError, TimeoutError, EOFError):
+            except (OSError, ValueError, KeyError, TimeoutError, EOFError) as error:
                 replication.write_state('replication-status', dict(state='pending',
-                    revision=previous['revision'] if previous else None, checked=int(time.time()), **primary))
+                    revision=previous['revision'] if previous else None, checked=int(time.time()),
+                    reason='stale-primary' if isinstance(error, PolicyOrderError) else 'request-failed', **primary))
                 raise
 
     app.extensions['ha_policy_reconcile'] = reconcile_policy
@@ -319,21 +350,56 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         with file_lock(replication.state('pair-lock')):
             if action == 'enroll' and request.method == 'POST':
                 invite = replication.read_state('enrollment')
-                if invite and invite['expires'] > time.time() and secrets.compare_digest(invite['key'], token):
+                if (invite and not replication.read_state('peer') and invite['expires'] > time.time()
+                        and secrets.compare_digest(invite['key'], token)):
                     key = secrets.token_hex(32)
                     replication.write_state('peer', dict(key=key))
-                    replication.state('enrollment').unlink()
+                    replication.delete_state('enrollment')
                     return jsonify(key=key, cluster=invite['cluster'], topology=invite.get('topology')), 200, {'Cache-Control': 'no-store'}
             if action == 'policy' and request.method == 'GET':
                 peer = replication.read_state('peer')
-                if peer and secrets.compare_digest(peer['key'], token):
+                if credentials.authorized(peer, token):
+                    if request.headers.get('X-HA-Credential-Protocol') == '1':
+                        peer = {**peer, 'credentialProtocol': 1, 'credentialChecked': int(time.time())}
+                        replication.write_state('peer', peer)
+                    certificate = replication.certificate_transition()
+                    if request.headers.get('X-HA-Certificate-Protocol') == '1':
+                        peer = {**peer, 'certificateProtocol': 1}
+                        replication.write_state('peer', peer)
+                    if certificate:
+                        updated = dict(peer)
+                        if request.headers.get('X-HA-Certificate-Prepared') == certificate['id']:
+                            updated['certificatePrepared'] = certificate['id']
+                        if (certificate['phase'] == 'committed'
+                                and request.headers.get('X-HA-Certificate-Version') == certificate['id']):
+                            updated['certificateVersion'] = certificate['id']
+                        if updated != peer:
+                            replication.write_state('peer', updated)
+                            peer = updated
+                    confirmed = credentials.confirm_rotation(peer, token, request.headers.get('X-HA-Credential-Version', ''))
+                    if confirmed != peer:
+                        replication.write_state('peer', confirmed)
+                        peer = confirmed
+                        audit('ha_peer_key_rotation_completed')
                     acknowledged = request.headers.get('X-HA-Applied-Revision', '')
                     if len(acknowledged) == 64 and all(char in '0123456789abcdef' for char in acknowledged):
                         replication.write_state('replication-status', dict(state='reported', revision=acknowledged, checked=int(time.time())))
                     policy = replication.read_state('published-policy')
                     if policy:
-                        return jsonify(policy), 200, {'Cache-Control': 'no-store'}
+                        return jsonify(**policy, credentialProtocol=1, credentialRotation=credentials.rotation_offer(peer),
+                                       credentialVersion=peer.get('credentialVersion'), certificateTransition=certificate), 200, {'Cache-Control': 'no-store'}
                     return '', 409
+            if action == 'credential-commit' and request.method == 'POST':
+                data = request.get_json(silent=True)
+                peer = replication.read_state('peer')
+                try:
+                    committed = credentials.commit_rotation(peer, token, data.get('id') if isinstance(data, dict) else None)
+                except ConfigError:
+                    return '', 403
+                replication.write_state('peer', committed)
+                if committed != peer:
+                    audit('ha_peer_key_rotation_committed', operation=committed['credentialVersion'])
+                return jsonify(committed=True, id=committed['credentialVersion'], cluster=replication.cluster_id()), 200, {'Cache-Control': 'no-store'}
         return '', 403
 
     @routes.post('/api/proxy/ha-replication/<action>')
@@ -344,6 +410,25 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             return '', 403
         role = os.getenv('PROXYPERMIT_HA_NODE')
         try:
+            if role == 'a' and action == 'rotate-key':
+                data = request.get_json(silent=True)
+                error = app.extensions['reauthenticate_admin_change'](data)
+                if error is not None:
+                    return error
+                with file_lock(replication.state('pair-lock')):
+                    if not replication.read_state('published-policy'):
+                        raise ConfigError('Publish a policy before rotating the peer key.')
+                    peer = replication.read_state('peer') or {}
+                    certificate = replication.certificate_transition()
+                    if certificate and (certificate['phase'] == 'offered' and time.time() < certificate['expires']
+                                        or certificate['phase'] == 'committed' and peer.get('certificateVersion') != certificate['id']):
+                        return jsonify(error='Complete the certificate transition before rotating the peer key.'), 409
+                    if peer.get('credentialProtocol') != 1 or not 0 <= time.time() - peer.get('credentialChecked', 0) < 90:
+                        return jsonify(error='Upgrade both nodes and wait for a successful synchronization before rotating the peer key.'), 409
+                    peer = credentials.begin_rotation(peer)
+                    replication.write_state('peer', peer)
+                audit('ha_peer_key_rotation_started', operation=peer['rotation']['id'])
+                return jsonify(success=True, credential=credentials.public_status(peer))
             if role == 'a' and action == 'invite':
                 with file_lock(str(manager.whitelist_path) + '.lock'):
                     if has_pending_changes(manager.whitelist_path):
@@ -372,23 +457,33 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 audit('ha_replication_joined')
                 return jsonify(success=True)
             if action == 'disconnect' and role in ('a', 'b'):
+                data = request.get_json(silent=True)
+                if not isinstance(data, dict) or data.get('confirmed') is not True:
+                    return jsonify(error='Confirm HA pairing revocation before continuing.'), 400
+                error = app.extensions['reauthenticate_admin_change'](data)
+                if error is not None:
+                    return error
                 with file_lock(replication.state('pair-lock' if role == 'a' else 'pull-lock')):
                     for name in ('peer', 'enrollment', 'applied-policy', 'replication-status'):
-                        replication.state(name).unlink(missing_ok=True)
+                        replication.delete_state(name)
                 audit('ha_replication_disconnected')
                 return jsonify(success=True)
             if action == 'status':
                 policy = replication.read_state('published-policy') or {}
                 status = replication.read_state('replication-status')
+                peer = replication.read_state('peer')
+                credential = credentials.public_status(peer)
                 if status:
                     fresh = time.time() - status['checked'] < 90
                     matching = (status.get('revision') == policy.get('revision') if role == 'a'
                                 else status['state'] == 'synchronized')
                     if role == 'a' and replication.state('publication-error').exists():
                         matching = False
+                    if credential['state'] in ('expired', 'invalid'):
+                        matching = False
                     status['state'] = 'synchronized' if fresh and matching else 'pending'
-                return jsonify(paired=bool(replication.read_state('peer')),
-                               status=status, revision=policy.get('revision'))
+                return jsonify(paired=bool(peer), credential=credential,
+                               status=status, revision=policy.get('revision'), protection=cluster.read_status())
             return '', 403
         except (ConfigError, KeyError, OSError, TimeoutError, ValueError):
             return jsonify(error='HA replication request failed. Check the peer and TLS configuration.'), 409

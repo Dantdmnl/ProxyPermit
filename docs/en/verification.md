@@ -2,6 +2,227 @@
 
 [Nederlands](../nl/verification.md) · [Documentation](README.md)
 
+The development work below is included in **v1.4.0-dev.1**, a prerelease for
+testing. Historical entries describe the state at the time of each test.
+The final release-candidate checks passed 342 Python tests on Linux, Windows
+tests with expected platform skips, both settings/HA browser suites, workflow
+lint, installer plans and the strict documentation build. See the
+[release notes](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1)
+for scope and known limitations; v1.3.0 remains the stable release.
+
+## 17 November 2026 — management security and cluster preparation
+
+### Protected-cluster preparation and Proxmox fencing
+
+The next build adds root-exported, expiring local prerequisite checks and
+secret-free staged node/witness plans. Browser tests cover NL/EN, both themes,
+mobile/desktop, evidence expiry and administrator-only access. These checks
+do not configure Pacemaker, a witness or quorum, and never claim that a copied
+plan proves working fencing. The full root Linux suite passes 324 tests.
+
+On the Proxmox lab, a host-root helper created two privilege-separated tokens
+and verified their effective permissions: each token can manage only its peer
+VM, with no host administration or access to other guests. Tokens were placed
+only in node-local root-only files after explicit approval. The separately named,
+hash-pinned ClusterLabs agent verified the Proxmox CA and certificate hostname.
+It refused requests for other targets and unverified TLS in isolated tests.
+Live checks also rejected a wrong CA and wrong target, restored the correct CA
+and verified that failure output contained no token.
+
+A's real agent powered B off, and B's agent then powered A off in a separate
+test. The hypervisor confirmed each stopped VM, the surviving node owned the
+VIP, and independent lab API recovery restored all application services. Native
+filter/configuration/account hashes stayed unchanged; the web account could
+not read either token. These are agent off/recovery tests, not a completed
+protected-cluster partition matrix. Guided quorum/witness activation remains open. The power-test
+prerequisite is not automatically signed off by these external lab scripts.
+
+The experimental backport preserves the distribution agent and includes its
+GPL source/license and exact upstream revision. Lab tokens expire after 14 days;
+production credential renewal and cluster lifecycle work remain open.
+
+### Native quorum activation in the disposable Proxmox lab
+
+All four lab guests now use a responding NTP source through the existing OS
+time service. The source was checked against independently verified HTTPS Date
+responses before configuration; the guest OS reports synchronized network time.
+The Proxmox host and gateway time configuration were not changed.
+
+Root-only tooling prepared packages with cluster daemons initially masked and
+disabled. The existing witness CA signed the cluster client certificate; private
+bundles and a fresh 1024-byte Corosync key were transferred only through trusted
+SSH into root-only storage. Qnetd requires TLS and a client certificate, listens
+on the witness address and accepts only the two nodes through its firewall.
+The witness retains its private management journal for at most 30 days/100 MiB.
+No remote PCSD administration service or cluster password was enabled.
+
+The standby was drained before the current owner. Durable reservations prevent
+independent Keepalived startup while setup is incomplete. Both nodes then
+confirmed encrypted Corosync transport, two members, three expected votes and
+an authenticated witness connection. Pacemaker received only a fresh, empty
+configuration, with fencing required and the VIP initially stopped. Activation
+was a separate, version-checked step after both nodes confirmed safe policy and
+ready fencing. Both subsequently reported protected status with exclusive VIP
+ownership; independent Keepalived boot activation remains disabled.
+
+A suspended active VM was powered off by its peer's native fencing agent.
+Independent hypervisor checks confirmed it was stopped before the peer acquired
+the healthy VIP. Independent recovery restored the VM, both nodes returned to
+protected status and native filter/configuration/account hashes stayed unchanged.
+Stopping the witness with both members connected retained quorum and exclusive
+VIP ownership while protection status became degraded; restarting it restored
+protected status.
+
+An additional run verified the unavailable-fencing case. A temporary guest-only
+deny rule was first proven to block a fresh connection to the fencing API. After
+the active VM was suspended, its peer withheld VIP takeover for 45 seconds.
+Removing only the test rule allowed fencing to complete; independent hypervisor
+confirmation again preceded observed VIP ownership. Both nodes recovered with
+one owner and unchanged native policy/accounts. An earlier attempt that did not
+actually install its conflicting test rule was rejected as invalid evidence.
+
+These are experimental, operator-coordinated lab results. They do not complete
+GUI provisioning, all interrupted-setup/recovery paths or the Proxmox partition
+matrix. All lab guests share one physical host; an independent production
+witness and fencing failure domain are still necessary.
+
+The final regression run passed 340 Python tests without skips, lint and
+installer type checks. Frontend checks ran on Windows because the WSL image has
+no Node executable; Linux version/shell checks passed separately. Settings
+Playwright and the strict NL/EN documentation build passed. Supported sequential
+cluster-maintenance upgrades then passed on A and B, alongside a normal upgrade
+on the standalone node. Live browser checks confirmed CA-verified HTTPS,
+synchronized policy and fresh protected status on both HA nodes. No test firewall
+rule, maintenance checkpoint or fencing token in CIB/audit records remained.
+
+The final time check also caught an unreachable member of the lab's DNS time
+pool after reboot. The guest-only drop-in now tries a freshly verified responding
+endpoint first, with fallback entries; all four guests again reported synchronized
+time. This is lab configuration, not a hardcoded time server in the installer.
+
+### Management HTTPS and browser reliability
+
+The standalone Proxmox node passed the complete browser workflow: prepare a
+certificate, download the public CA, acknowledge trust, activate HTTPS and follow
+the secure address. The resulting cookie was Secure/HttpOnly. Each of the three
+application nodes also renewed its certificate through Settings with fresh admin
+authentication. CA verification passed independently, the CA stayed unchanged,
+and audit records identified the requesting administrator. Proxy process IDs,
+native configuration, filters and accounts stayed unchanged during TLS jobs.
+
+Real testing exposed a stop-timeout mismatch. The managed web service now uses
+mixed systemd termination and a bounded Gunicorn grace period. Direct Gunicorn
+TLS uses threaded workers. Both supported servers passed parallel, CA-verified
+asset requests while six idle TCP preconnections remained open, plus the existing
+HTTP/HTTPS account, optional 2FA, audit and configuration checks.
+
+Browser regressions deliberately blocked `rules.js`: both languages showed a
+reload action without a `RuleView` exception, and recovered after reloading.
+HTTPS dialogs passed both languages/themes, mobile/desktop, focus, dirty-input
+confirmation and role restrictions. A lost activation reply offered the secure
+address without repeating the request. Log regressions preserve raw history and
+redaction while grouping repeated client trust alerts and retaining other errors.
+The Linux suite passes 324 tests without skips; lint, installer types, frontend
+checks and the strict documentation build pass. These changes remain unreleased.
+
+## 16 November 2026 — fresh Proxmox lab
+
+Four disposable Ubuntu 24.04 VMs were created in a dedicated Proxmox pool:
+a standalone node, two HA nodes and a prepared witness host. The supported
+installer installed v1.3.0 on the three application nodes. Existing guests,
+host networking and the upstream firewall were left unchanged. Management
+interfaces remained bound to guest loopback and were accessed through SSH tunnels.
+
+The browser workflow converted A from standalone to managed HA and joined B
+with a one-time invitation, after reviewing the network plan and confirming the
+administrator password. Guest UFW rules were applied. Separate administrator
+passwords remained valid. Filter additions and removals, and a published shared
+Tinyproxy setting, replicated automatically from A to B. Direct rule changes on B
+were refused. All temporary policy changes were reverted.
+
+Stopping Tinyproxy on A moved the VIP to B, which answered a real proxy request.
+Starting Tinyproxy again restored the preferred owner A; exactly one node owned
+the VIP and both nodes' services were healthy afterward. This checks service
+failure, not network partitions or physical-host failure. The witness is prepared
+only: quorum and fencing are **not configured** in this lab.
+
+Fresh GUI conversion exposed a v1.3.0 permissions bug: the root helper's private
+umask made a public Keepalived systemd directory inaccessible to the application,
+causing the settings page to return HTTP 500. A local, unreleased correction keeps
+new public metadata directories traversable and narrowly repairs the exact
+installer-owned affected directory. Unreadable cluster reservations now block
+independent service control without breaking the settings page. The supported
+upgrade applied this correction to all three application nodes before the tests
+above completed. The published v1.3.0 tag was not changed.
+
+Linux checks passed all 286 Python tests without skips, plus lint and installer
+type checks. The settings and HA Playwright suites passed both languages, both
+themes, keyboard interaction and small viewports.
+
+### Pairing lifecycle and protection evidence
+
+The next local build requires confirmed revocation and administrator
+reauthentication on either node, including fresh optional TOTP. Isolated tests
+check missing CSRF/confirmation, wrong passwords and TOTP replay. Playwright
+checks both languages and themes, mobile/desktop, focus, retaining input after
+failure, discard confirmation, successful revocation and redacted actor audit.
+
+On the Proxmox pair, revocation rejected the previous peer credential. Both
+nodes were re-paired successfully. Expired, superseded and replayed invitations
+were refused; two simultaneous join requests produced exactly one successful
+join. Native filter/configuration bytes and separate local credentials remained
+unchanged, and automatic synchronization resumed. The live expiry test uses an
+unambiguous past timestamp; isolated tests also advance the issuer clock beyond
+the original invitation lifetime.
+
+Protection-status regressions reject duplicate targets across separate fencing
+devices, mismatched running agent types, disabled or rule-driven devices and
+Proxmox mappings without verified TLS or explicit numeric guest IDs. These are
+status-evidence checks, not proof that Proxmox power fencing has been exercised.
+The Linux Python suite now passes 290 tests without skips.
+
+Ubuntu 24.04's packaged `fence_pve` in this lab does not expose API-token
+authentication. The lab-pool automation token was not copied to the proxy nodes.
+Proxmox fencing, witness activation and protected-cluster provisioning remain open.
+
+Time-source checks found no external NTP replies and an answering gateway clock
+with a similar offset. The four guest clocks received a one-time, forward-only
+correction from the trusted workstation after comparison with a verified HTTPS
+Date response. The Proxmox host and NTP configurations were not changed. This is
+a lab correction, not continuous time synchronization; a reliable time source
+remains an operating prerequisite, especially for 2FA and certificate transitions.
+
+### Management HTTPS
+
+The next local build serves management HTTPS directly, without a reverse proxy,
+on the standalone node and both Proxmox HA nodes. Each node has a different CA;
+the application account cannot read its CA key. Enabling and renewing TLS left
+the Tinyproxy PID unchanged. A subsequent supported app upgrade preserved the
+standalone HTTPS listener and certificate binding.
+
+The standalone fault tests forced early renewal, served an intentionally expired
+leaf and confirmed client rejection, then restored valid HTTPS through the normal
+renewal service. The CA stayed unchanged. A prepared interruption checkpoint was
+recovered by the real systemd boot guard. Injected readiness failure restored the
+previous valid HTTPS configuration. Native proxy files and accounts stayed unchanged.
+These were controlled certificate/service fault injections, not a physical power-cut test.
+
+Browser checks on all three nodes verified CA trust independently, HTTPS login,
+Secure/HttpOnly/SameSite session cookies, NL/EN, both themes and a mobile viewport.
+A temporary rule published through HTTPS replicated to B and was removed; the
+original filter revision and healthy synchronization were restored. Browser test
+trust was limited to the expected certificate public keys, without altering the
+workstation trust store. The public node CA files were exported over trusted SSH.
+
+The Linux suite passes 302 Python tests, lint, installer types and shell checks.
+Both two-worker WSGI backends passed real HTTP and CA-verified HTTPS account,
+2FA, audit and configuration tests, including HSTS and secure-cookie checks.
+The strict documentation build and localized responsive browser regressions pass.
+Installer self-tests now isolate managed TLS discovery from the host's real profile.
+
+HTTPS remains opt-in; default installation, guided CA import/replacement and ACME
+are still open. HSTS is not enabled automatically for the private node CA.
+
 ## 6 November 2026
 
 Ubuntu 26.04.1 LTS on WSL 2 ran systemd, Python 3.14.4, and Tinyproxy 1.11.3.
@@ -211,3 +432,144 @@ A separate Linux virtual environment with the current requirements also passed
 159 Python tests (one root-only skip). The older WSL service environment still
 had pyrad 2.4; its RADIUS test failures disappeared with the required 2.6.0 in
 the isolated environment. No service environment was modified.
+
+
+## Reload verification — 15 November 2026
+
+The isolated Linux checks passed 191 tests. The Windows run passed the same
+suite with 15 POSIX/root-specific skips, plus quality, type and frontend checks.
+The installer was also upgraded successfully from a private source directory.
+
+The standalone node and both VirtualBox HA nodes passed a real service-account
+reload check: a fresh start/completion pair in the private journal, the same
+systemd invocation and process ID, and a successful local HTTP probe. The check
+rejects old startup messages. Native read ACLs survive atomic edits and rollback;
+Tinyproxy does not receive access to management secrets through group membership.
+
+An isolated Tinyproxy probe on versions 1.11.1 and 1.11.3 kept an HTTP transfer
+and a CONNECT tunnel open through three reloads and allowlist/blocklist changes.
+New requests followed the changed policy:
+
+```bash
+python3 scripts/dev/check_reload.py
+```
+
+The probe uses its own temporary files, ports and process. It does not reload
+the installed service. For managed HA verification, use disposable nodes: record
+`systemctl show tinyproxy.service -p MainPID -p InvocationID` on both nodes,
+add a temporary `.invalid` domain through A with automatic activation enabled,
+wait for B's matching revision, then remove the same rule. Both process IDs must
+remain unchanged and both revisions must converge after each operation.
+
+
+The authenticated A → B test passed for both addition and removal. Both Tinyproxy
+process IDs stayed unchanged, the original filter bytes were restored and both
+nodes returned to the original shared revision. OS checks on all three VMs
+confirmed native config/filter read-only access for Tinyproxy and denied reads
+of the management environment, account file and existing peer credentials.
+
+These reload checks do not prove split-brain protection. Quorum/fencing and
+partition-failure tests remain open in the [roadmap](planned-work.md).
+
+## Key rotation and TLS verification — 15 November 2026
+
+The isolated Linux suite passed all 208 tests with no skips. The Windows suite
+passed with 19 platform- or OpenSSL-dependent tests skipped. Rotation tests cover
+old-key revocation, transition expiry, concurrent requests and recovery after a
+lost commit response. This does not yet verify the complete browser-driven key
+rotation on two VMs.
+
+TLS tests use real local connections with temporary generated certificates.
+A first handshake checks the previously trusted SHA-256 pin without an HTTP
+request or peer key. A second handshake validates the pinned certificate with
+OpenSSL, including validity dates and signature; the pin is then checked again.
+Only then may the peer key be sent. The pin identifies the node; hostname checks
+and system CAs are not used for this purpose. A wrong pin, an expired certificate
+and a certificate switch between handshakes are rejected. Controlled certificate
+renewal and pin migration remain open, as do additional storage-failure and
+restart tests for key rotation.
+
+## Extended HA verification — 15 November 2026
+
+The Linux suite now passes 231 tests without skips, including storage-failure,
+optional fresh-TOTP, VIP-resource and publication-order checks. Both the existing
+Playwright settings suite and the new isolated HA-security suite passed. The HA
+suite covers NL/EN, both themes, mobile/desktop, focus, dirty-dialog dismissal,
+incorrect passwords and monitor-role restrictions.
+
+A real browser-driven key rotation passed on the VirtualBox HA pair. B confirmed
+the new key automatically; the old key returned 403 and the new key returned 200.
+The primary's filters and Tinyproxy process ID remained unchanged. The first run
+exposed an outdated nginx path restriction; after updating only the internal
+commit path, the complete test passed. See the upgrade note in
+[Administration](administration.md#renewing-the-ha-peer-key).
+
+A separate disposable KVM/libvirt prototype used two Ubuntu 24.04 nodes,
+Pacemaker/Corosync, a TLS qdevice witness and the standard `fence_xvm` agent.
+The host fencer was restricted to the two proxy VM UUIDs and source addresses;
+the witness had no fencing key. Tests passed for a hung proxy, recovery without
+automatic failback, a leftover VIP after killing Keepalived, witness loss with
+both peers connected, asymmetric/full peer partitions and a frozen node while
+the fencer was unavailable. Takeover was withheld until fencing was available;
+the frozen VM was then powered off before a healthy VIP appeared on the peer.
+
+This verifies the prototype's tested failure scenarios, not production integration.
+The normal HA wizard and existing ProxyPermit nodes do not enable it automatically.
+Platform adapters, complete lifecycle integration, broader fault coverage, certificate
+renewal and management HTTPS remain open. Restoring an entire old OS image must
+be quarantined through the platform until its cluster state has been reviewed;
+guest software cannot protect against a restore that also removes its guards.
+
+The final Linux run passed 247 tests without skips, plus shell checks and real
+Gunicorn/Granian HTTP checks with two workers. The real HA pair also passed a
+publication-order regression: B refused a temporarily restored lower sequence,
+kept its native filter and Tinyproxy process, and synchronized after the original
+publication was restored.
+
+Internal certificate renewal then passed on that pair. B confirmed the new pin
+and removed the old pin from its allowed set. Both Tinyproxy and Keepalived
+process IDs and both filter files stayed unchanged. Peer-key rotation also passed
+over the renewed TLS connection. OS-UID audit attribution and absence of the peer
+key from audit records were verified. The completed recovery path was idempotent.
+
+The separate KVM prototype's three VMs share one workstation; these tests do not
+cover failure of that shared physical host. They were restarted for the maintenance tests below.
+The existing standalone and two VirtualBox HA nodes remain running. Default HTTPS
+for the management website is still planned; internal HA TLS renewal does not
+enable HTTPS on that website.
+
+### Cluster status and rolling-maintenance verification
+
+The separate KVM pair now runs real installer-managed ProxyPermit services on
+top of its OS-prepared cluster. Both nodes passed the supported
+`--upgrade --cluster-maintenance` path. Checks compared package versions,
+Keepalived configuration and health helper, cluster configuration and profile,
+native proxy configuration, filter file and accounts before and after each
+upgrade; all were preserved. The application release changed on both nodes.
+
+The active node handed the VIP to its peer before local changes. A second
+maintenance request was rejected while the first reservation existed. A process
+exit left the checkpoint and matching reservation intact; explicit recovery
+restored standby. A separate failed post-maintenance health check also retained
+the reservation. The real root recovery CLI then verified manager/proxy health
+and peer protection before releasing it.
+
+Root status export was checked on both nodes. The application account could read
+only the reduced status and was denied CIB access. Witness loss changed the status
+to degraded; stopping the exporter made its healthy evidence expire to unknown.
+Isolated tests also reject fencing maps without distinct coverage of both nodes,
+conflicting VIP ownership, malformed evidence and untrusted file permissions.
+Playwright passed NL/EN, both themes, small and large viewports, keyboard/focus,
+dirty-dialog handling, reauthentication and monitor restrictions.
+
+These checks do not enable automatic production cluster provisioning. Other
+platform adapters, cluster-aware removal/rollback and the remaining interruption
+matrix are still open. See [Follow-up work](planned-work.md).
+
+The latest Linux run passed all 280 Python tests without skips. Lint and installer
+type checks passed, as did shell checks and the real two-worker Gunicorn and
+Granian HTTP suites. The strict documentation build also passed. Fresh-install
+testing found and fixed backup-directory preparation before the unprivileged
+import; installer self-tests now isolate both cluster reservation and certificate
+transition state from the host. Mutable native draft backups are validated
+without recursive privileged ownership migration.

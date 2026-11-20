@@ -90,6 +90,10 @@ een afzonderlijke headerfilter om te verwijderen.
 
 ## Nieuw HA-cluster met twee nodes
 
+Deze werkwijze stelt Keepalived en beleidsynchronisatie in. Quorum, een witness
+en fencing worden niet automatisch ingericht. Lees vóór productiegebruik
+[HA-bescherming en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname).
+
 ### Twee zelfstandige nodes vanuit de webinterface koppelen
 
 Installeer of upgrade beide hosts eerst als zelfstandige node. Gebruik vaste
@@ -261,6 +265,16 @@ met de eigenaar van het account.
 ## Upgrade, migratie en herstel
 
 ### Beheerde installatie bijwerken
+
+Gebruik bij een door het OS ingericht quorum/fencingcluster
+[onderhoud aan een beveiligd cluster](beheer.md#onderhoud-aan-een-door-het-os-beveiligd-cluster)
+in plaats van de gewone upgradeopdrachten hieronder. Zelfstandige inrichting,
+rollback, uit bedrijf nemen en verwijderen zijn op die beveiligde nodes geblokkeerd.
+
+Werk voor v1.3.0 **beide** HA-nodes bij voordat je hun peersleutel of interne
+certificaat vernieuwt. Bestaande HA blijft op Keepalived werken, tenzij je het
+experimentele beveiligde cluster afzonderlijk inricht. Reload blijft optioneel;
+bestaande HTTP-luisteradressen voor beheer blijven behouden.
 
 Voor een installatie die door dit installatieprogramma wordt beheerd, haal je
 eerst de gewenste release op en voer je vanuit die bronmap een upgrade uit.

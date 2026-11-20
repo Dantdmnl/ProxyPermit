@@ -173,6 +173,8 @@ let lastWhitelistMtime;
 
 // Init
 document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('reloadRuleInterface')?.addEventListener('click', () => location.reload());
+    ruleRendererAvailable();
     // Log connection mode
     console.log('[Init] Base URL:', currentBaseUrl);
     console.log('[Init] Window location:', window.location.origin);
@@ -1525,7 +1527,17 @@ async function loadEntries() {
 }
 
 // Render entries
+function ruleRendererAvailable() {
+ const available = typeof window.RuleView?.render === 'function';
+ const notice = document.getElementById('ruleAssetNotice');
+ if (notice) notice.hidden = available;
+ const list = document.getElementById('entriesList');
+ if (list) list.hidden = !available;
+ return available;
+}
+
 function renderEntries() {
+ if (!ruleRendererAvailable()) return;
  const container = document.getElementById('entriesList');
  const items = searchQuery ? filteredEntries : entries;
  container.innerHTML = items.length ? items.map(entry => RuleView.render(entry, !rulesWritable())).join('') : '<p class="help-text">' + escapeHtml(I18n.t(searchQuery ? 'Geen entries gevonden voor deze zoekopdracht' : 'Geen entries gevonden')) + '</p>';
@@ -1784,7 +1796,7 @@ async function saveEdit() {
         if (data.success) {
             showToast('success', I18n.t('Bijgewerkt'), I18n.t('Entry succesvol bijgewerkt'));
             if (data.restart_queued) {
-                showToast('info', 'Service restart', I18n.t('Herstart is gestart op de achtergrond'));
+                showToast('info', I18n.t('Apply changes'), I18n.t('Herstart is gestart op de achtergrond'));
                 pollTinyproxyStatus(10, I18n.t('Config herladen'), I18n.t('Tinyproxy config is herladen'));
             } else if (data.restart_attempted && data.restart_success === false) {
                 showToast('warning', 'Service restart gefaald', data.restart_error);
@@ -2287,7 +2299,7 @@ async function deleteEntry(id) {
         if (result.ok && result.data && result.data.success) {
             showToast('success', I18n.t('Verwijderd'), I18n.t('Entry succesvol verwijderd'));
             if (result.data.restart_queued) {
-                showToast('info', 'Service restart', I18n.t('Herstart is gestart op de achtergrond'));
+                showToast('info', I18n.t('Apply changes'), I18n.t('Herstart is gestart op de achtergrond'));
                 pollTinyproxyStatus(10, I18n.t('Config herladen'), I18n.t('Tinyproxy config is herladen'));
             } else if (result.data.restart_attempted && result.data.restart_success === false) {
                 showToast('warning', 'Service restart gefaald', result.data.restart_error);
@@ -2737,7 +2749,12 @@ async function pollTinyproxyStatus(maxAttempts = 10, successTitle = 'Service act
                 throw new Error(`HTTP ${response.status}`);
             }
             const data = await parseJsonSafe(response);
-            if (data && data.success && data.status && data.status.running) {
+            if (data?.activation?.state === 'failed') {
+                showToast('error', I18n.t('Service activation failed'), I18n.t(data.activation.error || 'Service status unknown'));
+                return;
+            }
+            const confirmed = !data?.activation || data.activation.state === 'succeeded';
+            if (confirmed && data && data.success && data.status && data.status.running) {
                 showToast('success', successTitle, successMessage);
                 return;
             }

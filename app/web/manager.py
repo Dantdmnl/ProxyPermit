@@ -2,6 +2,7 @@
 
 from flask import Flask, render_template, request, jsonify, url_for, make_response, session, has_request_context
 import json
+import secrets
 import base64
 import os
 import sys
@@ -254,24 +255,55 @@ whitelist_manager = WhitelistManager(WHITELIST_PATH, TINYPROXY_SERVICE)
 validator = WhitelistValidator()
 
 
-def restart_tinyproxy_async():
-    """Restart tinyproxy in a background thread to avoid blocking requests."""
+def activation_status():
+    path = Path(SESSION_STATE_FILE).with_name('tinyproxy-activation.json')
+    try:
+        return json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return dict(state='unknown')
+
+
+def restart_tinyproxy_async(action='restart'):
+    """Apply service changes in the background, recording confirmed completion."""
     if DEMO_MODE:
         return
+    if action == 'policy':
+        action = 'reload' if os.getenv('TINYPROXY_RELOAD_ENABLED', 'false').lower() == 'true' else 'restart'
+    identifier = secrets.token_hex(16)
+    state_path = Path(SESSION_STATE_FILE).with_name('tinyproxy-activation.json')
+    actor = session.get('user', 'system') if has_request_context() else 'system'
+    queued = dict(id=identifier, action=action, state='queued', created=int(time.time()))
+    with file_lock(str(state_path) + '.lock'):
+        atomic_write(state_path, json.dumps(queued))
+
+    def update(state, error=None):
+        with file_lock(str(state_path) + '.lock'):
+            current = activation_status()
+            if current and current.get('id') == identifier:
+                atomic_write(state_path, json.dumps({**queued, 'state': state, 'error': error}))
+
     def _run():
         filter_path = whitelist_manager.whitelist_path
         try:
             with file_lock(str(filter_path) + '.lock'):
                 if has_pending_changes(filter_path):
-                    logger.info(PENDING_CHANGES)
+                    update('failed', PENDING_CHANGES)
                     return
-                success, error = whitelist_manager.restart_tinyproxy()
+                update('running')
+                success, error = (whitelist_manager.reload_tinyproxy() if action == 'reload'
+                                  else whitelist_manager.restart_tinyproxy())
                 if not success:
-                    logger.error("Tinyproxy async restart failed: %s", error)
+                    logger.error('Tinyproxy %s failed: %s', action, error)
+                    update('failed', error if action == 'reload' else 'Service activation failed. Check the host service log.')
                 else:
                     record_published_policy(filter_path, logger)
+                    update('succeeded')
+                _audit_event('tinyproxy_activation', actor=actor, action=action, success=success)
         except OSError:
-            logger.exception('Tinyproxy async restart could not acquire the filter lock')
+            logger.exception('Tinyproxy activation could not acquire its lock or update state')
+            update('failed', 'Service activation failed. Check the host service log.')
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -2501,7 +2533,7 @@ def add_entry():
         restart_queued = False
         if auto_restart and not is_comment:
             restart_queued = True
-            restart_tinyproxy_async()
+            restart_tinyproxy_async('policy')
 
         try:
             new_line = None
@@ -2969,7 +3001,7 @@ def update_entry(entry_id):
         restart_queued = False
         if auto_restart:
             restart_queued = True
-            restart_tinyproxy_async()
+            restart_tinyproxy_async('policy')
 
         try:
             new_line = None
@@ -3038,7 +3070,7 @@ def delete_entry(entry_id):
         restart_queued = False
         if auto_restart:
             restart_queued = True
-            restart_tinyproxy_async()
+            restart_tinyproxy_async('policy')
 
         try:
             _audit_event(
@@ -3110,7 +3142,7 @@ def reorder_entries():
         restart_queued = False
         if auto_restart:
             restart_queued = True
-            restart_tinyproxy_async()
+            restart_tinyproxy_async('policy')
 
         try:
             order_hash = None
@@ -3201,7 +3233,8 @@ def service_status():
         status = whitelist_manager.get_service_status()
         return jsonify({
             'success': True,
-            'status': status
+            'status': status,
+            'activation': activation_status()
         })
     except Exception as e:
         logger.error(f'Could not load service status: {e}')
@@ -3302,7 +3335,7 @@ def export_whitelist():
         response.headers['Content-Type'] = 'text/plain; charset=utf-8'
         response.headers['Content-Disposition'] = 'attachment; filename=whitelist_export.txt'
         
-        logger.info("Whitelist geëxporteerd")
+        logger.info("Whitelist geÃ«xporteerd")
         return response
         
     except Exception as e:
@@ -3523,7 +3556,7 @@ def import_whitelist():
         if data.get('auto_restart', False):
             try:
                 # Start restart async to avoid blocking the HTTP request
-                restart_tinyproxy_async()
+                restart_tinyproxy_async('policy')
                 restart_queued = True
                 restart_success = None
                 restart_error = None
@@ -3587,7 +3620,24 @@ def internal_error(e):
     return "Internal Server Error", 500
 
 
+def reauthenticate_admin_change(data):
+    if not isinstance(data, dict) or not isinstance(data.get('password'), str) or not isinstance(data.get('otp', ''), str):
+        return jsonify(error='Invalid input.'), 400
+    if not ENABLE_AUTH or not AUTH_ACCOUNTS_FILE or not session.get('user'):
+        return jsonify(error='Authentication required'), 403
+    with file_lock(AUTH_ACCOUNTS_FILE + '.lock'):
+        account = account_for(AUTH_ACCOUNTS_FILE, session['user'])
+        if not account or account_role(account) != 'admin' or not _is_authenticated_request():
+            return jsonify(error='Authentication required'), 403
+        error, _ = settings_reauth(session['user'], account, data['password'], data.get('otp', ''))
+        return error
+
+
 app.extensions['has_permission'] = lambda permission: permits(current_role(), permission)
+app.extensions['reauthenticate_admin_change'] = reauthenticate_admin_change
+from .https_settings import register_https_settings
+register_https_settings(app, requires_auth, lambda: (Path(AUTH_ACCOUNTS_FILE) if AUTH_ACCOUNTS_FILE else None,
+                                                   Path(SESSION_STATE_FILE)), _audit_event)
 register_i18n(app)
 app.before_request(protect_browser_mutations)
 app.before_request(enforce_browser_permissions)

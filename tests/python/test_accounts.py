@@ -11,6 +11,7 @@ from werkzeug.security import generate_password_hash
 
 from app.web import manager
 from app.web import settings
+from app.web import ha_replication
 
 
 class LocalAccountTests(unittest.TestCase):
@@ -18,6 +19,9 @@ class LocalAccountTests(unittest.TestCase):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         root = Path(folder.name)
+        certificate = patch.object(ha_replication, 'CERTIFICATE_TRANSITION', root / 'certificate-transition.json')
+        certificate.start()
+        self.addCleanup(certificate.stop)
         self.accounts = root / 'accounts.json'
         self.secret = pyotp.random_base32()
         password_hash = generate_password_hash('test passphrase')
@@ -37,6 +41,83 @@ class LocalAccountTests(unittest.TestCase):
 
     def login(self, name, **fields):
         return self.client.post('/api/auth/login', json=dict(username=name, password='test passphrase', **fields))
+
+    def test_reserved_cluster_does_not_offer_initial_preparation_again(self):
+        self.assertEqual(self.login('bob').status_code, 200)
+        with patch.dict('os.environ', PROXYPERMIT_HA_NODE='a'), \
+             patch.object(settings, 'managed_ha', return_value=True), \
+             patch.object(settings, 'ha_enabled', return_value=True), \
+             patch.object(settings, 'activation_supported', return_value=True):
+            for reserved in (False, True):
+                with patch.object(settings.cluster, 'reserved', return_value=reserved):
+                    response = self.client.get('/settings')
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(b'id="cluster-preparation"' in response.data, not reserved)
+                    self.assertIn(b'id="ha-protection-status"', response.data)
+
+    def test_peer_key_rotation_requires_csrf_password_and_optional_fresh_totp(self):
+        root = self.accounts.parent
+        environment = dict(DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true', PROXYPERMIT_HA_NODE='a',
+                           NODE0_ADDRESS='192.0.2.11', NODE1_ADDRESS='192.0.2.12', VIP_ADDRESS='192.0.2.10',
+                           SESSION_STATE_FILE=str(root / 'session.json'))
+        with patch.dict('os.environ', environment), patch('app.web.proxy.activation_supported', return_value=True):
+            for name in ('bob', 'alice'):
+                with self.subTest(account=name):
+                    if name == 'alice':
+                        self.assertEqual(self.login(name, otp=pyotp.TOTP(self.secret).now()).status_code, 200)
+                    else:
+                        self.assertEqual(self.login(name).status_code, 200)
+                    ha_replication.snapshot('Port 3128\nAllow 127.0.0.1\n', '# fixture\n')
+                    ha_replication.write_state('peer', {'key': 'a' * 64, 'credentialProtocol': 1,
+                                                       'credentialChecked': int(time.time())})
+                    with self.client.session_transaction() as session:
+                        session['proxy_csrf'] = 'fixture-key-csrf'
+                    url = '/api/proxy/ha-replication/rotate-key'
+                    headers = {'X-CSRF-Token': 'fixture-key-csrf'}
+                    self.assertEqual(self.client.post(url, json={'password': 'test passphrase'}).status_code, 403)
+                    self.assertEqual(self.client.post(url, headers=headers, json={'password': 'wrong'}).status_code, 401)
+                    body = {'password': 'test passphrase'}
+                    if name == 'alice':
+                        self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 401)
+                        body['otp'] = pyotp.TOTP(self.secret).at(time.time() + 30)
+                    self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 200)
+                    if name == 'alice':
+                        self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 401)
+
+    def test_pairing_revocation_requires_confirmation_csrf_password_and_optional_fresh_totp_on_both_nodes(self):
+        root = self.accounts.parent
+        environment = dict(DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true',
+                           NODE0_ADDRESS='192.0.2.11', NODE1_ADDRESS='192.0.2.12', VIP_ADDRESS='192.0.2.10',
+                           SESSION_STATE_FILE=str(root / 'session.json'))
+        with patch.dict('os.environ', environment), patch('app.web.proxy.activation_supported', return_value=True):
+            for role in ('a', 'b'):
+                for name in ('bob', 'alice'):
+                    with self.subTest(role=role, account=name), patch.dict('os.environ', PROXYPERMIT_HA_NODE=role):
+                        self.data[name]['revision'] = name + '-isolated-node-' + role
+                        self.accounts.write_text(json.dumps(self.data))
+                        fields = {'otp': pyotp.TOTP(self.secret).now()} if name == 'alice' else {}
+                        self.assertEqual(self.login(name, **fields).status_code, 200)
+                        peer = {'key': 'a' * 64}
+                        ha_replication.write_state('peer', peer)
+                        with self.client.session_transaction() as session:
+                            session['proxy_csrf'] = 'fixture-revoke-csrf'
+                        url = '/api/proxy/ha-replication/disconnect'
+                        headers = {'X-CSRF-Token': 'fixture-revoke-csrf'}
+                        body = {'confirmed': True, 'password': 'test passphrase'}
+                        self.assertEqual(self.client.post(url, json=body).status_code, 403)
+                        self.assertEqual(self.client.post(url, headers=headers, json={}).status_code, 400)
+                        self.assertEqual(self.client.post(url, headers=headers,
+                            json={'confirmed': True, 'password': 'wrong'}).status_code, 401)
+                        self.assertEqual(ha_replication.read_state('peer'), peer)
+                        if name == 'alice':
+                            self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 401)
+                            body['otp'] = pyotp.TOTP(self.secret).at(time.time() + 30)
+                        self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 200)
+                        self.assertIsNone(ha_replication.read_state('peer'))
+                        if name == 'alice':
+                            ha_replication.write_state('peer', peer)
+                            self.assertEqual(self.client.post(url, headers=headers, json=body).status_code, 401)
+                            self.assertEqual(ha_replication.read_state('peer'), peer)
 
     def test_privacy_notice_is_public_but_log_records_require_authentication(self):
         self.assertEqual(self.client.get('/api/logs').status_code, 401)

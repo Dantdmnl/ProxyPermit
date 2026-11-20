@@ -54,6 +54,11 @@ class PermissionTests(unittest.TestCase):
             session['proxy_csrf'] = session['settings_csrf'] = 'isolated-csrf'
         return client
 
+    def test_only_system_administrators_can_read_cluster_preparation(self):
+        with patch('app.web.settings.cluster_setup.read_readiness', return_value={'state': 'unknown', 'checks': {}}):
+            for role, status in [('admin', 200), ('manager', 403), ('monitor', 403)]:
+                self.assertEqual(self.login(role).get('/api/settings/cluster-readiness').status_code, status)
+
     def account_change(self, client, action, **data):
         return client.post('/api/settings/accounts', headers={'X-CSRF-Token': 'isolated-csrf'},
                            json=dict(action=action, password='role test passphrase', **data))

@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -14,6 +15,168 @@ spec.loader.exec_module(installer)
 
 
 class InstallerTests(unittest.TestCase):
+    def setUp(self):
+        # Installer self-tests also run on real protected cluster hosts. Each
+        # test supplies its own cluster state rather than using the host profile.
+        reservation = patch.object(installer.cluster, 'reserved', return_value=False)
+        reservation.start()
+        self.addCleanup(reservation.stop)
+        # Rollback fixtures must not discover a real node's managed TLS profile.
+        from scripts.deploy import management_tls
+        tls_state = tempfile.TemporaryDirectory()
+        self.addCleanup(tls_state.cleanup)
+        tls_folder = patch.object(management_tls, 'FOLDER', Path(tls_state.name) / 'management-tls')
+        tls_folder.start()
+        self.addCleanup(tls_folder.stop)
+
+    @unittest.skipIf(os.name == 'nt', 'Directory descriptors require POSIX')
+    def test_native_draft_tree_is_validated_without_privileged_recursive_migration(self):
+        uid = getattr(os, 'getuid')()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            backups = root / 'drafts'
+            backups.mkdir(mode=0o700)
+            fixture = backups / 'pending.json'
+            fixture.write_text('isolated draft')
+            fixture.chmod(0o600)
+            installer.validate_native_backups(backups, uid)
+            before = fixture.stat()
+            fixture.chmod(0o644)
+            with self.assertRaisesRegex(ValueError, 'OS review'):
+                installer.validate_native_backups(backups, uid)
+            self.assertEqual(fixture.stat().st_mode & 0o777, 0o644)
+            fixture.chmod(0o600)
+            link = backups / 'redirect.json'
+            link.symlink_to(fixture)
+            with self.assertRaisesRegex(ValueError, 'OS review'):
+                installer.validate_native_backups(backups, uid)
+            self.assertEqual(fixture.stat().st_uid, before.st_uid)
+            self.assertEqual(fixture.read_text(), 'isolated draft')
+            with self.assertRaises((OSError, ValueError)):
+                installer.validate_native_backups(link, uid)
+
+    def test_fresh_install_prepares_backups_before_unprivileged_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transaction = installer.Transaction(root / 'transaction')
+            backups = root / '.backups'
+            ownership = []
+            installer.prepare_filter_backups(backups, transaction, 123, 456,
+                lambda path, uid, gid: ownership.append((path, uid, gid)))
+            self.assertTrue(backups.is_dir())
+            self.assertEqual(ownership, [(backups, 123, 456)])
+            transaction.restore()
+            self.assertFalse(backups.exists())
+
+    @unittest.skipIf(os.name == 'nt', 'Symlink creation requires POSIX')
+    def test_filter_backup_symlink_cannot_redirect_privileged_ownership(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'operator-folder'
+            target.mkdir()
+            backups = root / '.backups'
+            backups.symlink_to(target, target_is_directory=True)
+            with patch.object(installer.os, 'chown') as chown:
+                with self.assertRaises(ValueError):
+                    installer.prepare_filter_backups(backups, installer.Transaction(root / 'transaction'), 123, 456, chown)
+                chown.assert_not_called()
+
+    def test_cluster_maintenance_is_restricted_to_protected_managed_upgrades(self):
+        from types import SimpleNamespace
+        good = dict(action='upgrade', mode='ha', managedHa=True)
+        with patch.object(installer.cluster, 'reserved', return_value=True):
+            installer.validate_cluster_upgrade(good, SimpleNamespace(upgrade=True))
+            for plan in ({**good, 'mode': 'standalone'}, {**good, 'action': 'install'},
+                         {**good, 'ha': {'node': 'a'}}, {**good, 'managedHa': False}):
+                with self.assertRaises(ValueError):
+                    installer.validate_cluster_upgrade(plan, SimpleNamespace(upgrade=True))
+        with patch.object(installer.cluster, 'reserved', return_value=False):
+            with self.assertRaises(ValueError):
+                installer.validate_cluster_upgrade(good, SimpleNamespace(upgrade=True))
+        self.assertEqual(installer.main(['--plan', '--cluster-maintenance']), 1)
+
+    def test_cluster_reservation_blocks_independent_service_mutations(self):
+        from app.core import cluster
+        with patch.object(cluster, 'reserved', return_value=True), \
+                patch.object(installer, 'require_linux_root'), \
+                patch.object(installer, 'maintenance_lock', return_value=nullcontext()), \
+                patch.object(installer, 'run') as run:
+            for action in (lambda: installer.apply({}, None), lambda: installer.uninstall('/opt/proxypermit'),
+                           lambda: installer.build_ha_retirement_plan('/opt/proxypermit')):
+                with self.assertRaises(ValueError):
+                    action()
+            run.assert_not_called()
+
+    @unittest.skipUnless(os.name != 'nt' and shutil.which('setfacl'), 'POSIX ACL tools required.')
+    def test_recovery_restores_acl_and_its_original_absence(self):
+        import subprocess
+        from app.core.files import access_acl
+        for original_acl in (False, True):
+            with self.subTest(original_acl=original_acl), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / 'native.conf'
+                path.write_text('original')
+                path.chmod(0o640)
+                if original_acl:
+                    subprocess.run(['setfacl', '--no-mask', '-m', 'u:42424:r--', str(path)], check=True)
+                before = access_acl(path)
+                transaction = installer.Transaction(Path(directory) / 'backup')
+                transaction.track(path)
+                subprocess.run(['setfacl', '--no-mask', '-m', 'u:42425:r--', str(path)], check=True)
+                transaction.restore()
+                self.assertEqual(access_acl(path), before)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+
+    @unittest.skipUnless(os.name != 'nt' and shutil.which('setfacl'), 'POSIX ACL tools required.')
+    def test_reload_acl_does_not_unmask_custom_denied_readers(self):
+        import subprocess
+        from app.core.files import access_acl
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'native.conf'
+            path.write_text('User nobody\n')
+            subprocess.run(['setfacl', '-m', 'u:42424:r--,m::---', str(path)], check=True)
+            before = access_acl(path)
+            with patch.object(installer, 'run') as run:
+                with self.assertRaises(ValueError):
+                    installer.configure_reload_access(path, path)
+            self.assertEqual(access_acl(path), before)
+            run.assert_not_called()
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX directory and executable permissions.')
+    def test_private_source_permissions_do_not_block_runtime_or_expose_existing_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / 'existing-secret'
+            secret.write_text('isolated test value')
+            secret.chmod(0o600)
+            release = root / 'new-release'
+            module = release / 'app' / 'web'
+            module.mkdir(parents=True, mode=0o700)
+            code = module / 'manager.py'
+            code.write_text('pass\n')
+            code.chmod(0o600)
+            script = release / 'install.sh'
+            script.write_text('#!/bin/sh\n')
+            script.chmod(0o700)
+            installer.prepare_release_permissions(release)
+            self.assertEqual(module.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(code.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(script.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipIf(os.name == 'nt', 'POSIX symlinks.')
+    def test_release_permission_normalization_does_not_follow_external_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secret = root / 'existing-secret'
+            secret.write_text('isolated test value')
+            secret.chmod(0o600)
+            release = root / 'new-release'
+            release.mkdir()
+            (release / 'unexpected-link').symlink_to(secret)
+            with self.assertRaises(ValueError):
+                installer.prepare_release_permissions(release)
+            self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
+
     def test_health_helper_upgrade_is_reversible_and_preserves_custom_helpers(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'health'

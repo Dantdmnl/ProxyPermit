@@ -14,3 +14,9 @@ Makefile text eol=lf
 *.json text eol=lf
 *.toml text eol=lf
 *.txt text eol=lf
+
+# SHA-256-pinned upstream sources/licenses must retain their exact bytes.
+deploy/fence-agents/fence_pve.py.in -text
+deploy/fence-agents/COPYING.applications -text
+deploy/fence-agents/COPYRIGHT -text
+deploy/fence-agents/README.licence -text
