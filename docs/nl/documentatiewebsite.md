@@ -94,9 +94,10 @@ originele breedte/hoogte in pixels op de Markdown-afbeelding, zodat de pagina
 ruimte reserveert tijdens het laden. Rek kleine screenshots niet uit.
 
 Kies **Vergroten** op een screenshot om de galerij van Zensical te openen.
-**Inzoomen** verschijnt wanneer de galerij het screenshot groter kan weergeven.
-Met **Open origineel** bekijk je het bestand op ware grootte in een apart
-tabblad, ook op mobiel. Zonder JavaScript opent de afbeeldingslink het originele
+Zoom in met **+** en uit met **−**. Scrol door de vergrote afbeelding en kies
+**Passend** om terug te keren naar de beginweergave. De knoppen werken ook op
+mobiel. Houd met een muis **Ctrl** (of **Command** op macOS) ingedrukt en scrol
+om te zoomen. Zonder JavaScript opent de afbeeldingslink het originele
 bestand. Er zijn geen externe viewerscripts, analytics of afbeeldingsdiensten
 nodig. De uitnodiging om een GitHub-ster te geven staat kort onder de paginatekst.
 

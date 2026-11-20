@@ -91,9 +91,10 @@ Place screenshots beside the task they explain. Use a `figure` with the
 captures. Set `loading=lazy` and the original pixel width/height on the Markdown
 image to reserve space while it loads. Never stretch a small screenshot.
 
-Use **Enlarge** on a screenshot to open the Zensical gallery. **Zoom in** appears
-when the viewer can show the screenshot at a larger size. Use **Open original**
-to view the full-size screenshot in a separate tab, including on mobile.
+Use **Enlarge** on a screenshot to open the Zensical gallery. Use **+** and
+**−** to adjust the zoom, scroll to inspect the enlarged image, or choose
+**Fit** to return to the initial view. The controls also work on mobile.
+With a mouse, hold **Ctrl** (or **Command** on macOS) and scroll to zoom.
 Without JavaScript the image links still open the original file. No external
 viewer script, analytics or image service is needed. The GitHub star invitation
 appears as a short footer after the page content.

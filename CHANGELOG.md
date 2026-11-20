@@ -8,7 +8,7 @@ Historical deployments are not assigned retrospective release tags.
 
 - Gate releases on an isolated Linux-root CI job with no skipped tests, measure application and deployment/tooling coverage, and enforce a coverage baseline.
 - Quiet expected disconnects in TLS test servers while making unexpected server-thread errors fail their tests.
-- Add visible, translated controls to enlarge documentation screenshots, zoom in the gallery and open the original image.
+- Add visible, translated controls to enlarge documentation screenshots and adjust the zoom in the gallery on desktop and mobile.
 
 ## [1.4.0-dev.1] - 2026-11-17
 
