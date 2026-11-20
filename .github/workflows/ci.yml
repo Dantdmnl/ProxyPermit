@@ -70,21 +70,44 @@ jobs:
           python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements/*.txt
+      - name: POSIX ACL regression dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
       - run: python -m pip install -r requirements/base.txt
-      - if: matrix.os != 'ubuntu-latest' || matrix.python != '3.14'
-        run: python scripts/dev/test.py
-      - name: Tests with coverage
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+      - run: python scripts/dev/test.py
+
+  privileged:
+    name: Isolated root tests & coverage
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 15
+    steps:
+      - name: Prepare disposable test container
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          python -m pip install coverage==7.17.2
-          python -m coverage run scripts/dev/test.py
-          python -m coverage xml -o artifacts/coverage.xml
-          python -m coverage report >> "$GITHUB_STEP_SUMMARY"
+          apt-get update
+          apt-get install -y --no-install-recommends python3 python3-venv git ca-certificates acl openssl tzdata
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run every isolated test as root
+        env:
+          COVERAGE_FILE: artifacts/coverage.data
+        run: |
+          python3 -m venv /tmp/proxypermit-ci-venv
+          /tmp/proxypermit-ci-venv/bin/python -m pip install -r requirements/base.txt coverage==7.17.2
+          mkdir -p artifacts
+          /tmp/proxypermit-ci-venv/bin/python -m coverage run scripts/dev/test.py --require-root --fail-on-skip
+          /tmp/proxypermit-ci-venv/bin/python -m coverage xml -o artifacts/coverage.xml
+          /tmp/proxypermit-ci-venv/bin/python -m coverage json -o artifacts/coverage.json
+          /tmp/proxypermit-ci-venv/bin/python -m coverage report --precision=2 --fail-under=48 >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.14'
+        if: always()
         with:
           name: proxypermit-coverage
-          path: artifacts/coverage.xml
+          path: artifacts/coverage.*
+          if-no-files-found: error
           retention-days: 14
 
   frontend:
@@ -108,6 +131,7 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/proxypermit-browser" --no-audit --no-fund playwright@1.65.0
           node "$RUNNER_TEMP/proxypermit-browser/node_modules/playwright/cli.js" install --with-deps chromium
           NODE_PATH="$RUNNER_TEMP/proxypermit-browser/node_modules" PP_TEST_PYTHON="$(command -v python)" node tests/browser/settings.cjs
+          NODE_PATH="$RUNNER_TEMP/proxypermit-browser/node_modules" PP_TEST_PYTHON="$(command -v python)" node tests/browser/ha-security.cjs
 
       - name: Verify documentation screenshots and gallery
         run: |
@@ -182,7 +206,7 @@ jobs:
 
   release:
     name: Release archive & tag validation
-    needs: [workflow, quality, unit, frontend, http, documentation, dependencies]
+    needs: [workflow, quality, unit, privileged, frontend, http, documentation, dependencies]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -205,8 +229,8 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish stable GitHub Release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: release
     permissions:
       contents: write

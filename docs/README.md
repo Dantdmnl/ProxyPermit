@@ -29,6 +29,5 @@ Deze handleidingen volgen de `main`-branch. Nieuwe functies kunnen hier staan
 voordat ze zijn uitgebracht. Controleer je geïnstalleerde versie en lees de
 [releaseopmerkingen](https://github.com/Dantdmnl/ProxyPermit/blob/main/CHANGELOG.md).
 
-Historical instructions remain in the
-[archive / archief](https://github.com/Dantdmnl/ProxyPermit/tree/main/docs/legacy).
-Use them only for the older deployment they describe.
+For an older version, consult the documentation shipped with that release.
+Gebruik voor een oudere versie de documentatie die bij die release hoort.

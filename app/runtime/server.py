@@ -29,16 +29,21 @@ def build_command(backend, env, executable=None):
         return command + ['wsgi:app']
     if backend != 'granian':
         raise ValueError('Set APP_SERVER to gunicorn or granian.')
-    # Keep direct TLS migrations explicit: Granian requires PKCS#8 keys.
+    # Managed certificates use unencrypted PKCS#8 keys protected by the OS.
     tls_override = env.get('GUNICORN_USE_TLS', '').lower()
     tls = tls_override in ('true', '1', 'yes') or (
         not tls_override and env.get('MANAGER_SCHEME', 'http').lower() == 'https')
-    if tls:
-        raise ValueError('Use Granian behind a TLS-terminating reverse proxy and set GUNICORN_USE_TLS=false. Use Gunicorn for direct TLS.')
     command = [python, '-m', 'granian', '--interface', 'wsgi', '--workers', workers,
                '--blocking-threads', '1', '--working-dir', str(ROOT), '--no-access-log']
+    if tls:
+        certificate, key = env.get('MANAGER_CERT', ''), env.get('MANAGER_KEY', '')
+        if not certificate.startswith('/') or not key.startswith('/'):
+            raise ValueError('Direct TLS requires absolute MANAGER_CERT and MANAGER_KEY paths.')
+        command.extend(['--ssl-certificate', certificate, '--ssl-keyfile', key, '--ssl-protocol-min', 'tls1.2'])
     bind = env.get('APP_BIND') or env.get('GUNICORN_BIND') or f"{env.get('MANAGER_BIND', '127.0.0.1')}:{env.get('MANAGER_PORT', '8080')}"
     if bind.startswith('unix:'):
+        if tls:
+            raise ValueError('Direct management TLS requires a TCP listener.')
         path = bind[5:]
         if not path.startswith('/'):
             raise ValueError('A Unix socket requires an absolute path.')
@@ -49,7 +54,7 @@ def build_command(backend, env, executable=None):
         host, separator, port = bind.rpartition(':')
         if not separator or not host:
             raise ValueError('Set APP_BIND to host:port or unix:/path.')
-        command.extend(['--host', host.strip('[]'), '--port', _integer(port, 'Poort', 1, 65535)])
+        command.extend(['--host', host.strip('[]'), '--port', _integer(port, 'Port', 1, 65535)])
     return command + ['wsgi:app']
 
 

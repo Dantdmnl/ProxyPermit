@@ -1,11 +1,12 @@
 [tool.coverage.run]
 branch = true
-source = ["app"]
+source = ["app", "scripts", "legacy", "deploy"]
 omit = ["app/_version.py"]
 
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+include_namespace_packages = true
 
 [tool.pylint.main]
 py-version = "3.10"

@@ -32,7 +32,6 @@ legacy/              Synchronisatie en herstelhulpmiddelen voor bestaande HA-clu
 docs/                Ingang voor beide talen
   nl/                Nederlandse documentatie
   en/                Engelse documentatie
-  legacy/            Historische documentatie
 ```
 
 De root bevat alleen documentatie/metadata, versie/changelog, de Makefile en de

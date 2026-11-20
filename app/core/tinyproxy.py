@@ -10,11 +10,12 @@ import json
 import os
 import re
 import shlex
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .files import file_lock
+from .files import file_lock, access_acl, restore_access_acl, sync_directory, DurabilityError
 
 
 # type, section, repeatable. Complex directives retain their native arguments.
@@ -191,6 +192,10 @@ def summary(content):
 def atomic_write(path, content, mode=0o600):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Preserve named readers only when the caller retains the original mode.
+    # Explicit permission changes must not transiently expose new contents via
+    # an old ACL mask that is wider than the requested mode.
+    acl = access_acl(path) if path.exists() and stat.S_IMODE(path.stat().st_mode) == mode else None
     descriptor, name = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8', newline='') as handle:
@@ -201,7 +206,12 @@ def atomic_write(path, content, mode=0o600):
         if path.exists() and os.name != 'nt' and os.geteuid() == 0:  # pylint: disable=no-member
             info = path.stat()
             os.chown(name, info.st_uid, info.st_gid)  # pylint: disable=no-member
+        restore_access_acl(name, acl)
         os.replace(name, path)
+        try:
+            sync_directory(path.parent)
+        except OSError as error:
+            raise DurabilityError('The file was replaced, but durable storage could not be confirmed. Verify the host before continuing.') from error
     finally:
         if os.path.exists(name):
             os.unlink(name)
@@ -212,7 +222,7 @@ class TinyproxyConfigStore:
         self.path = Path(path)
         self.backup_dir = self.path.parent / '.proxypermit-config-backups'
         self.validate = validator
-        self.mode = mode
+        self.mode = stat.S_IMODE(self.path.stat().st_mode) if self.path.exists() else mode
         self.pending_path = self.backup_dir / ('pending-' + hashlib.sha256(str(self.path.resolve()).encode()).hexdigest()[:16] + '.json')
         self.draft_path = self.pending_path.with_name(self.pending_path.name.replace('pending-', 'draft-', 1))
 

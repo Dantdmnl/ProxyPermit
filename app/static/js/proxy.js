@@ -171,8 +171,8 @@
             ? 'Wijzigingen zijn pas actief na publiceren. De bestaande regels worden niet gewist.'
             : 'Kies eerst een filterbestand om een allowlist of blocklist te gebruiken.');
         [['Filtering', modes[result.summary.filterMode]],
-            ['Patroontype', filtering ? result.summary.filterType.toUpperCase() : '—'],
-            ['Filterdoel', filtering ? (result.summary.filterURLs ? 'HTTP-URL’s' : 'Domeinen') : '—']].forEach(([label, value]) => {
+            ['Patroontype', filtering ? result.summary.filterType.toUpperCase() : 'â€”'],
+            ['Filterdoel', filtering ? (result.summary.filterURLs ? 'HTTP-URLâ€™s' : 'Domeinen') : 'â€”']].forEach(([label, value]) => {
             const card = document.createElement('div'), small = document.createElement('small'), strong = document.createElement('strong');
             small.textContent = I18n.t(label); strong.textContent = I18n.t(value); card.append(small, strong); $('summary').append(card);
         });
@@ -215,7 +215,7 @@
         if (!spec) return;
         const value = spec.name === 'Upstream' ? upstreamValue() : ($('choice').hidden ? $('value') : $('choice')).value.trim();
         if (!value || /[\r\n]/.test(value)) {
-            return settingFeedback(spec.name === 'Upstream' ? 'Gebruik host:poort en eventueel een bestemming. Direct verbinden vereist een bestemming.' : 'Vul één regel met geldige argumenten in.', true);
+            return settingFeedback(spec.name === 'Upstream' ? 'Gebruik host:poort en eventueel een bestemming. Direct verbinden vereist een bestemming.' : 'Vul Ã©Ã©n regel met geldige argumenten in.', true);
         }
         const lines = $('config').value.split('\n'), pattern = new RegExp('^\\s*' + spec.name + '\\s+', 'i');
         if (spec.name === 'FilterDefaultDeny' && !lines.some(line => /^\s*Filter\s+\S/i.test(line))) {
@@ -233,9 +233,8 @@
         const result = await request('/api/proxy/config/validate', 'POST', { content: $('config').value });
         showValidation(result); message(result.valid ? I18n.t('Configuratiestructuur is geldig.') : I18n.t('Los de fouten op voordat je opslaat.'), !result.valid);
     }));
-    function save(activate) { return work(async () => {
-        const content = $('config').value;
-        await request('/api/proxy/config', 'PUT', { content, revision, activate });
+    async function persist(content, activate, activationAction) {
+        await request('/api/proxy/config', 'PUT', { content, revision, activate, activationAction });
         if (activate) {
             filterRevision = ''; filterOriginal = ''; $('filter').value = '';
             $('filter-discard').hidden = true;
@@ -243,7 +242,8 @@
         }
         await load();
         message(activate ? 'Configuratie opgeslagen en Tinyproxy geactiveerd.' : 'Concept opgeslagen. De draaiende proxy blijft hetzelfde.');
-    }); }
+    }
+    function save(activate) { return work(() => persist($('config').value, activate)); }
     $('draft-save').addEventListener('click', () => $('save').click());
     $('draft-publish').addEventListener('click', () => $('activate').click());
     $('draft-discard').addEventListener('click', () => $('discard').click());
@@ -252,9 +252,15 @@
         if (filterRevision) $('filter-discard').click();
     });
     $('save').addEventListener('click', () => save(false));
-    $('activate').addEventListener('click', () => {
-        if (window.confirm(I18n.t('Configuratie publiceren? Tinyproxy wordt herstart en actieve verbindingen kunnen worden onderbroken.'))) save(true);
-    });
+    $('activate').addEventListener('click', () => work(async () => {
+        const content = $('config').value;
+        const review = await request('/api/proxy/config/validate', 'POST', { content });
+        if (!review.valid) { showValidation(review); return; }
+        const text = review.activationAction === 'reload'
+            ? 'Publish configuration with a reload? Existing connections remain open.'
+            : 'Configuratie publiceren? Tinyproxy wordt herstart en actieve verbindingen kunnen worden onderbroken.';
+        if (window.confirm(I18n.t(text))) await persist(content, true, review.activationAction);
+    }));
     $('native-link').addEventListener('click', () => { $('native-config').open = true; });
     if (window.location.hash === '#native-config') $('native-config').open = true;
     $('reload').addEventListener('click', () => { if (!dirty() || window.confirm(I18n.t('Je concept verwerpen en het bestand opnieuw laden?'))) work(load); });
@@ -264,7 +270,7 @@
         filterStaged = result.staged;
         $('filter-discard').hidden = !result.draft;
         const modes = { allowlist: 'Allowlist', blocklist: 'Blocklist' };
-        $('filter-mode').textContent = I18n.t(modes[result.filterMode]) + ' · ' + result.filterType.toUpperCase();
+        $('filter-mode').textContent = I18n.t(modes[result.filterMode]) + ' Â· ' + result.filterType.toUpperCase();
         showValidation(result); message('Filterbestand geladen.');
     }
     $('filter-load').addEventListener('click', () => {

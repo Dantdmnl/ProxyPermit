@@ -598,6 +598,7 @@ async function main() {
                     { timestamp, service: 'tinyproxy', level: 'INFO', message: 'Reloading config file finished' },
                     { timestamp, service: 'tinyproxy', level: 'INFO', message: 'Initializing tinyproxy ...' },
                     { timestamp, service: 'tinyproxy', level: 'WARNING', message: 'FLAGS is unset' },
+                    { timestamp, service: 'manager', level: 'WARNING', message: 'Client certificate trust alert', repetitions: 3 },
                     { timestamp, service: 'audit', level: 'INFO', message: 'AUDIT event=whitelist_add, username=admin',
                         audit: { event: 'whitelist_add', username: 'admin' } }
                 ] } });
@@ -641,11 +642,17 @@ async function main() {
         await logs.getByText('Tinyproxy · 2 routine messages').click();
         await logs.getByText('Initializing tinyproxy ...').waitFor();
         await logs.getByText('FLAGS is unset').waitFor();
+        await logs.getByText('×3', { exact: true }).waitFor();
+        await logs.locator('.log-options > summary').click();
+        const routineRequest = page.waitForRequest(request => request.url().includes('/api/logs?') && request.url().includes('routine=include'));
+        await logs.locator('#logRoutineMessages').check();
+        await routineRequest;
+        await logs.locator('#logRoutineMessages').uncheck();
         await logs.getByText('Filter rule added by admin').click();
         await logs.getByText('AUDIT event=whitelist_add, username=admin').waitFor();
         await logs.locator('.log-period > summary').click();
-        await logs.locator('#logSince').fill('2026-11-10T10:00:00');
-        await logs.locator('#logUntil').fill('2026-11-10T11:00:00');
+        await logs.locator('#logSince').fill('2026-11-10T10:00');
+        await logs.locator('#logUntil').fill('2026-11-10T11:00');
         const datedRequest=page.waitForRequest(request=>request.url().includes('/api/logs?') && request.url().includes('since='));
         await logs.getByRole('button',{name:'Apply date range'}).click();
         const range=new URL((await datedRequest).url());
@@ -875,6 +882,19 @@ async function main() {
             await page.keyboard.press('Escape');
         }
         await page.setViewportSize({ width: 1440, height: 900 });
+        const assetErrors = [];
+        page.on('pageerror', error => { if (error.message.includes('RuleView')) assetErrors.push(error.message); });
+        for (const language of ['nl', 'en']) {
+            await page.route('**/static/js/rules.js*', route => route.abort());
+            await page.goto(`${base}/?lang=${language}`);
+            await page.locator('#ruleAssetNotice').waitFor({ state: 'visible' });
+            assert.match(await page.locator('#ruleAssetNotice').textContent(), language === 'nl' ? /opgeslagen regels/ : /saved rules/);
+            await page.unroute('**/static/js/rules.js*');
+            await page.locator('#reloadRuleInterface').click();
+            await page.locator('#ruleAssetNotice').waitFor({ state: 'hidden' });
+            await page.locator('#entriesList .entry-item').first().waitFor();
+        }
+        assert.deepEqual(assetErrors, []);
         await page.getByRole('button', { name: 'Sign out' }).click();
         await page.locator('#loginForm').waitFor();
         assert.equal(await page.locator('#shellNavigation').count(), 0);

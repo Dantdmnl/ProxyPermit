@@ -16,6 +16,7 @@ from app.core.access_safety import profile_path, read_profile, protect_configura
 from app.core.ha import HA_SETUP_REQUEST, HA_SETUP_RESULT, HA_SETUP_ENV, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from app.core.tinyproxy import TinyproxyConfigStore, atomic_write
 from app.core.files import file_lock
+from app.core import cluster
 from app.web import ha_replication
 from scripts.deploy import install as deploy
 
@@ -120,6 +121,7 @@ def configure(base):
 
 
 def _configure_locked(base, request, topology):
+    cluster.require_independent_control('configuring independent HA services')
     installed, _, _, _ = deploy.installed_deployment('/', str(base))
     deploy.verify_live_manager(str(base))
     if installed.get('mode') != 'standalone':
@@ -243,7 +245,7 @@ def _configure_locked(base, request, topology):
             atomic_write(deploy.HA_RETIRE_SUDOERS, deploy.HA_RETIRE_RULE, 0o440)
             deploy.run('visudo', '-cf', str(deploy.HA_RETIRE_SUDOERS))
             if logging_content:
-                atomic_write(logging_dropin, logging_content, 0o644)
+                deploy.write_logging_asset(logging_dropin, logging_content)
             deploy.run('systemctl', 'daemon-reload')
             deploy.run('systemctl', 'restart', 'tinyproxy.service')
             deploy.start_ha()
