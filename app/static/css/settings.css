@@ -8,7 +8,7 @@
 .settings-panel h2 { margin:0 0 3px; font-size:16px; }
 .settings-panel p { margin:0; color:#526976; }
 .settings-workspace button { cursor:pointer; min-height:36px; }
-.settings-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.settings-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; }
 .settings-badge { color:#49616d; background:#edf2f4; border-radius:5px; padding:4px 8px; font-size:12px; white-space:nowrap; }
 .settings-badge[data-enabled=true] { color:#195341; background:#e7f5ee; }
 .settings-info-panel { --settings-fact-bg:var(--field,#f6f8f9); --settings-label:#526976; }
@@ -49,12 +49,37 @@
 #enrollGroup { margin-bottom:12px; }
 #enrollmentSecret { font-family:monospace; }
 .enrollment-qr { display:block; width:min(210px,100%); height:auto; margin:12px auto; background:white; }
-.settings-workspace .rule-dialog input[type=password] { width:100%; min-height:40px; }
+.credential-dialog.workspace-dialog { width:min(31rem,calc(100% - 24px)); }
+.credential-dialog .workspace-dialog-body { display:grid; align-content:start; gap:14px; padding-block:16px; }
+.credential-dialog .workspace-dialog-body > p { margin:0; }
+.credential-dialog .workspace-dialog-body > [role="alert"] { color:var(--danger,#923428); }
+.credential-dialog .workspace-dialog-body > [role="alert"]:empty { position:absolute; }
+.credential-dialog .workspace-dialog-body > label { display:grid; gap:6px; }
+.credential-dialog .workspace-dialog-body > .ha-confirm { display:flex; align-items:baseline; gap:8px; }
+.credential-dialog :is(input[type="password"],input[autocomplete="one-time-code"]) { width:100%; min-width:0; min-height:40px; }
+.credential-dialog .workspace-dialog-footer { justify-content:flex-end; padding-block:12px; }
+.credential-dialog :is(.workspace-dialog-footer,.rule-dialog-actions) { gap:12px; }
+.credential-dialog :is(.workspace-dialog-footer,.rule-dialog-actions) button { min-height:40px; }
 .theme-setting { display:grid; gap:4px; min-width:144px; }
 .ha-settings { margin-top:12px; }
 .ha-settings summary { cursor:pointer; }
 .ha-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); align-items:end; gap:10px; margin:12px 0; }
 .ha-fields label { display:grid; gap:4px; min-width:0; }
+#cluster-plan-form { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#cluster-plan-form fieldset { display:grid; gap:8px; min-width:0; padding:10px; border:1px solid var(--line); border-radius:8px; }
+.cluster-plan-context { grid-column:1/-1; margin:0; }
+.cluster-plan-guide, .cluster-plan-import, #cluster-plan-result { margin-block:12px; padding:12px; border:1px solid var(--line); border-radius:8px; }
+.cluster-plan-guide ol { margin-bottom:0; padding-inline-start:20px; }
+.cluster-plan-guide li + li { margin-top:8px; }
+.cluster-local-preparation { margin-block:16px 0; padding-block-start:12px; border-top:1px solid var(--line); }
+.cluster-local-preparation h3 { margin-block:0 8px; }
+.cluster-local-preparation code, #cluster-plan-fingerprint { overflow-wrap:anywhere; }
+.cluster-plan-import label { display:block; margin-bottom:6px; }
+.cluster-plan-import input { max-width:100%; }
+.cluster-plan-import p, #cluster-plan-result p { margin:6px 0; }
+#cluster-plan-fingerprint { display:block; overflow-wrap:anywhere; margin-block:4px 10px; }
+#cluster-plan-feedback[data-error] { color:var(--danger,#923428); }
+@media (max-width:640px) { #cluster-plan-form { grid-template-columns:minmax(0,1fr); } }
 .ha-fields > div { display:grid; gap:4px; min-width:0; }
 .ha-fields :is(input,select) { min-width:0; width:100%; min-height:36px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--field,#fff); color:var(--ink); }
 .ha-settings pre { margin:8px 0 0; padding:8px; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--field,#f4f6f8); color:var(--ink); }
@@ -80,8 +105,6 @@
 #haJoinCodeLabel { grid-column:1 / -1; }
 #haJoinCode { min-height:110px; width:100%; }
 #haSetupMode { margin-top:4px; max-width:100%; }
-#haSetupApplyForm input[type=password], #haSetupApplyForm input[inputmode=numeric] { width:100%; margin:4px 0 12px; }
-#haSetupError { color:var(--danger,#923428); }
 
 #ha-policy textarea { display:block; width:100%; min-height:5rem; margin-block:6px 12px; }
 #ha-policy-result { margin-top:12px; }

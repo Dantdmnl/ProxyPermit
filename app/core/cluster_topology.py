@@ -1,15 +1,13 @@
 """Deterministic native cluster configuration from an OS-approved two-node plan."""
-import hashlib
-import json
 import re
 from xml.etree import ElementTree as ET
 
-from .cluster_setup import validate_plan
+from .cluster_setup import plan_hash, validate_plan
 
 
 def name(plan):
     value = validate_plan(plan)
-    return 'proxypermit-' + hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:12]
+    return 'proxypermit-' + plan_hash(value)[:12]
 
 
 def corosync_config(plan):
@@ -89,7 +87,9 @@ def initial_configuration(cib, plan, fence_host, pve_node):
     if settings is None or constraints is None or list(constraints):
         raise ValueError('Existing constraints require explicit cluster migration.')
     values = {pair.get('name'): pair.get('value') for pair in settings.iter('nvpair')}
-    if (any(key not in ('cluster-infrastructure', 'cluster-name', 'dc-version', 'have-watchdog') for key in values)
+    # Pacemaker can record a timestamp here after a resource cleanup.
+    if (any(key not in ('cluster-infrastructure', 'cluster-name', 'dc-version', 'have-watchdog', 'last-lrm-refresh') for key in values)
+            or ('last-lrm-refresh' in values and not re.fullmatch(r'[0-9]{1,20}', values['last-lrm-refresh'] or ''))
             or values.get('have-watchdog', 'false') != 'false'
             or values.get('cluster-name', name(plan)) != name(plan)):
         raise ValueError('Existing administrator cluster policy must not be silently replaced.')

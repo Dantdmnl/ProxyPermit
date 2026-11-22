@@ -6,7 +6,7 @@ Welke verbeteringen komen eraan en wat heb je daar als beheerder aan? De
 belangrijkste ontwikkelprioriteit is HA met bescherming tegen onveilige overname.
 Ook gebruiksgemak, HTTPS en logging krijgen aandacht.
 
-Bijgewerkt op 17 november 2026, met **v1.3.0** als uitgangspunt voor uitgebrachte
+Bijgewerkt op 22 november 2026, met **v1.3.0** als uitgangspunt voor uitgebrachte
 functies. Er zijn geen toegezegde opleverdatums; de volgorde kan veranderen.
 
 **Zo lees je deze pagina:** een vinkje betekent dat een ontwikkelstap is afgerond
@@ -38,13 +38,14 @@ HA-wizard richt dit cluster nog niet voor je in.
     in. Lees [HA instellen en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname)
     voordat je een productieopstelling kiest.
 
-## Beschikbaar om te testen in v1.4.0-dev.1
+## Beschikbaar om te testen in v1.4.0-dev.2
 
 - **Veiliger HA-beheer:** de koppeling intrekken vraagt opnieuw om het beheerderswachtwoord en, als 2FA aanstaat, een verse authenticatorcode. De beschermingsstatus controleert strenger of de clustergegevens betrouwbaar zijn.
-- **Voorbereiding van beschermde HA:** systeembeheerders kunnen voorwaarden laten controleren. De experimentele clusterintegratie is uitgebreid, maar de volledige inrichting via de webinterface ontbreekt nog.
+- **Voorbereiding van beschermde HA:** systeembeheerders kunnen in Instellingen een Proxmox-plan controleren en opslaan en op elke node de pakketten voorbereiden. De OS-beheerder regelt de witness, fencing en activering.
+- **Migratie en herstel:** controleer het clusterverkeer vóór de VIP-overdracht en zet een applicatieversie terug terwijl de andere node het verkeer bedient. Bekijk de resultaten van de Proxmox-proeven in het [verificatierapport](verification.md).
 - **HTTPS instellen via de webinterface:** systeembeheerders kunnen certificaten voorbereiden en vernieuwen en HTTPS activeren. HTTPS is nog niet standaard bij installatie. Zie [HTTPS voor beheer](beheer-https.md).
 
-Deze functies zitten in de [prerelease v1.4.0-dev.1](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1),
+Deze functies zitten in de [prerelease v1.4.0-dev.2](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2),
 naast de stabiele v1.3.0. Gebruik voor de prerelease een tijdelijke of herstelbare
 testomgeving en de handleiding die bij de geïnstalleerde versie hoort.
 
@@ -63,6 +64,21 @@ het gebruikte platform.
 - [x] Een experimentele clusterintegratie met quorum, beveiligde witnessverbinding en fencing aanbieden voor inrichting door de OS-beheerder.
 - [x] Een beschermingsstatus tonen die bij verouderde gegevens geen gezonde toestand blijft melden.
 - [x] Voorwaarden vóór activering controleren en onderhoud per node ondersteunen op een vooraf ingericht cluster.
+- [x] In Instellingen een gevalideerd Proxmox-plan zonder geheimen maken en downloaden voor een bestaand beheerd HA-paar.
+- [x] In Instellingen de benodigde toegang uitleggen en op de tweede node hetzelfde plan en dezelfde vingerafdruk kunnen controleren.
+- [x] Vanuit Instellingen een gecontroleerd Proxmox-plan opslaan en de vaste clusterpakketten op die node voorbereiden, na herauthenticatie.
+- [x] De lokale node of witness controleren bij het klaarzetten en het plan behouden zodra de voorbereiding van afhankelijkheden is gestart.
+- [x] Onderbroken Proxmox-activering kunnen beoordelen en pas opnieuw proberen als de beoordeelde VIP-resource nog stilstaat.
+- [x] Onderbroken migratiereserveringen hervatten met een recente controle van de stand-bynode en afwijkende reserveringsbestanden behouden.
+- [x] Witnesscertificaten en bevestigde stroomstatus van de peer controleren, en vóór de VIP-overdracht de vingerafdrukken voor het clusterverkeer vergelijken.
+- [x] In een Proxmox-lab een bestaand Keepalived-paar migreren naar beschermde HA en het herstel na een onderbreking en tijdelijke uitval van de witness verifiëren.
+- [x] In het beschermde Proxmox-lab controleren dat het VIP één eigenaar houdt en het cluster herstelt nadat de actieve VM abrupt is uitgeschakeld.
+- [x] In Instellingen uitleggen hoe je gewone HA opzet en koppelt, en op beschermde nodes de actuele migratiefase tonen.
+- [x] Op Proxmox releaserollback en automatische fencing van een geïsoleerde VIP-eigenaar verifiëren.
+- [x] Controleren dat bij een netwerkscheiding zonder bereikbare witness geen node het VIP voert en dat daarna één eigenaar terugkeert.
+- [x] Een node die al via OS-clusterbeheer is losgekoppeld lokaal uit bedrijf nemen en de-installeren, met behoud van vaste beheerregels.
+- [x] Controleren dat B na enkele minuten uitval terugkomt en in een aparte proef een gemiste beleidsrevisie alsnog toepast.
+- [x] Uitleggen hoe de inrichting verschilt voor vSphere, libvirt en fysieke servers, en onveilige VMware TLS- en IPMI-configuraties bij de statuscontrole weigeren.
 - [ ] De eerste inrichting en het toevoegen van een node begeleiden via de webinterface, met duidelijke uitleg over benodigde hosts, netwerktoegang en rechten.
 - [ ] Bestaande HA-installaties gecontroleerd laten overstappen, met een begrijpelijke herstelprocedure als de omzetting wordt onderbroken.
 - [ ] Terugdraaien, een node verwijderen en de-installatie afronden voor beschermde clusters, met behoud van beheertoegang.
@@ -79,12 +95,12 @@ Zie de [HA-handleiding](hoge-beschikbaarheid.md) voor de voorwaarden en het
 **Wat je eraan hebt:** problemen snel onderzoeken, zonder lang te wachten of
 steeds dezelfde meldingen door te moeten lezen.
 
-- [ ] Het logvenster sneller openen en laten reageren, ook bij een lange bewaarde geschiedenis.
+- [x] Het logvenster sneller openen met kleinere pagina’s en een begrensde scan van recente regels.
 - [ ] Nieuwe logregels bijladen zonder steeds de hele lijst op te halen of je leespositie onnodig te veranderen.
 - [ ] Zoeken en filteren op bron, niveau en datum vlot en betrouwbaar laten werken, ook voor archieven binnen de bewaartermijn.
-- [ ] Herhaalde certificaatvertrouwensmeldingen compact tonen, met een teller, tijdvak en uitleg over wat je kunt doen. De ruwe records blijven beschikbaar voor onderzoek.
+- [x] Herhaalde certificaatvertrouwensmeldingen per minuut bundelen met een teller en korte uitleg. De ruwe records blijven beschikbaar voor onderzoek.
 - [ ] Belangrijke TLS-fouten duidelijk onderscheiden van herhaalde browsermeldingen, zodat een verlopen certificaat of onveilige verbinding opvalt.
-- [ ] Duidelijk aangeven wanneer de verbinding is verbroken of de getoonde logs niet meer actueel zijn.
+- [x] Tonen wanneer logs voor het laatst zijn opgehaald, waarschuwen bij mogelijk verouderde regels en live verversen na herstel van de verbinding.
 
 Rolcontroles, afscherming van gegevens en bewaartermijnen blijven behouden:
 standaard 30 dagen voor beheer- en auditlogs en 7 dagen voor Tinyproxy- en
@@ -127,10 +143,11 @@ bestaande tunnels dus niet achteraf. Zie [Filters herladen](beheer.md#optioneel-
 **Wat je eraan hebt:** na een HA-overname weten welke node je beheert en waarom
 je eventueel opnieuw moet inloggen.
 
-- [ ] Vóór het inloggen een herkenbare nodeaanduiding tonen zonder interne netwerkgegevens of accounts openbaar te maken.
-- [ ] Na het inloggen de vaste node-identiteit en de actuele VIP-eigenaar duidelijk van elkaar onderscheiden.
-- [ ] Een nodewissel uitleggen en onopgeslagen invoer behouden waar dat veilig kan, zonder wachtwoorden of 2FA-codes over te dragen.
-- [ ] De inlog- en sessie-ervaring bij overname afronden voor verschillende lokale accounts, optionele 2FA en mobiel gebruik.
+- [x] In de ontwikkelversie A of B en een optioneel openbaar label tonen op het inlogscherm van beheerde HA.
+- [x] In Instellingen de vaste nodeaanduiding naast de lokale VIP-status tonen.
+- [x] Tijdens het inloggen bij een vastgestelde nodewissel om een nieuwe aanmelding vragen.
+- [x] Een vastgestelde nodewissel op een geopende beheerpagina uitleggen en onopgeslagen invoer zichtbaar houden totdat de beheerder de console opnieuw opent.
+- [x] Lokale accounts, optionele 2FA en een geopend formulier in een mobiele browser testen tijdens een gecontroleerde VIP-overname.
 
 Accounts en sessies zijn nu lokaal. Verkeersovername maakt een account op de
 andere node niet automatisch beschikbaar.

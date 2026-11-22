@@ -598,7 +598,8 @@ async function main() {
                     { timestamp, service: 'tinyproxy', level: 'INFO', message: 'Reloading config file finished' },
                     { timestamp, service: 'tinyproxy', level: 'INFO', message: 'Initializing tinyproxy ...' },
                     { timestamp, service: 'tinyproxy', level: 'WARNING', message: 'FLAGS is unset' },
-                    { timestamp, service: 'manager', level: 'WARNING', message: 'Client certificate trust alert', repetitions: 3 },
+                    { timestamp, service: 'manager', level: 'WARNING', message: 'SSLV3_ALERT_CERTIFICATE_UNKNOWN',
+                        repetitions: 3, kind: 'client-certificate-trust' },
                     { timestamp, service: 'audit', level: 'INFO', message: 'AUDIT event=whitelist_add, username=admin',
                         audit: { event: 'whitelist_add', username: 'admin' } }
                 ] } });
@@ -613,6 +614,15 @@ async function main() {
         await logsLink.click();
         const logs = page.locator('#loggingModal');
         await logs.getByText('literal <img src=x> [proxy.example]', { exact: true }).waitFor();
+        assert.equal(logRequests.at(-1).searchParams.get('limit'), '100');
+        assert.equal(logRequests.at(-1).searchParams.get('recent'), '1');
+        const historyRequest = page.waitForRequest(request => {
+            const url = new URL(request.url());
+            return url.pathname === '/api/logs' && url.searchParams.get('scan_limit') === '12000';
+        });
+        await logs.locator('#logOpenHistory').click();
+        assert.equal(new URL((await historyRequest).url()).searchParams.has('recent'), false);
+        await logs.locator('#logLiveBanner').click();
         await page.setViewportSize({ width: 1178, height: 856 });
         await page.locator('html').evaluate(html => { html.dataset.theme = 'light'; });
         assert.equal(await logs.locator('#logContainer').evaluate(pane => getComputedStyle(pane).backgroundColor), 'rgb(243, 246, 248)');
@@ -630,19 +640,44 @@ async function main() {
         await logs.locator('#logLiveBanner').click();
         assert.equal(await search.inputValue(), '');
         await logs.locator('#autoRefreshBtn').click();
+        const freshness = logs.locator('#logFreshness');
+        await freshness.waitFor();
+        await logs.locator('#logLoadingStatusText').filter({ hasText: 'Done' }).waitFor();
+        const lastFetched = await freshness.innerText();
+        assert.match(lastFetched, /^Last fetched at \d{2}:\d{2}:\d{2}$/);
         logFailure = true;
         await logs.getByRole('button', { name: 'Refresh now' }).click();
         await logs.getByText('Fixture log failure').waitFor();
         assert.equal(await logs.locator('.log-row').count(), 1);
+        assert.equal(await freshness.innerText(), 'May be out of date · ' + lastFetched);
+        const simulateConnection = state => page.evaluate(state => {
+            window.dispatchEvent(new CustomEvent('proxypermit:connection', { detail: { state } }));
+        }, state);
+        const pausedRequestCount = logRequests.length;
+        await simulateConnection('offline');
+        await simulateConnection('online');
+        assert.equal(logRequests.length, pausedRequestCount);
+        assert.equal(await freshness.getAttribute('data-stale'), '');
         logFailure = false;
         await logs.getByRole('button', { name: 'Refresh now' }).click();
         await logs.locator('#logLoadingStatusText').filter({ hasText: 'Done' }).waitFor();
+        await logs.locator('#logFreshness:not([data-stale])').waitFor();
+        await logs.locator('#autoRefreshBtn').click();
+        await simulateConnection('offline');
+        await logs.locator('#logFreshness[data-stale]').waitFor();
+        const recoveredRequest = page.waitForRequest(request => request.url().includes('/api/logs?'));
+        await simulateConnection('online');
+        await recoveredRequest;
+        await logs.locator('#logFreshness:not([data-stale])').waitFor();
+        await logs.locator('#autoRefreshBtn').click();
         routineLogs = true;
         await logs.getByRole('button', { name: 'Refresh now' }).click();
         await logs.getByText('Tinyproxy · 2 routine messages').click();
         await logs.getByText('Initializing tinyproxy ...').waitFor();
         await logs.getByText('FLAGS is unset').waitFor();
         await logs.getByText('×3', { exact: true }).waitFor();
+        await logs.getByText('A client did not trust the management HTTPS certificate.', { exact: false }).waitFor();
+        assert.equal(await logs.getByText('SSLV3_ALERT_CERTIFICATE_UNKNOWN', { exact: true }).count(), 0);
         await logs.locator('.log-options > summary').click();
         const routineRequest = page.waitForRequest(request => request.url().includes('/api/logs?') && request.url().includes('routine=include'));
         await logs.locator('#logRoutineMessages').check();
@@ -743,12 +778,19 @@ async function main() {
         await checkBrand();
         assert.equal(await theme.inputValue(), 'dark');
         assert.equal((await page.request.post(base + '/api/settings/accounts', { data: {} })).status(), 403);
+        await page.setViewportSize({ width: 390, height: 700 });
         await page.getByRole('button', { name: 'Add account' }).click();
+        const accountActions = page.locator('#accountDialog .rule-dialog-actions');
+        const accountButtons = await accountActions.locator('button').all();
+        const [cancelAccount, submitAccount] = await Promise.all(accountButtons.map(button => button.boundingBox()));
+        assert.ok(submitAccount.x - (cancelAccount.x + cancelAccount.width) >= 11);
+        assert.ok(await accountActions.locator('button').evaluateAll(buttons => buttons.every(button => button.offsetHeight >= 40)));
         await page.locator('#accountName').fill('reviewer');
         await page.locator('#newAccountPassword').fill(secondPassword);
         await page.locator('#currentAccountPassword').fill(password);
         await page.locator('#accountSubmit').click();
         await page.getByText('reviewer', { exact: true }).waitFor();
+        await page.setViewportSize({ width: 1440, height: 900 });
         const other = await browser.newContext();
         assert.equal((await other.request.post(base + '/api/auth/login', { data: { username: 'reviewer', password: secondPassword } })).status(), 200);
         const monitorPage = await other.newPage();

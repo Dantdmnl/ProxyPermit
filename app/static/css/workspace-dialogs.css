@@ -276,6 +276,8 @@ body:has(.workspace-dialog[open]) { overflow: hidden; }
 #logLoadingStatus { display: inline-flex; align-items: center; gap: 5px; }
 #logLoadingSpinner { width: 11px; height: 11px; border: 2px solid var(--line); border-top-color: currentColor; border-radius: 50%; animation: log-spin .8s linear infinite; }
 #logLoadingStatus[data-state=error] { color: var(--danger, #9e392e); }
+#logFreshness { color: var(--muted); }
+#logFreshness[data-stale] { color: var(--warning, #805209); font-weight: 600; }
 
 @media (max-width: 650px) {
     .workspace-dialog-header, .workspace-dialog-footer, .workspace-dialog-body, .log-controls { padding-inline: 12px; }

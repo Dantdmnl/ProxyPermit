@@ -142,7 +142,10 @@ class ReleaseTests(unittest.TestCase):
         (self.root / 'ha-tls/maintenance/plan.json').write_text('{"runtime":"fixture"}')
         (self.root / 'cluster-protection.json').write_text('{"runtime":"fixture"}')
         (self.root / 'app/cluster-maintenance.json').write_text('{"runtime":"fixture"}')
-        for name in ('cluster-plan.json','cluster-bootstrap.json','proxmox-fencing.json','authkey','cluster.p12','cluster.pfx'):
+        for name in ('cluster-plan.json','cluster-bootstrap.json','cluster-plan-web-request.json','proxmox-fencing.json','authkey','cluster.p12','cluster.pfx'):
+            (self.root/'app'/name).write_text('private fixture')
+        preflight = ('qdevice-ready.json', 'fencing-tested.json', 'fencing-off-observed.json', 'preflight-current.json')
+        for name in preflight:
             (self.root/'app'/name).write_text('private fixture')
         for name in ('nssdb','proxypermit-cluster-bootstrap'):
             (self.root/'app'/name).mkdir();(self.root/'app'/name/'private.json').write_text('private fixture')
@@ -153,8 +156,9 @@ class ReleaseTests(unittest.TestCase):
             self.assertFalse(any('.log.' in name or 'ha-peer.json' in name or '/.test-data/' in name for name in names))
             self.assertFalse(any('/ha-tls/' in name or name.endswith('/cluster-protection.json') for name in names))
             self.assertFalse(any(name.endswith('/cluster-maintenance.json') for name in names))
-            self.assertFalse(any(name.endswith(('/cluster-plan.json','/cluster-bootstrap.json','/proxmox-fencing.json','/authkey','.p12','.pfx'))
+            self.assertFalse(any(name.endswith(('/cluster-plan.json','/cluster-bootstrap.json','/cluster-plan-web-request.json','/proxmox-fencing.json','/authkey','.p12','.pfx'))
                                  or '/nssdb/' in name or '/proxypermit-cluster-bootstrap/' in name for name in names))
+            self.assertFalse(any(name.rsplit('/', 1)[-1] in preflight for name in names))
             manifest = json.load(bundle.extractfile('proxypermit-1.0.0/release-manifest.json'))
             for name, digest in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.extractfile('proxypermit-1.0.0/' + name).read()).hexdigest(), digest)

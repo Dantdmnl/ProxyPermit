@@ -50,6 +50,12 @@ class ClusterBootstrapTests(unittest.TestCase):
         self.assertFalse(self.folder.exists())
         self.assertEqual(len(self.commands),2)
 
+    def test_web_preparation_refuses_changed_plan_before_installing_anything(self):
+        with self.assertRaisesRegex(ValueError, 'staged cluster plan changed'):
+            bootstrap.prepare('node', expected_hash='a' * 64)
+        self.assertFalse(self.folder.exists())
+        self.assertFalse(any(command[0] == '/usr/bin/apt-get' for command in self.commands))
+
     def test_interruption_keeps_masks_and_resumes_without_starting_cluster_services(self):
         self.fail_packages = True
         with self.assertRaises(ValueError):bootstrap.prepare('node')

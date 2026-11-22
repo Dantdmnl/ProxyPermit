@@ -2,6 +2,141 @@
 
 [English](../en/verification.md) · [Documentatie](README.md)
 
+## 22 november 2026
+
+### Live controle van de HA-voorbereiding
+
+Op het Proxmox-proefpaar controleerde de voorbereidingsopdracht beide
+NSS-certificaatopslagen tegen de CA van de witness. Beide nodes gaven
+dezelfde vingerafdruk voor het clientcertificaat en weigerden een
+afwijkende CA-vingerafdruk. In een aparte proef schakelde de peer-gebonden
+fencing-agent de stand-by-VM uit. De nieuwe opdracht legde de geverifieerde
+stroomstatus vóór en na de onafhankelijke herstart vast. De actieve node
+behield het virtuele IP.
+
+Regressietests dekken ontbrekend of afwijkend bewijs vóór reservering,
+gewijzigd of verlopen fencingbewijs en uitsluiting van de bewijsbestanden
+uit releasearchieven.
+
+### Netwerkscheiding zonder quorum
+
+In het lab is alleen het verkeer naar de witness en tussen de Corosync-peers
+geblokkeerd. SSH bleef bereikbaar. Toen beide nodes hun quorum verloren,
+voerde geen van beide het virtuele IP. Na het verwijderen van de tijdelijke
+regels meldden beide nodes weer bescherming. Het VIP had één eigenaar en
+de configuratie, filterregels en accounts waren ongewijzigd. De proef draaide
+op het bestaande beschermde Proxmox-cluster met één gedeelde host.
+
+### Beschermde HA voorbereiden via Instellingen
+
+De browsertests controleren het plan en de firewallvoorvertoning, bevestigen
+de lokale opslag, bereiden de pakketten voor en laden de opgeslagen velden
+opnieuw. De geïsoleerde Linux-helper slaat een plan op dat alleen root kan
+lezen en leest het terug. De tests dekken verlopen of gewijzigde plannen,
+de node-identiteit, gebruikersrollen, CSRF, herauthenticatie en dubbele
+verzoeken. De systemd-unit en het ene toegestane sudo-commando zijn op Linux
+gecontroleerd. Bij deze proef is de installatie van pakketten gesimuleerd.
+
+### Een bestaand HA-paar migreren op Proxmox
+
+Een afzonderlijk lab met twee proxynodes en een witness-VM is gemigreerd van
+Keepalived naar beschermde HA met Pacemaker. Het lab begon met een gekoppeld
+HA-paar waarop de actieve filterregels al waren gesynchroniseerd. Elke node
+heeft zijn peer via Proxmox uitgeschakeld. Na elke proef is de uitgeschakelde
+VM via de onafhankelijke labtoegang weer gestart.
+
+De overstap is op B onderbroken vlak vóór Keepalived zou stoppen en daarna
+hervat met dezelfde migratie-ID. A behield het VIP zolang B nog niet klaar
+was voor de overstap. A weigerde verder te gaan toen zijn klok na een
+herstart nog niet gesynchroniseerd was. Na kloksynchronisatie weigerde A
+ook een verlopen bevestiging van B. Met een verse bevestiging konden beide
+nodes de overstap afronden. Beide meldden quorum, een verbonden witness en
+beschikbare fencing. Precies één node voerde het VIP. Vanaf beide nodes
+was de proxypoort op het VIP bereikbaar. De filterregels, Tinyproxy-configuratie
+en lokale accounts waren op beide nodes ongewijzigd.
+
+Bij het tijdelijk stoppen van de witnessdienst behielden beide nodes quorum
+en bleef het VIP op dezelfde node. Na het herstarten van de dienst meldden
+beide nodes weer volledige bescherming. Alle drie de VM’s draaiden op één
+Proxmox-host. Volledig hostverlies, netwerkpartities en het terugkeren van
+een node na langdurige uitval vielen buiten deze proef.
+
+### Uitval van de actieve node na migratie
+
+In het beschermde lab schakelde de fencing-agent op B de actieve Proxmox-VM
+A abrupt uit. De onafhankelijke Proxmox-API bevestigde dat A uit stond.
+B nam het VIP over met quorum en accepteerde een TCP-verbinding op de
+proxypoort. Binnen 17 seconden na het uitschakelcommando was de overname
+waargenomen. Na de herstart van A meldden beide nodes weer bescherming en
+precies één VIP-eigenaar. De lokale accounts, Tinyproxy-configuratie en
+filterregels waren ongewijzigd.
+
+De bijgewerkte resource-agent is op beide draaiende VM’s in alleen-lezen
+monitormodus uitgevoerd. Hij herkende het werkende VIP op A en de inactieve
+dienst op B. De uitvalproef draaide met de eerder geïnstalleerde clusteragent.
+
+### Netwerkscheiding en releaserollback
+
+In het Proxmox-lab vielen alleen het Corosync-verkeer van de actieve node naar
+zijn peer en de TLS-verbinding met de witness weg. Rechtstreekse SSH en de
+Proxmox-API bleven bereikbaar. Pacemaker liet de geïsoleerde node uitschakelen.
+De onafhankelijke Proxmox-API bevestigde dat die uit stond. De andere node
+hield het VIP met quorum en accepteerde een TCP-verbinding op de proxypoort.
+Na herstel meldden beide nodes weer bescherming. Configuratie, filterregels
+en lokale accounts waren ongewijzigd.
+
+In hetzelfde lab is B via een clusterreservering bijgewerkt en daarna
+teruggezet naar de applicatiebron uit het bewijs van die upgrade. A behield
+het VIP. Beide nodes meldden bescherming en de hashes van de Tinyproxy-
+configuratie, filterregels en lokale accounts waren ongewijzigd.
+
+### Terugkeer van B en beleidssynchronisatie
+
+B keerde terug in het beschermde lab na ruim vijf minuten offline te zijn
+geweest. In een aparte proef stond B opnieuw uit, ditmaal langer dan de
+geldigheid van de statusgegevens. A behield het VIP en publiceerde een
+nieuwe revisie met een tijdelijke opmerking in de filterlijst. Na terugkeer
+nam B die revisie over zonder het VIP op te eisen. A publiceerde daarna
+het oorspronkelijke beleid opnieuw. De Tinyproxy-configuratie, filterregels
+en lokale accounts kwamen op beide nodes weer overeen met de beginsituatie.
+
+De VM’s draaiden op dezelfde Proxmox-host. Langere uitval waarbij een
+certificaat of fencingtoken verloopt, verlies van de hele host en live
+fencing op andere platformen moeten nog worden getest.
+
+### Beschermde HA voorbereiden en het oorspronkelijke lab herstellen
+
+De huidige ontwikkelversie is lokaal getest. De planner in Instellingen
+gebruikte de ingestelde adressen van A en B, leverde een download in het
+JSON-formaat van de OS-validator en weigerde een witness op het VIP.
+De browsertests dekten beide talen, thema’s en schermgroottes. De
+rechtentests bevestigden dat alleen een systeembeheerder met een geldig
+CSRF-token een plan kan laten valideren.
+
+In het bestaande Proxmox-lab stond het VIP stil nadat time-outs van de
+resource-monitor op beide nodes een foutteller hadden achtergelaten. Beide
+nodes meldden quorum, een verbonden witness, beschikbare fencing en geen
+VIP-eigenaar. Na een controle van Tinyproxy op beide nodes en van de
+onderhoudsreservering zijn de geregistreerde fouten voor de VIP-resource
+gewist. Pacemaker herstelde het VIP op A. Beide nodes meldden daarna
+bescherming en precies één eigenaar. De zelfstandige lab-VM kon Tinyproxy
+op het VIP bereiken. De oorzaak van de oorspronkelijke time-outs is nog
+niet bevestigd. Bij een latere controle waren er nieuwe monitorfouten op
+beide nodes en stond het oorspronkelijke VIP opnieuw stil. De migratie-
+en uitvalproeven draaiden in het aparte lab.
+
+## 18 november 2026 — beheer tijdens een VIP-overname
+
+Tijdens onderhoud in het ontwikkellab verhuisde het gedeelde beheeradres van A
+naar B. HTTPS werd bij de geslaagde verzoeken gecontroleerd met de CA-bundel van
+het lab. B weigerde verzoeken vanuit een oude pagina van A en accepteerde de
+sessiecookie van A niet. Aanmelden met het lokale beheerdersaccount van B gaf
+weer toegang via hetzelfde adres. De omgekeerde overname is ook getest in een
+Nederlandstalige mobiele browser. Het geopende formulier behield de invoer
+totdat de beheerder de console opnieuw opende. Daarna toonde de browser A en
+slaagde de aanmelding met een tijdelijk lokaal account en 2FA. Het testaccount
+is na de proef verwijderd.
+
 Het ontwikkelwerk hieronder zit in **v1.4.0-dev.1**, een prerelease voor
 testgebruik. Historische vermeldingen beschrijven de stand tijdens die proef.
 De laatste kandidaatcontroles slaagden met 342 Python-tests op Linux,
@@ -376,7 +511,9 @@ logs, datumfilters, wisselen tussen historie/live en contrast van gevaarlijke
 acties. De organisatie moet haar eigen privacymelding, externe logs,
 back-up-/exportretentie, netwerkplan en belasting blijven valideren.
 
-## 12 november 2026: bediening en HA-responsiviteit
+## 12 november 2026
+
+### Bediening en HA-responsiviteit
 
 De werkversie is gecontroleerd met de volledige projectchecks en afzonderlijke
 browserfixtures. De Windows-suite draait 144 Python-tests met 7 platformgebonden
@@ -398,7 +535,7 @@ Dit bewijst geen productie-beschikbaarheid bij een fysieke netwerkonderbreking,
 upstreamstoring of uitval van de gedeelde hypervisor. Accountreplicatie en
 afzonderlijke rollen waren op dat moment nog vervolgwerk. De latere [rolimplementatie](rollen.md) voegt beperkte lokale toegang toe.
 
-## 12 november 2026: anti-lockout en zichtbare concepten
+### Anti-lockout en zichtbare concepten
 
 De standalone en beide HA-labnodes zijn bijgewerkt met een gecontroleerd
 beheerbronadres, de echte SSH-/webpoorten en een veiligheidsprofiel van root
@@ -428,17 +565,7 @@ shellchecks en afzonderlijke HTTP-/account-/2FA-/audit-/opslaantests met Gunicor
 en Granian (elk twee workers). De extra backend is in een aparte test-venv
 geïnstalleerd; de dependencies van de draaiende installatie bleven intact.
 
-## Documentatiewebsite
-
-De Zensical-site bouwt met `--clean --strict`, inclusief controle op links en
-ankers. Dezelfde build is vanuit een gegenereerd releasearchief gecontroleerd.
-Playwright controleert Engelse/Nederlandse handleidingen, light/dark mode,
-desktop/mobiele opmaak, taalverwijzingen, echte zoekresultaten en sluiten via het
-toetsenbord. De lokale preview gebruikt `/ProxyPermit/` om relatieve Pages-paden
-te controleren. Actionlint controleert de Pages-workflow. Dit bereidt publicatie
-voor; het betekent niet dat GitHub Pages al is ingeschakeld of gepubliceerd.
-
-## 12 november 2026: lokale gebruikersrollen
+### Lokale gebruikersrollen
 
 De Windows-suite slaagt voor 153 Python-tests (7 platformgebonden skips). De
 Linux-installer voert alle 153 tests zonder skips uit. Ook typecontroles,
@@ -468,6 +595,16 @@ De regressiecontrole voor monitorregels controleert de volle tekstbreedte op
 kunnen filterregels exporteren; een rechtstreeks exportverzoek van een monitor
 krijgt 403. Dit is op alle drie de labnodes gecontroleerd met tijdelijke accounts
 die na afloop zijn verwijderd.
+
+## Documentatiewebsite
+
+De Zensical-site bouwt met `--clean --strict`, inclusief controle op links en
+ankers. Dezelfde build is vanuit een gegenereerd releasearchief gecontroleerd.
+Playwright controleert Engelse/Nederlandse handleidingen, light/dark mode,
+desktop/mobiele opmaak, taalverwijzingen, echte zoekresultaten en sluiten via het
+toetsenbord. De lokale preview gebruikt `/ProxyPermit/` om relatieve Pages-paden
+te controleren. Actionlint controleert de Pages-workflow. Dit bereidt publicatie
+voor; het betekent niet dat GitHub Pages al is ingeschakeld of gepubliceerd.
 
 ## Releasedocumentatie en oude Actions-runs
 
@@ -512,7 +649,9 @@ de vereiste 2.6.0 in de afzonderlijke testomgeving. De serviceomgeving is niet
 aangepast.
 
 
-## Reload gecontroleerd — 15 november 2026
+## 15 november 2026
+
+### Reload
 
 De afzonderlijke Linux-controle slaagde voor 191 tests. Op Windows slaagde dezelfde
 suite, met 15 overgeslagen tests voor POSIX-rechten of root. Ook de kwaliteits-,
@@ -552,7 +691,7 @@ alleen kan lezen en de beheeromgeving, accountfile en bestaande peergegevens nie
 Deze reloadcontroles bewijzen geen bescherming tegen split-brain. Quorum/fencing
 en tests met netwerkonderbrekingen blijven open op de [roadmap](vervolgwerk.md).
 
-## Sleutelrotatie en TLS gecontroleerd — 15 november 2026
+### Sleutelrotatie en TLS
 
 De geïsoleerde Linux-suite slaagde voor alle 208 tests, zonder overgeslagen tests.
 De Windows-suite slaagde met 19 platform- of OpenSSL-afhankelijke tests overgeslagen.
@@ -570,7 +709,7 @@ Een verkeerde pin, een verlopen certificaat en een certificaatwissel tussen beid
 handshakes worden geweigerd. Gecontroleerde certificaatvernieuwing en pinmigratie
 blijven open, evenals de aanvullende opslag- en herstarttests voor sleutelrotatie.
 
-## Aanvullende HA-controles — 15 november 2026
+### Aanvullende HA-controles
 
 De Linux-suite slaagt nu voor 231 tests zonder overgeslagen tests, inclusief
 opslagfouten, een nieuwe optionele TOTP-code, de VIP-resource en de volgorde van
@@ -623,7 +762,7 @@ gestart voor onderstaande onderhoudsproeven. De bestaande standalone- en twee Vi
 draaien. Standaard HTTPS voor de beheerwebsite blijft gepland: interne HA-TLS-
 vernieuwing schakelt HTTPS op die website niet in.
 
-### Controle van clusterstatus en onderhoud per node
+#### Controle van clusterstatus en onderhoud per node
 
 Het afzonderlijke KVM-paar draait nu echte, door de installer beheerde
 ProxyPermit-services boven op het door het OS voorbereide cluster. Beide nodes

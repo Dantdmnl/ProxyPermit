@@ -6,7 +6,7 @@ Which improvements are coming, and what will they mean for administrators? The
 main development priority is HA with protection against unsafe takeover.
 Usability, HTTPS and logging are also areas of focus.
 
-Updated on 17 November 2026, using **v1.3.0** as the baseline for released
+Updated on 22 November 2026, using **v1.3.0** as the baseline for released
 features. There are no promised delivery dates, and the order may change.
 
 **How to read this page:** a checked item is an implemented or experimentally
@@ -37,13 +37,14 @@ The normal HA wizard does not yet configure that cluster for you.
     [HA setup and its limits](high-availability.md#understand-failover-protection)
     before choosing a production deployment.
 
-## Available for testing in v1.4.0-dev.1
+## Available for testing in v1.4.0-dev.2
 
 - **Safer HA administration:** revoking pairing requires the administrator password again and a fresh authenticator code when 2FA is enabled. Protection status checks more strictly whether the cluster evidence is trustworthy.
-- **Protected HA preparation:** system administrators can check prerequisites. The experimental cluster integration has been extended, but complete setup through the web interface is still missing.
+- **Protected HA preparation:** system administrators can save and review a Proxmox plan and prepare the packages on each node in Settings. The OS administrator handles witness enrollment, fencing and activation.
+- **Migration and recovery:** validate transport before moving the VIP and roll back an application release while the peer serves traffic. See the [verification report](verification.md) for the Proxmox test results.
 - **HTTPS setup through the web interface:** system administrators can prepare and renew certificates and enable HTTPS. HTTPS is not yet the installation default. See [Management HTTPS](management-https.md).
 
-These capabilities are included in the [v1.4.0-dev.1 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1),
+These capabilities are included in the [v1.4.0-dev.2 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2),
 not in stable v1.3.0. Use a disposable or recoverable test deployment for the
 prerelease and the guide that corresponds to your installed version.
 
@@ -61,6 +62,21 @@ platform.
 - [x] Provide an experimental cluster integration with quorum, a secure witness connection and fencing for configuration by the OS administrator.
 - [x] Show protection status that stops reporting healthy when its evidence becomes stale.
 - [x] Check prerequisites before activation and support maintenance one node at a time on a preconfigured cluster.
+- [x] Prepare and download a validated, secret-free Proxmox plan for an existing managed HA pair from Settings.
+- [x] Explain required access in Settings and let the second node check the same plan and fingerprint before OS preparation.
+- [x] Save a reviewed Proxmox plan and prepare the fixed local cluster packages from Settings with reauthentication.
+- [x] Verify the local node or witness before staging the plan, and preserve the staged plan once dependency preparation starts.
+- [x] Inspect interrupted Proxmox activation and allow an explicit retry only while the reviewed VIP resource is still stopped.
+- [x] Resume an interrupted migration reservation with fresh standby evidence and preserve existing reservation files if they differ.
+- [x] Verify enrolled witness certificates and authenticated peer power observations, and compare the prepared transport fingerprints before moving the VIP.
+- [x] Migrate an existing Keepalived pair to protected HA in a Proxmox lab and verify recovery from an interruption and a temporary witness outage.
+- [x] Verify that a protected Proxmox pair retains exclusive VIP ownership and recovers after abrupt power loss of the active VM.
+- [x] Explain creation and joining for ordinary HA in Settings and show the expiring migration phase on protected nodes.
+- [x] Verify protected release rollback and automatic fencing of a partitioned VIP owner on Proxmox.
+- [x] Verify that a network split without access to the witness removes the VIP from both nodes and recovers to a single owner.
+- [x] Provide guarded local retirement and uninstall commands for a node already detached through OS cluster administration.
+- [x] Verify a standby returning after several minutes offline and a separate policy catch-up after the standby misses a publication.
+- [x] Document the provisioning boundary for vSphere, libvirt and physical servers and reject unsafe VMware TLS and IPMI fencing evidence.
 - [ ] Guide initial setup and node joining through the web interface, explaining the required hosts, network access and permissions.
 - [ ] Help existing HA installations migrate in a controlled way, with an understandable recovery procedure if migration is interrupted.
 - [ ] Complete rollback, node retirement and uninstallation for protected clusters while preserving management access.
@@ -77,12 +93,12 @@ should not depend on the same point of failure as the proxy nodes. See the
 **What you gain:** investigate problems quickly, without long waits or having
 to read the same messages repeatedly.
 
-- [ ] Make the log window open and respond faster, including with a long retained history.
+- [x] Open the log window faster with smaller pages and a bounded scan of recent records.
 - [ ] Load new records without repeatedly fetching the whole list or unnecessarily changing your reading position.
 - [ ] Make searching and filtering by source, level and date fast and reliable, including archives within the retention period.
-- [ ] Present repeated certificate-trust messages compactly, with a count, time range and explanation of what you can do. Keep raw records available for investigation.
+- [x] Group repeated certificate-trust messages per minute with a count and a short explanation. Raw records remain available for investigation.
 - [ ] Clearly distinguish important TLS failures from repeated browser messages, so expired certificates or unsafe connections stand out.
-- [ ] Clearly indicate when the connection is lost or the displayed logs are no longer current.
+- [x] Show when results were last fetched, flag potentially stale logs after a failed refresh or lost connection, and resume live refresh after reconnecting.
 
 Role checks, redaction and retention limits remain in place: defaults are 30 days
 for management/audit logs and 7 days for Tinyproxy/traffic logs. Certificate
@@ -125,10 +141,11 @@ not close existing tunnels retroactively. See [Filter reload](administration.md#
 **What you gain:** after an HA takeover, know which node you are managing and
 why you may need to sign in again.
 
-- [ ] Show a recognizable node label before sign-in without disclosing internal network details or accounts.
-- [ ] Clearly distinguish fixed node identity from current VIP ownership after sign-in.
-- [ ] Explain node changes and preserve unsaved input where safe, without transferring passwords or 2FA codes.
-- [ ] Complete the sign-in and session experience during takeover for different local accounts, optional 2FA and mobile use.
+- [x] Show A or B and an optional public label on the managed HA sign-in screen in the development version.
+- [x] Show the fixed node identity alongside local VIP status in Settings.
+- [x] Ask for a fresh sign-in when a node change is detected while signing in.
+- [x] Explain a detected node change from an open management page and keep unsaved input visible until the administrator reopens the console.
+- [x] Verify local accounts, optional 2FA and an open form in the mobile browser during a controlled VIP handoff.
 
 Accounts and sessions are currently local. Traffic takeover does not
 automatically make an account available on the other node.

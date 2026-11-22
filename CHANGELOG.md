@@ -4,11 +4,58 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.4.0-dev.2] - 2026-11-22
+
+### Pre-release status
+
+This development preview is intended for disposable or recoverable test
+deployments. The latest stable release is v1.3.0.
+
+### Verified on Proxmox
+
+- Migrated an existing Keepalived pair and resumed after an interrupted reservation.
+- Exercised abrupt failover, fencing during a network partition, and loss of quorum. When neither node had quorum, both released the VIP. Recovery restored one VIP owner.
+- Verified rolling application rollback and policy synchronization after a standby returned.
+
 ### Changed
+
+- Provide a root-only protected HA preflight that checks the witness CA and client certificate, prepares the shared Corosync key and records authenticated peer power observations before migration.
+- Let system administrators save a reviewed Proxmox plan and prepare fixed local cluster dependencies from Settings, with reauthentication and an audited job result.
+- Explain initial HA setup and joining in Settings. Show the local, expiring migration phase and the next recovery check to system administrators.
+- Allow a protected node to roll back the application release recorded by its latest protected upgrade after the peer takes the VIP. Preserve live policy, accounts and OS cluster configuration.
+- Support local retirement and uninstallation after an OS administrator detaches a native HA node and persistently masks its cluster services. Keep pinned management firewall rules.
+- Check verified VMware TLS and distinct IPMIv2 fencing endpoints when reading protection evidence from OS-managed clusters.
+- Require a verified inactive Keepalived unit and an absent virtual IP before the Pacemaker agent acknowledges a successful stop. Report the failed health check in monitor diagnostics.
+
+- Allow a bounded wait for peer protection before releasing a cluster maintenance reservation. Keep the checkpoint when protection cannot be verified.
+
+- Show a healthy Pacemaker-managed node as standby when its peer serves the protected VIP and local Keepalived is intentionally stopped.
+
+- Open live logs with smaller pages and a bounded recent scan. Keep retained history available on demand, request fewer journal fields and cancel superseded browser requests.
+- Show when logs were last fetched and flag potentially stale results. Resume automatic live refresh when the management connection recovers.
+- Present grouped client certificate-trust alerts as a short explanation with a count. Preserve individual records for search and the detailed view.
 
 - Gate releases on an isolated Linux-root CI job with no skipped tests, measure application and deployment/tooling coverage, and enforce a coverage baseline.
 - Quiet expected disconnects in TLS test servers while making unexpected server-thread errors fail their tests.
 - Add visible, translated controls to enlarge documentation screenshots and adjust the zoom in the gallery on desktop and mobile.
+- Correct garbled text in the README, documentation, web interface, and installer and account tools.
+- Let system administrators validate and download a secret-free Proxmox preparation plan for an existing managed HA pair.
+- Explain protected HA prerequisites in Settings and let administrators verify the downloaded plan and fingerprint on the other node.
+- Verify the node or witness before staging a protected HA plan and preserve the plan during dependency preparation.
+- Add read-only status and a guarded retry for interrupted protected HA activation on Proxmox.
+- Recognize Pacemaker's resource refresh timestamp without treating it as an administrator policy change.
+- Guard interrupted migration as soon as its checkpoint exists. Require fresh standby evidence before stopping the VIP owner and preserve changed reservation files.
+- Make spacing between fields and actions consistent in management password prompts.
+- Explain degraded HA protection in Settings, including unconfirmed witness or fencing readiness. Require an explicit cluster-member VIP owner before reporting protection.
+- Identify managed HA nodes before sign-in and in Settings, with an optional public label. Prompt for a fresh sign-in when a form is submitted after a node change.
+- Keep open management forms in place when the VIP moves, block requests from the stale page and offer an explicit way to reopen the console.
+
+### Known limitations
+
+- Protected HA remains experimental. Settings saves the Proxmox plan and prepares local dependencies. The OS administrator coordinates witness enrollment, fencing access and activation. The browser package workflow was tested in isolation.
+- Rolling rollback restores the application release. Full installation recovery and removal of a protected cluster still require OS coordination. Live testing of the full removal procedure remains open.
+- Live protected-cluster verification used Proxmox. The documented vSphere, libvirt and physical-server adapters still need live qualification. Full host loss and return after certificate or fencing-token expiry remain open.
+- Accounts and sessions remain local. Node B continues to serve as a read-only standby for shared policy.
 
 ## [1.4.0-dev.1] - 2026-11-17
 

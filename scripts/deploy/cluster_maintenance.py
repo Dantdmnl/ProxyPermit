@@ -23,6 +23,8 @@ from app.core.tinyproxy import ConfigError, atomic_write
 from scripts.deploy import cluster_status, ha_resource
 
 CHECKPOINT = Path('/etc/proxypermit/cluster-maintenance.json')
+PEER_RELEASE_WAIT = 20
+PEER_RELEASE_INTERVAL = 1
 ENVIRONMENT = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}
 
 
@@ -174,7 +176,9 @@ def complete(saved):
     require_root()
     if saved.get('node') != local_name():
         raise ConfigError('The maintenance checkpoint belongs to another node.')
-    for _ in range(5):
+    deadline = time.monotonic() + PEER_RELEASE_WAIT
+    writes = 0
+    while writes < 5:
         root = query()
         current = cluster_lease.marker(root)
         if current != dict(node=saved['node'], token=saved['token']):
@@ -183,10 +187,15 @@ def complete(saved):
                 return
             raise ConfigError('The maintenance reservation changed. Automatic recovery was refused.')
         if not drained(saved['node']):
-            raise ConfigError('The peer must still serve the protected VIP before maintenance can be released.')
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ConfigError('The peer must still serve the protected VIP before maintenance can be released.')
+            time.sleep(min(PEER_RELEASE_INTERVAL, remaining))
+            continue
         cluster_lease.release(root, saved)
         saved['phase'] = 'releasing'
         save(saved)
+        writes += 1
         replace(root)
         latest = query()
         if cluster_lease.marker(latest) != current and restored(latest, saved):
@@ -216,7 +225,7 @@ def rolling(health, install_dir):
         record('cluster_maintenance_verified', saved, install_dir)
         complete(saved)
     except BaseException:
-        print('Cluster maintenance was not released. Keep this node in standby and review the root recovery checkpoint.', flush=True)
+        print('Cluster maintenance was not released. Review local health and peer protection, then use the cluster maintenance --recover command. The checkpoint was retained.', flush=True)
         raise
 
 

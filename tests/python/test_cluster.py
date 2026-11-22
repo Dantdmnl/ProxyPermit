@@ -18,7 +18,8 @@ class ClusterBoundaryTests(unittest.TestCase):
         self.profile = self.root / 'profile.json'
         self.status = self.root / 'status.json'
         self.context = patch.multiple(cluster, PROFILE=self.profile, STATUS=self.status,
-                                      SERVICE_RESERVATION=self.root / 'service-reservation.conf')
+                                      SERVICE_RESERVATION=self.root / 'service-reservation.conf',
+                                      SETUP_CHECKPOINT=self.root / 'cluster-bootstrap.json')
         self.context.start()
         self.addCleanup(self.context.stop)
 
@@ -28,7 +29,7 @@ class ClusterBoundaryTests(unittest.TestCase):
 
     def test_unreadable_reservation_fails_closed_without_crashing_status(self):
         real_exists = Path.exists
-        for target in (self.profile, cluster.SERVICE_RESERVATION):
+        for target in (self.profile, cluster.SERVICE_RESERVATION, cluster.SETUP_CHECKPOINT):
             def exists(path):
                 if path == target:
                     raise PermissionError('isolated inaccessible parent')
@@ -50,6 +51,12 @@ class ClusterBoundaryTests(unittest.TestCase):
         with self.assertRaises(ConfigError):
             cluster.require_independent_control('upgrading')
 
+    def test_checkpoint_alone_guards_interrupted_reservation(self):
+        cluster.SETUP_CHECKPOINT.write_text('{}')
+        self.assertEqual(cluster.read_status(), {'state': 'unknown'})
+        with self.assertRaises(ConfigError):
+            cluster.require_independent_control('retiring')
+
     @unittest.skipIf(os.name == 'nt', 'Linux symlink boundary.')
     def test_dangling_profile_cannot_bypass_the_guard(self):
         self.profile.symlink_to(self.root / 'missing')
@@ -59,12 +66,15 @@ class ClusterBoundaryTests(unittest.TestCase):
     @unittest.skipUnless(os.name == 'posix' and getattr(os, 'geteuid', lambda: -1)() == 0, 'Root-owned status fixture.')
     def test_only_fresh_consistent_root_evidence_is_accepted(self):
         self.profile.write_text('{}')
-        good = dict(version=1, checked=1000, state='protected', owners=1,
+        good = dict(version=1, checked=1000, state='protected', owners=1, migrationPhase='active',
                     quorate=True, witnessConnected=True, fencingConfigured=True, fencingReady=True, policySafe=True)
         self.status.write_text(json.dumps(good))
         self.status.chmod(0o640)
         self.assertEqual(cluster.read_status(now=1001)['state'], 'protected')
+        self.assertNotIn('migrationPhase', cluster.read_status(now=1001))
+        self.assertEqual(cluster.read_status(now=1001, include_migration=True)['migrationPhase'], 'active')
         self.assertEqual(cluster.read_status(now=1021)['state'], 'unknown')
+        self.assertNotIn('migrationPhase', cluster.read_status(now=1021, include_migration=True))
         self.assertEqual(cluster.read_status(now=990)['state'], 'unknown')
         for changed in ({'owners': 2}, {'quorate': False}, {'checked': True}, {'policySafe': 'yes'}):
             self.status.write_text(json.dumps({**good, **changed}))
