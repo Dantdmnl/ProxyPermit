@@ -6,7 +6,7 @@ import stat
 import subprocess
 import time
 
-from app.core import cluster
+from app.core import cluster, cluster_setup
 from app.core.cluster_evidence import summarize
 from app.core.files import sync_directory
 from app.core.tinyproxy import atomic_write
@@ -54,7 +54,14 @@ def publish(value):
         previous = json.loads(cluster.STATUS.read_text()).get('state')
     except (OSError, ValueError, AttributeError):
         pass
-    atomic_write(cluster.STATUS, json.dumps(dict(version=1, checked=int(time.time()), **value)), 0o640)
+    exported = dict(version=1, checked=int(time.time()), **value)
+    try:
+        checkpoint = cluster_setup.protected(cluster.SETUP_CHECKPOINT, private=True)
+        if isinstance(checkpoint, dict) and checkpoint.get('version') == 1 and checkpoint.get('phase') in cluster.MIGRATION_PHASES:
+            exported['migrationPhase'] = checkpoint['phase']
+    except (OSError, ValueError, RecursionError):
+        pass
+    atomic_write(cluster.STATUS, json.dumps(exported), 0o640)
     os.chown(cluster.STATUS, 0, grp.getgrnam('proxypermit').gr_gid)  # pylint: disable=no-member
     with cluster.STATUS.open('rb') as source:
         os.fsync(source.fileno())

@@ -17,6 +17,37 @@
     let pending = false;
     let statusSequence = 0;
     let protectionExpiry;
+    const protection = document.getElementById('ha-protection-status');
+    const protectionLabels = {
+        'not-configured': 'Quorum and fencing are not configured',
+        protected: 'Quorum confirmed; fencing configured',
+        degraded: 'Cluster protection needs attention',
+        stopped: 'Cluster resource is stopped',
+        unsafe: 'Conflicting cluster ownership detected',
+        unknown: 'Cluster protection could not be confirmed'
+    };
+
+    function showProtection(evidence) {
+        clearTimeout(protectionExpiry);
+        let state = Object.hasOwn(protectionLabels, evidence?.state) ? evidence.state : 'unknown';
+        const lifetime = Number.isInteger(evidence?.validFor) ? Math.min(20, evidence.validFor) : 0;
+        if (state !== 'unknown' && state !== 'not-configured' && lifetime <= 0) {
+            state = 'unknown';
+        }
+        const reasons = [];
+        if (state === 'degraded') {
+            if (evidence.quorate === false) reasons.push('No cluster quorum');
+            if (evidence.witnessConnected === false) reasons.push('Witness connection not confirmed');
+            if (evidence.fencingConfigured === false) reasons.push('Fencing configuration incomplete');
+            else if (evidence.fencingReady === false) reasons.push('Fencing readiness not confirmed');
+            if (evidence.policySafe === false) reasons.push('Cluster policy could not be verified');
+            if (!reasons.length) reasons.push('Virtual IP ownership or resource health could not be verified');
+        }
+        protection.textContent = [protectionLabels[state], ...reasons].map(label => I18n.t(label)).join(' · ');
+        if (state !== 'unknown' && state !== 'not-configured') {
+            protectionExpiry = setTimeout(showProtection, lifetime * 1000);
+        }
+    }
 
     async function request(action, data = {}) {
         const response = await fetch('/api/proxy/ha-replication/' + action, {
@@ -36,21 +67,7 @@
             const result = await request('status');
             if (sequence !== statusSequence) return;
             const current = result.status;
-            const protection = document.getElementById('ha-protection-status');
-            const protectionLabels = {
-                'not-configured': 'Quorum and fencing are not configured',
-                protected: 'Quorum confirmed; fencing configured',
-                degraded: 'Cluster protection needs attention',
-                stopped: 'Cluster resource is stopped',
-                unsafe: 'Conflicting cluster ownership detected',
-                unknown: 'Cluster protection could not be confirmed'
-            };
-            protection.textContent = I18n.t(protectionLabels[result.protection?.state] || protectionLabels.unknown);
-            clearTimeout(protectionExpiry);
-            if (!['not-configured', 'unknown'].includes(result.protection?.state)) {
-                const lifetime = Number.isInteger(result.protection?.validFor) ? Math.min(20, Math.max(0, result.protection.validFor)) : 0;
-                protectionExpiry = setTimeout(() => { protection.textContent = I18n.t(protectionLabels.unknown); }, lifetime * 1000);
-            }
+            showProtection(result.protection);
             const synchronized = current?.state === 'synchronized';
             status.textContent = I18n.t(!result.paired ? 'Nodes zijn nog niet gekoppeld.'
                 : current?.reason === 'stale-primary' ? 'Policy history does not match. Review recovery on A before synchronizing.'
@@ -91,7 +108,7 @@
             if (sequence !== statusSequence) return;
             status.dataset.state = '';
             status.textContent = I18n.t('Synchronisatiestatus kon niet worden geladen.');
-            document.getElementById('ha-protection-status').textContent = I18n.t('Cluster protection could not be confirmed');
+            showProtection();
         }
     }
     let vipSequence = 0, vipExpiry;
@@ -117,7 +134,7 @@
             vipSequence++;
             statusSequence++;
             document.getElementById('ha-policy-vip').textContent = I18n.t('VIP-status niet bevestigd');
-            document.getElementById('ha-protection-status').textContent = I18n.t('Cluster protection could not be confirmed');
+            showProtection();
         } else { refreshVip(); refresh(); }
     });
 

@@ -96,6 +96,26 @@ class MaintenanceTests(unittest.TestCase):
         self.assertIsNotNone(self.saved)
         self.assertIsNotNone(cluster_lease.marker(self.cib))
 
+    def test_release_waits_for_temporary_loss_of_peer_protection(self):
+        saved = maintenance.acquire()
+        maintenance.drained.side_effect = [False, False, True]
+        with patch.object(maintenance.time, 'sleep') as wait:
+            maintenance.complete(saved)
+        self.assertEqual(wait.call_count, 2)
+        self.assertIsNone(self.saved)
+        self.assertIsNone(cluster_lease.marker(self.cib))
+
+    def test_release_timeout_leaves_the_checkpoint_and_never_writes(self):
+        saved = maintenance.acquire()
+        maintenance.drained.return_value = False
+        with patch.object(maintenance, 'replace') as replace, \
+                patch.object(maintenance.time, 'monotonic', side_effect=[0, maintenance.PEER_RELEASE_WAIT]):
+            with self.assertRaisesRegex(ConfigError, 'protected VIP'):
+                maintenance.complete(saved)
+        replace.assert_not_called()
+        self.assertEqual(self.saved['phase'], 'entered')
+        self.assertIsNotNone(cluster_lease.marker(self.cib))
+
     def test_unprotected_peer_prevents_any_cib_write(self):
         with patch.object(maintenance.cluster_status, 'evidence', return_value={'state': 'degraded'}), \
                 patch.object(maintenance, 'replace') as replace:

@@ -73,7 +73,12 @@ ha-tls/
 cluster-protection.json
 cluster-maintenance.json
 cluster-plan.json
+cluster-plan-web-request.json
 cluster-bootstrap.json
+qdevice-ready.json
+fencing-tested.json
+fencing-off-observed.json
+preflight-current.json
 proxmox-fencing.json
 authkey
 *.p12

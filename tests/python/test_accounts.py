@@ -42,6 +42,32 @@ class LocalAccountTests(unittest.TestCase):
     def login(self, name, **fields):
         return self.client.post('/api/auth/login', json=dict(username=name, password='test passphrase', **fields))
 
+    def test_managed_ha_signin_identifies_node_and_rejects_stale_form(self):
+        with patch.dict('os.environ', DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true',
+                        PROXYPERMIT_HA_NODE='b', PROXYPERMIT_PUBLIC_NODE_LABEL='Lab West',
+                        NODE1_ADDRESS='192.0.2.12'):
+            for route in ('/', '/proxy', '/settings'):
+                body = self.client.get(route).data
+                self.assertIn(b'Node B', body)
+                self.assertIn(b'Lab West', body)
+                self.assertNotIn(b'192.0.2.12', body)
+            credentials = dict(username='bob', password='test passphrase')
+            stale = self.client.post('/api/auth/login', json=credentials, headers={'X-ProxyPermit-Login-Node': 'a'})
+            self.assertEqual(stale.status_code, 409)
+            self.assertTrue(stale.json['nodeChanged'])
+            self.assertEqual(self.client.get('/settings').status_code, 403)
+            probe = self.client.get('/connection')
+            self.assertEqual(probe.headers['X-ProxyPermit-Node'], 'b')
+            stale_page = self.client.post('/api/auth/login', json=credentials,
+                                          headers={'X-ProxyPermit-Page-Node': 'a'})
+            self.assertEqual(stale_page.status_code, 409)
+            self.assertEqual(stale_page.headers['X-ProxyPermit-Node-Changed'], '1')
+            self.assertEqual(self.client.get('/settings').status_code, 403)
+            with patch.dict('os.environ', PROXYPERMIT_PUBLIC_NODE_LABEL='192.0.2.12'):
+                self.assertNotIn(b'192.0.2.12', self.client.get('/').data)
+            self.assertEqual(self.client.post('/api/auth/login', json=credentials,
+                             headers={'X-ProxyPermit-Login-Node': 'b'}).status_code, 200)
+
     def test_reserved_cluster_does_not_offer_initial_preparation_again(self):
         self.assertEqual(self.login('bob').status_code, 200)
         with patch.dict('os.environ', PROXYPERMIT_HA_NODE='a'), \

@@ -285,6 +285,22 @@ previous standby setting and releases the reservation. Wait for stable cluster
 status before updating the second node. Shared policy is still published on A;
 moving the VIP does not give B write authority.
 
+To roll back the application release after a completed protected upgrade, use
+the current backup name printed by that upgrade. Run the installer that
+performed the upgrade from its extracted source directory:
+
+```bash
+sudo bash install.sh --rollback BACKUP_NAME --cluster-maintenance --plan
+sudo bash install.sh --rollback BACKUP_NAME --cluster-maintenance --apply
+```
+
+Review the selected release before applying. The peer takes the VIP first.
+The installer rebuilds the previous application release with current
+configuration, accounts and filter rules, and keeps current fencing, firewall
+rules and the management listener. Check that the previous application
+version is compatible with current data before proceeding. This procedure
+requires the protected-upgrade receipt written by the installer.
+
 An interrupted or failed upgrade leaves the reservation in place. It has no
 automatic expiry, so the other node cannot also enter maintenance. Review the
 installer's backup manifest and repair the local installation first. Then use the
@@ -296,13 +312,49 @@ sudo .venv/bin/python -m scripts.deploy.cluster_maintenance --recover
 ```
 
 Recovery verifies local manager/proxy health, peer protection and matching
-reservation ownership before restoring standby. It refuses changed operator
+reservation ownership before restoring standby. Maintenance release retries
+unconfirmed peer protection for up to 20 seconds before retaining the checkpoint
+for recovery. It refuses changed operator
 settings or an ambiguous checkpoint. Do not delete
 `/etc/proxypermit/cluster-maintenance.json`, clear another node's reservation or
 start Keepalived directly to bypass a refusal. Review unresolved cases through OS
-cluster administration and out-of-band access. Independent installer rollback,
-HA setup, node retirement and uninstallation remain blocked on protected nodes;
-their complete cluster-aware workflows and other fencing platforms remain open.
+cluster administration and out-of-band access. Restoring a full installation
+backup still requires OS-managed cluster recovery.
+
+### Remove a detached protected node
+
+Keep direct SSH and management access to both nodes and independent recovery
+access to the fencing platform. First arrange the surviving service through
+OS cluster administration. Verify the peer is serving the VIP and will keep
+quorum for the change. Stop the departing node's cluster participation. Its
+`pacemaker.service`, `corosync.service`, `corosync-qdevice.service` and
+`keepalived.service` must be inactive and persistently masked. The installer
+does not edit the peer's cluster membership, witness or fencing topology.
+
+Use the release source on the detached node. Review the owned firewall rules
+and services in the plan before applying:
+
+```bash
+sudo bash install.sh --retire-ha --detached-ha --plan
+sudo bash install.sh --retire-ha --detached-ha --apply
+```
+
+Retirement requires a native checkpoint and an absent local VIP. It verifies
+that the peer's proxy and the local console remain reachable and removes only
+the recorded HA and native cluster rules. Pinned management rules remain in
+place. The local management console remains available after retirement.
+
+To remove that console as well, verify SSH access, then review and apply:
+
+```bash
+sudo bash install.sh --uninstall --detached-ha --plan
+sudo bash install.sh --uninstall --detached-ha --apply
+```
+
+The uninstaller checks retirement and verifies that the native services
+remain masked. OS packages, cluster recovery records, policy and backups
+remain available for the OS administrator. Follow your cluster procedure to
+replace the node or reconfigure the surviving deployment.
 
 The installer also validates private native draft backups. It refuses symlinks,
 linked files and legacy drafts with unsuitable ownership or permissions instead

@@ -27,7 +27,7 @@ SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE))
 from app.core.tinyproxy import atomic_write, parse
 from app.core.files import file_lock, access_acl, restore_access_acl
-from app.core import cluster
+from app.core import cluster, cluster_setup
 from app.core.ha import ha_firewall_rules, ha_topology
 from scripts.deploy.install_terminal import InstallTerminal
 from scripts.deploy.logging_policy import MARKER as LOGGING_MARKER, assets as logging_assets, write_asset as write_logging_asset
@@ -37,6 +37,7 @@ KEEPALIVED_CONFIG = Path('/etc/keepalived/keepalived.conf')
 KEEPALIVED_HEALTH = Path('/etc/keepalived/proxypermit-health')
 UFW_RULE_FILES = (Path('/etc/ufw/user.rules'), Path('/etc/ufw/user6.rules'))
 HA_FIREWALL_STATE = Path('/etc/proxypermit/ha-firewall.json')
+HA_RETIRED_STATE = Path('/etc/proxypermit/ha-retired.json')
 HA_RETIRE_UNIT = Path('/etc/systemd/system/proxypermit-ha-retire.service')
 HA_RETIRE_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-retire')
 HA_RETIRE_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start proxypermit-ha-retire.service\n'
@@ -321,6 +322,20 @@ def upgrade_health_helper(transaction, path=KEEPALIVED_HEALTH, content=None):
     return True
 
 
+def upgrade_cluster_agent(transaction, path, previous, candidate):
+    """Update the native agent only when it matches the previous release."""
+    if not path.is_file() or path.is_symlink() or not previous.is_file():
+        return
+    require_trusted_path(path.parent, directory=True)
+    require_trusted_path(path, directory=False)
+    old = previous.read_text(encoding='utf-8').encode('utf-8')
+    new = candidate.read_text(encoding='utf-8')
+    if path.stat().st_size != len(old) or path.read_bytes() != old or old == new.encode('utf-8'):
+        return
+    transaction.track(path)
+    atomic_write(path, new, path.stat().st_mode & 0o777)
+
+
 @contextmanager
 def maintenance_lock():
     require_trusted_path(MAINTENANCE_DIRECTORY.parent, directory=True)
@@ -497,7 +512,7 @@ def validate_native_backups(directory, uid):
         os.close(descriptor)
 
 
-def remove_owned_ha_firewall(owned):
+def remove_owned_ha_firewall(owned, *, include_cluster=False):
     existing = ufw_added_rules()
     present = set(owned) & existing
     missing = set(owned) - existing
@@ -505,9 +520,10 @@ def remove_owned_ha_firewall(owned):
     if any(shlex.split(line)[-1] in existing_comments for line in missing):
         raise ValueError('A managed HA firewall rule was edited. Review it before retiring this node.')
     commands = []
+    prefixes = ('ProxyPermit HA ', 'ProxyPermit cluster ') if include_cluster else ('ProxyPermit HA ',)
     for line in sorted(present):
         argv = shlex.split(line)
-        if argv[:2] != ['ufw', 'allow'] or argv[-2] != 'comment' or not argv[-1].startswith('ProxyPermit HA '):
+        if argv[:2] != ['ufw', 'allow'] or argv[-2] != 'comment' or not argv[-1].startswith(prefixes):
             raise ValueError('The managed HA firewall rule record is invalid.')
         commands.append(argv)
     for argv in commands:
@@ -646,9 +662,14 @@ def apply(plan, args):
                 raise ValueError('An HA service is active in standalone mode. Check the topology first.')
     from scripts.deploy.cluster_maintenance import rolling
     with maintenance_lock(), (rolling(lambda: cluster_upgrade_health(plan['installDir']), plan['installDir']) if cluster_upgrade else nullcontext()):
-        if args.upgrade:
+        if args.upgrade or cluster_upgrade:
             installed_deployment('/', plan['installDir'])
             verify_live_manager(plan['installDir'])
+        source = SOURCE
+        if cluster_upgrade and getattr(args, 'rollback', None):
+            source = cluster_rollback_release(plan['installDir'], args.rollback)
+            if str(source) != plan['rollbackRelease']:
+                raise ValueError('The reviewed rollback release has changed.')
         directory = Path(plan['configPath']).parent
         managed = plan['mode'] == 'standalone' or plan.get('ha') or plan.get('managedHa')
         if managed and directory.exists():
@@ -659,20 +680,20 @@ def apply(plan, args):
                     for path in (Path(plan['configPath']), Path(plan['whitelistPath'])):
                         if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_nlink != 1)):
                             raise ValueError('Managed proxy configuration requires regular, unlinked files.')
-                    _apply_locked(plan, args, frozen=True)
+                    _apply_locked(plan, args, frozen=True, source=source)
             except BaseException:
                 if os.name != 'nt':
                     os.chown(directory, original.st_uid, original.st_gid)  # pylint: disable=no-member
                 raise
             os.chmod(directory, 0o775)
         else:
-            _apply_locked(plan, args)
+            _apply_locked(plan, args, source=source)
 
 
 def validate_cluster_upgrade(plan, args):
-    if (not cluster.reserved() or not args.upgrade or plan['action'] != 'upgrade'
+    if (not cluster.reserved() or not (args.upgrade or getattr(args, 'rollback', None)) or plan['action'] != 'upgrade'
             or plan['mode'] != 'ha' or not plan.get('managedHa') or plan.get('ha')):
-        raise ValueError('--cluster-maintenance requires an existing OS-protected managed HA deployment and --upgrade.')
+        raise ValueError('Cluster maintenance requires an OS-protected managed HA installation.')
 
 
 def cluster_upgrade_health(install_dir):
@@ -683,8 +704,10 @@ def cluster_upgrade_health(install_dir):
         and ha_resource.command('runuser', '-u', 'proxypermit', '--', ha_resource.HEALTH).returncode == 0)
 
 
-def _apply_locked(plan, args, frozen=False):
+def _apply_locked(plan, args, frozen=False, source=None):
+    source = SOURCE if source is None else source
     cluster_upgrade = bool(getattr(args, 'cluster_maintenance', False))
+    release_rollback = cluster_upgrade and bool(getattr(args, 'rollback', None))
     ha = plan.get('ha')
     managed = plan['mode'] == 'standalone' or ha or plan.get('managedHa')
     base = Path(plan['installDir'])
@@ -697,6 +720,8 @@ def _apply_locked(plan, args, frozen=False):
     accounts_path = Path('/var/lib/proxypermit/accounts.json')
     config_path, filter_path = Path(plan['configPath']), Path(plan['whitelistPath'])
     config_existed = config_path.exists()
+    if release_rollback and not (config_existed and filter_path.is_file()):
+        raise ValueError('Restore the missing active proxy files before rolling back a release.')
     if ha:
         check_ha_host(ha, config_path)
     if managed and (config_path.parent != Path('/etc/tinyproxy') or filter_path.parent != Path('/etc/tinyproxy')):
@@ -764,6 +789,9 @@ def _apply_locked(plan, args, frozen=False):
                                 'proxypermit-cluster-status.timer', 'proxypermit-cluster-status.service'))
     auxiliary = {unit: service_state(unit) for unit in auxiliary_units}
     service_snapshot: dict[str, Any] = dict(**previous, auxiliary=auxiliary, ufw=False)
+    if cluster_upgrade:
+        installed, _, _, _ = installed_deployment('/', plan['installDir'])
+        service_snapshot['protectedUpgrade'] = {'before': installed['release'], 'after': str(release)}
     atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
     touched_service = False
     touched_ufw = False
@@ -795,7 +823,9 @@ def _apply_locked(plan, args, frozen=False):
         ignore = shutil.ignore_patterns(
             '.git', '.venv', 'venv', '__pycache__', '.demo', '.env', '.env.*', '.test-data',
             'accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-maintenance.json', 'cluster-protection.json', 'enroll-*.json', 'node_modules',
-            '*.key', '*.pem', '*.crt', '*.p12', '*.pfx', 'authkey', 'proxmox-fencing.json', 'cluster-plan.json', 'cluster-bootstrap.json', 'nssdb', 'proxypermit-cluster-bootstrap',
+            '*.key', '*.pem', '*.crt', '*.p12', '*.pfx', 'authkey', 'proxmox-fencing.json', 'cluster-plan.json', 'cluster-bootstrap.json',
+            'cluster-plan-web-request.json', 'qdevice-ready.json', 'fencing-tested.json',
+            'fencing-off-observed.json', 'preflight-current.json', 'nssdb', 'proxypermit-cluster-bootstrap',
             '*.log', '*.log.*', '*.jsonl', '*.journal*', 'ha-*.json',
             'session-state.json', 'nonce-store.json', 'nonces.json', 'whitelist_entry_log.json', 'releases', 'backups', 'current', 'dist', '.cache', '.agents', '.codex')
         if managed or HA_RETIRE_UNIT.is_file():
@@ -803,12 +833,12 @@ def _apply_locked(plan, args, frozen=False):
                 require_trusted_path(directory, directory=True)
             with tempfile.TemporaryDirectory(prefix='.release-', dir=release.parent) as directory:
                 staged = Path(directory) / release.name
-                shutil.copytree(SOURCE, staged, ignore=ignore)
+                shutil.copytree(source, staged, ignore=ignore)
                 prepare_release_permissions(staged)
                 secure_ha_helper_source(base, staged)
                 staged.rename(release)
         else:
-            shutil.copytree(SOURCE, release, ignore=ignore)
+            shutil.copytree(source, release, ignore=ignore)
             prepare_release_permissions(release)
         run(sys.executable, '-m', 'venv', str(release / '.venv'), umask=0o022)
         python = str(release / '.venv/bin/python')
@@ -908,7 +938,7 @@ def _apply_locked(plan, args, frozen=False):
             atomic_write(config_path, tinyproxy_text(filter_path, ha), 0o640)
         if not filter_path.exists():
             atomic_write(filter_path, '# Add allowed domains in ProxyPermit.\n', 0o644)
-        if managed:
+        if managed and not release_rollback:
             from scripts.deploy import access_safety
             if access_safety.requested(args) or access_safety.PROFILE.exists():
                 touched_service = True
@@ -969,14 +999,18 @@ def _apply_locked(plan, args, frozen=False):
             atomic_write(HA_SETUP_UNIT, ha_setup_unit_text(str(base)), 0o644)
             atomic_write(HA_SETUP_SUDOERS, HA_SETUP_RULE, 0o440)
             run('visudo', '-cf', str(HA_SETUP_SUDOERS))
-            from scripts.deploy.management_tls_web import assets as https_web_assets, SUDOERS as https_sudoers, MARKER as https_marker
-            for path, content in https_web_assets(base).items():
-                transaction.track(path)
-                if path.is_symlink() or (path.exists() and path.read_text(encoding='utf-8') != content
-                        and not path.read_text(encoding='utf-8').startswith(https_marker)):
-                    raise ValueError('An existing HTTPS control asset requires OS review.')
-                atomic_write(path, content, 0o440 if path == https_sudoers else 0o644)
-            run('visudo', '-cf', str(https_sudoers))
+            from scripts.deploy import cluster_web, management_tls_web
+            helpers = [management_tls_web]
+            if (source / 'scripts/deploy/cluster_web.py').is_file():
+                helpers.append(cluster_web)
+            for helper in helpers:
+                for path, content in helper.assets(base).items():
+                    transaction.track(path)
+                    if path.is_symlink() or (path.exists() and path.read_text(encoding='utf-8') != content
+                            and not path.read_text(encoding='utf-8').startswith(helper.MARKER)):
+                        raise ValueError(f'An existing web control asset requires OS review: {path}')
+                    atomic_write(path, content, 0o440 if path == helper.SUDOERS else 0o644)
+                run('visudo', '-cf', str(helper.SUDOERS))
         # Load all migrated values via the same dotenv parser as the application,
         # and import as the service user before changing the running service.
         smoke = 'from dotenv import load_dotenv; load_dotenv("/etc/proxypermit/.env", override=True); import wsgi; import os; from app.runtime.server import build_command; build_command(os.getenv("APP_SERVER", "gunicorn"), os.environ)'
@@ -984,6 +1018,10 @@ def _apply_locked(plan, args, frozen=False):
         if managed:
             smoke_command = ['runuser', '-u', 'proxypermit', '--'] + smoke_command
         run(*smoke_command, cwd=release)
+        if cluster_upgrade and not release_rollback:
+            from scripts.deploy.ha_resource import AGENT_PATH
+            agent_source = 'scripts/deploy/ha_resource.py'
+            upgrade_cluster_agent(transaction, AGENT_PATH, current / agent_source, release / agent_source)
         atomic_write('/etc/systemd/system/proxypermit.service',
                      service_text(current, 'standalone' if managed else 'ha', args.manager_bind, args.manager_port,
                                   preserve_binding=plan['action'] == 'upgrade'), 0o644)
@@ -1049,8 +1087,12 @@ def _apply_locked(plan, args, frozen=False):
             service_snapshot['ufw'] = True
             service_snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
             atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
-        print('Upgrade complete. The existing management listener was preserved.' if plan['action'] == 'upgrade'
-              else f'Installation complete. Management console: http://127.0.0.1:{args.manager_port}/')
+        if release_rollback:
+            print('Previous application release restored. The existing management listener was preserved.')
+        elif plan['action'] == 'upgrade':
+            print('Upgrade complete. The existing management listener was preserved.')
+        else:
+            print(f'Installation complete. Management console: http://127.0.0.1:{args.manager_port}/')
         if ha:
             print(f"HA node {ha['node'].upper()} is configured. Shared proxy address: {ha['vip'].split('/')[0]}:3128.")
         print(f'Backup and recovery manifest: {transaction.directory}')
@@ -1118,11 +1160,12 @@ def build_uninstall_plan(root, install_dir):
         target = Path(root).resolve() / path.as_posix().lstrip('/')
         if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
             paths.append(target)
-    from scripts.deploy.management_tls_web import assets as https_web_assets
-    for path, content in https_web_assets(Path(install_dir)).items():
-        target = Path(root).resolve() / path.as_posix().lstrip('/')
-        if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
-            paths.append(target)
+    from scripts.deploy import cluster_web, management_tls_web
+    for helper in (management_tls_web, cluster_web):
+        for path, content in helper.assets(Path(install_dir)).items():
+            target = Path(root).resolve() / path.as_posix().lstrip('/')
+            if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
+                paths.append(target)
     return {
         'action': 'uninstall', 'mode': installed.get('mode'), 'installDir': install_dir,
         'service': 'proxypermit.service', 'paths': [str(path) for path in paths],
@@ -1140,17 +1183,20 @@ def verify_live_manager(install_dir):
         raise ValueError('systemd is using a different unit file or working directory for ProxyPermit.')
 
 
-def uninstall(install_dir):
+def uninstall(install_dir, *, detached=False):
     require_linux_root('Uninstall')
     with maintenance_lock():
-        cluster.require_independent_control('uninstalling this node')
+        if detached:
+            require_retired_cluster()
+        else:
+            cluster.require_independent_control('uninstalling this node')
         plan = build_uninstall_plan('/', install_dir)
         unit = plan['service']
         verify_live_manager(install_dir)
         previous: dict[str, Any] = service_state(unit)
         if str(HA_CERT_RECOVERY_UNIT) in plan['paths']:
             previous['auxiliary'] = {HA_CERT_RECOVERY_UNIT.name: service_state(HA_CERT_RECOVERY_UNIT.name)}
-        for name in ('proxypermit-cluster-status.timer', 'proxypermit-cluster-status.service'):
+        for name in ('proxypermit-cluster-status.timer', 'proxypermit-cluster-status.service', cluster_setup.WEB_UNIT):
             if str(Path('/etc/systemd/system') / name) in plan['paths']:
                 previous.setdefault('auxiliary', {})[name] = service_state(name)
         for name in ('proxypermit-management-tls-renew.timer', 'proxypermit-management-tls-renew.service',
@@ -1178,8 +1224,44 @@ def uninstall(install_dir):
         print('ProxyPermit manager removed.')
 
 
-def build_ha_retirement_plan(install_dir):
-    cluster.require_independent_control('retiring this node')
+def detached_cluster():
+    """Check persistent local isolation after the OS operator removes the member."""
+    from scripts.deploy import ha_resource
+    checkpoint = cluster_setup.protected(cluster.SETUP_CHECKPOINT, private=True)
+    if (not isinstance(checkpoint, dict) or type(checkpoint.get('version')) is not int
+            or checkpoint['version'] != 1 or checkpoint.get('phase') != 'active'
+            or checkpoint.get('name') != socket.gethostname().split('.')[0]
+            or not isinstance(checkpoint.get('planHash'), str) or not re.fullmatch(r'[0-9a-f]{64}', checkpoint['planHash'])):
+        raise ValueError('Detached cleanup requires the active local native HA checkpoint.')
+    for unit in ('pacemaker.service', 'corosync.service', 'corosync-qdevice.service', 'keepalived.service'):
+        value = run('systemctl', 'show', unit, '--property=ActiveState,UnitFileState',
+                    capture_output=True, text=True).stdout.splitlines()
+        if 'ActiveState=inactive' not in value or 'UnitFileState=masked' not in value:
+            raise ValueError('Detach the node through OS cluster administration and permanently mask its cluster services first.')
+    profile = ha_resource.profile()
+    if profile['address'] in local_ipv4_addresses():
+        raise ValueError('The detached node still has the protected virtual IP.')
+    return checkpoint, profile
+
+
+def require_retired_cluster():
+    checkpoint, _ = detached_cluster()
+    try:
+        retired = cluster_setup.protected(HA_RETIRED_STATE, private=True)
+    except FileNotFoundError as exc:
+        raise ValueError('Complete detached HA retirement before uninstalling this node.') from exc
+    unit = run('systemctl', 'show', 'tinyproxy.service', '--property=ActiveState,UnitFileState',
+               capture_output=True, text=True).stdout.splitlines()
+    if (retired != {'version': 1, 'planHash': checkpoint['planHash']}
+            or HA_FIREWALL_STATE.exists() or HA_FIREWALL_STATE.is_symlink() or 'ActiveState=inactive' not in unit
+            or not {'UnitFileState=disabled', 'UnitFileState=masked', 'UnitFileState=static'}.intersection(unit)):
+        raise ValueError('Complete detached HA retirement before uninstalling this node.')
+
+
+def build_ha_retirement_plan(install_dir, *, detached=False):
+    detachment = detached_cluster() if detached else None
+    if detachment is None:
+        cluster.require_independent_control('retiring this node')
     installed, _, _, _ = installed_deployment('/', install_dir)
     if installed.get('mode') != 'ha' or HA_FIREWALL_STATE.is_symlink() or not HA_FIREWALL_STATE.is_file():
         raise ValueError('Retirement requires a managed HA node with a recorded firewall configuration.')
@@ -1198,13 +1280,26 @@ def build_ha_retirement_plan(install_dir):
     for name in ('proxypermit-ha-tls.service', 'proxypermit-ha-policy.timer', HA_CERT_RECOVERY_UNIT.name):
         if Path('/etc/systemd/system', name).is_file():
             services.append(name)
-    return {'action': 'retire-ha-node', 'vip': topology['vip'].split('/', 1)[0], 'peer': topology['peer'],
+    plan = {'action': 'retire-ha-node', 'vip': topology['vip'].split('/', 1)[0], 'peer': topology['peer'],
             'services': services, 'ownedFirewallRules': rules}
+    if detachment is not None:
+        checkpoint, profile = detachment
+        native_rules = checkpoint.get('ownedRules')
+        if (profile['vip'] != topology['vip'] or profile['interface'] != topology['interface']
+                or not isinstance(native_rules, list) or any(not isinstance(rule, str) for rule in native_rules)):
+            raise ValueError('The native topology or recorded cluster firewall rules could not be matched.')
+        plan.update(action='retire-detached-ha-node', planHash=checkpoint['planHash'],
+                    services=services[1:], ownedFirewallRules=rules + native_rules)
+    return plan
+
+
+def local_ipv4_addresses():
+    interfaces = json.loads(run('ip', '-j', '-4', 'address', 'show', capture_output=True, text=True).stdout)
+    return {address['local'] for interface in interfaces for address in interface.get('addr_info', [])}
 
 
 def verify_remote_proxy(vip, peer):
-    interfaces = json.loads(run('ip', '-j', '-4', 'address', 'show', capture_output=True, text=True).stdout)
-    local_addresses = {address['local'] for interface in interfaces for address in interface.get('addr_info', [])}
+    local_addresses = local_ipv4_addresses()
     if vip in local_addresses or peer in local_addresses:
         raise ValueError('Move the virtual IP to the peer before retiring this node.')
     try:
@@ -1214,11 +1309,15 @@ def verify_remote_proxy(vip, peer):
         raise ValueError(f'The proxy listener on {vip}:3128 is unreachable. Retirement was stopped.') from exc
 
 
-def retire_ha_node(install_dir):
+def retire_ha_node(install_dir, *, detached=False):
     require_linux_root('HA retirement')
     with maintenance_lock():
-        plan = build_ha_retirement_plan(install_dir)
+        plan = build_ha_retirement_plan(install_dir, detached=detached)
         verify_live_manager(install_dir)
+        values = (manager_values(Path('/etc/proxypermit/.env'), Path('/etc/systemd/system/proxypermit.service'))
+                  if detached else None)
+        if values is not None and not probe_manager(values):
+            raise ValueError('Verify direct access to the local management service before retiring the node.')
         verify_remote_proxy(plan['vip'], plan['peer'])
         base = Path(install_dir)
         for directory in (base, *base.parents, base / 'backups', UFW_RULE_FILES[0].parent):
@@ -1233,19 +1332,25 @@ def retire_ha_node(install_dir):
         peer_state = (Path('/var/lib/proxypermit/ha-peer.json'), Path('/var/lib/proxypermit/ha-enrollment.json'))
         for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE, *peer_state):
             transaction.track(path)
+        if detached:
+            transaction.track_new(HA_RETIRED_STATE)
         atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
         print(f'Recovery backup: {stamp}', flush=True)
         try:
             for unit in plan['services']:
                 run('systemctl', 'disable', '--now', unit)
             verify_remote_proxy(plan['vip'], plan['peer'])
-            remove_owned_ha_firewall(plan['ownedFirewallRules'])
+            remove_owned_ha_firewall(plan['ownedFirewallRules'], include_cluster=detached)
             verify_remote_proxy(plan['vip'], plan['peer'])
+            if values is not None and not probe_manager(values):
+                raise ValueError('The local management service could not be verified after retirement.')
             HA_FIREWALL_STATE.unlink()
             for path in peer_state:
                 path.unlink(missing_ok=True)
             snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
             atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
+            if detached:
+                atomic_write(HA_RETIRED_STATE, json.dumps(dict(version=1, planHash=plan['planHash'])), 0o600)
         except (Exception, KeyboardInterrupt):
             transaction.restore()
             reload_ufw()
@@ -1299,15 +1404,40 @@ def rollback_install(base, stamp, execute=False):
         print('Restored the previous configuration and release link. Installed packages were retained.')
 
 
+def cluster_rollback_release(install_dir, stamp):
+    if not re.fullmatch(r'[0-9]{8}T[0-9]{12}Z', stamp):
+        raise ValueError('Use the timestamped backup name shown after the protected upgrade.')
+    installed, _, _, marker = installed_deployment('/', install_dir)
+    backup = marker.parent / 'backups' / stamp
+    if installed.get('mode') != 'ha' or installed.get('backup') != str(backup):
+        raise ValueError('Choose the backup for the currently installed protected upgrade.')
+    for directory in (backup, backup.parent, marker.parent, *marker.parent.parents):
+        require_trusted_path(directory, directory=True)
+    try:
+        record = cluster_setup.protected(backup / 'service-state.json', private=True)['protectedUpgrade']
+        previous = Path(record['before'])
+        successor = record['after']
+    except (KeyError, TypeError) as exc:
+        raise ValueError('This backup has no protected-upgrade record. Keep the node reserved for OS recovery.') from exc
+    if (successor != installed['release'] or str(previous) == successor
+            or previous.parent != marker.parent / 'releases'
+            or not re.fullmatch(r'[0-9]{8}T[0-9]{12}Z', previous.name)):
+        raise ValueError('The recorded protected rollback release does not match this deployment.')
+    for directory in (previous.parent, previous, previous / 'scripts', previous / 'scripts/deploy'):
+        require_trusted_path(directory, directory=True)
+    require_trusted_path(previous / 'scripts/deploy/cluster_maintenance.py', directory=False)
+    return previous
+
+
 def wizard_ha(ui, args):
-    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A Â· preferred', 'Node B Â· standby'))]
+    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A · preferred', 'Node B · standby'))]
     fields = (
         ('Network interface on this host', None),
         ('Static IPv4 address of node A', None),
         ('Static IPv4 address of node B', None),
         ('Virtual IPv4 address with subnet prefix, for example 192.0.2.10/24', None),
         ('Allowed client network with subnet prefix, for example 192.0.2.0/24', None),
-        ('Available VRRP ID on this network (1â€“255)', '51'),
+        ('Available VRRP ID on this network (1–255)', '51'),
     )
     defaults = [default for _, default in fields]
     while True:
@@ -1335,7 +1465,7 @@ def run_wizard(args):
         args.mode = detected['mode']
         print(f'  Existing installation found ({args.mode}). The wizard will prepare an upgrade plan.')
     else:
-        modes = ('Standalone node Â· one server', 'Two-node HA Â· shared proxy address through Keepalived')
+        modes = ('Standalone node · one server', 'Two-node HA · shared proxy address through Keepalived')
         args.mode = ('standalone', 'ha')[ui.choose('How do you want to deploy ProxyPermit?', modes)]
     ha = wizard_ha(ui, args) if args.mode == 'ha' and detected['action'] == 'install' else None
     ui.heading('02  Configure the management console')
@@ -1377,7 +1507,7 @@ def run_wizard(args):
 
 def admin_username(value):
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', value):
-        raise ValueError('Use 1â€“64 letters, digits, dots, underscores, or hyphens.')
+        raise ValueError('Use 1–64 letters, digits, dots, underscores, or hyphens.')
     return value
 
 
@@ -1400,7 +1530,8 @@ def main(argv=None):
     operation.add_argument('--uninstall', action='store_true', help='Plan removal of the ProxyPermit manager. Add --apply to remove it.')
     operation.add_argument('--retire-ha', action='store_true', help='Plan retirement of a standby HA node and its managed firewall rules.')
     operation.add_argument('--configure-ha', action='store_true', help='Apply the approved local HA setup request through the privileged helper.')
-    parser.add_argument('--cluster-maintenance', action='store_true', help='Upgrade an OS-protected HA node under a cluster-wide reservation; preserve cluster-owned services and OS packages.')
+    parser.add_argument('--cluster-maintenance', action='store_true', help='Upgrade or roll back an OS-protected HA node under a cluster-wide reservation.')
+    parser.add_argument('--detached-ha', action='store_true', help='Clean up a native HA node already detached and persistently masked by the OS administrator.')
     parser.add_argument('--root', default='/', help='Plan only: inspect an alternative system root.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
     parser.add_argument('--management-cidr', action='append', help='Trusted management network for root-pinned web, SSH and proxy anti-lockout rules; repeat for multiple networks.')
@@ -1417,12 +1548,14 @@ def main(argv=None):
     cluster.add_argument('--ha-node-b', help='Static IPv4 address of node B.')
     cluster.add_argument('--ha-vip', help='Available virtual IPv4 address with its subnet prefix.')
     cluster.add_argument('--ha-client-cidr', help='IPv4 client network allowed to use Tinyproxy.')
-    cluster.add_argument('--ha-vrid', type=int, help='VRRP router ID (1â€“255), identical on both nodes.')
+    cluster.add_argument('--ha-vrid', type=int, help='VRRP router ID (1–255), identical on both nodes.')
     argv = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(argv)
     try:
-        if args.cluster_maintenance and (not args.upgrade or args.configure_ha or args.rollback or args.retire_ha or args.uninstall):
-            raise ValueError('--cluster-maintenance is available only with --upgrade.')
+        if args.cluster_maintenance and not (args.upgrade or args.rollback):
+            raise ValueError('--cluster-maintenance requires --upgrade or --rollback.')
+        if args.detached_ha and (not (args.uninstall or args.retire_ha) or args.root != '/'):
+            raise ValueError('--detached-ha requires local --retire-ha or --uninstall.')
         if sys.version_info < (3, 10):
             raise ValueError('Python 3.10 or later is required.')
         if not argv:
@@ -1455,13 +1588,15 @@ def main(argv=None):
             if args.retire_ha:
                 if args.root != '/':
                     raise ValueError('--root cannot be used with --retire-ha.')
-                print(json.dumps(build_ha_retirement_plan(args.install_dir), indent=2))
+                print(json.dumps(build_ha_retirement_plan(args.install_dir, detached=args.detached_ha), indent=2))
                 if args.apply:
-                    retire_ha_node(args.install_dir)
+                    retire_ha_node(args.install_dir, detached=args.detached_ha)
             else:
+                if args.detached_ha:
+                    require_retired_cluster()
                 print(json.dumps(build_uninstall_plan(args.root, args.install_dir), indent=2))
                 if args.apply:
-                    uninstall(args.install_dir)
+                    uninstall(args.install_dir, detached=args.detached_ha)
             return 0
         ha = None
         if any(value is not None for value in ha_args):
@@ -1471,6 +1606,18 @@ def main(argv=None):
         if args.rollback:
             if args.root != '/':
                 raise ValueError('--root cannot be used with --rollback.')
+            if args.cluster_maintenance:
+                if (args.mode or args.server or any(value is not None for value in ha_args)
+                        or args.management_cidr or args.management_ssh_port or args.management_web_port):
+                    raise ValueError('Protected rollback uses the installed deployment, server and management access profile.')
+                plan = build_plan('/', args.install_dir)
+                validate_cluster_upgrade(plan, args)
+                plan['rollbackRelease'] = str(cluster_rollback_release(args.install_dir, args.rollback))
+                print(json.dumps(dict(action='protected-release-rollback', release=plan['rollbackRelease'],
+                                      preserves=['live configuration and policy', 'accounts', 'OS cluster and firewall']), indent=2))
+                if args.apply:
+                    apply(plan, args)
+                return 0
             rollback_install(args.install_dir, args.rollback, args.apply)
             return 0
         if args.upgrade:
@@ -1484,6 +1631,7 @@ def main(argv=None):
                 raise ValueError('Cluster maintenance requires an existing managed HA installation.')
             plan['steps'] = [step for step in plan['steps'] if not step.startswith(('Install Python venv', 'Upgrade the recognized empty-connect'))]
             plan['steps'].insert(0, 'Require protected quorum and fencing; reserve cluster-wide maintenance and verify VIP takeover before local changes.')
+            plan['steps'].append('Update the native VIP agent if it matches the previous release; keep customized agents.')
             plan['steps'].append('Verify manager and native proxy health, then atomically restore the original standby setting and release maintenance.')
             plan['notes'] = [note for note in plan['notes'] if not note.startswith('Logging activation restarts')]
             plan['notes'].append('OS packages, Keepalived and cluster configuration are preserved. Failure leaves the node in standby with a root recovery checkpoint; maintenance never expires automatically.')

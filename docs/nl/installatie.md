@@ -270,6 +270,9 @@ Gebruik bij een door het OS ingericht quorum/fencingcluster
 [onderhoud aan een beveiligd cluster](beheer.md#onderhoud-aan-een-door-het-os-beveiligd-cluster)
 in plaats van de gewone upgradeopdrachten hieronder. Zelfstandige inrichting,
 rollback, uit bedrijf nemen en verwijderen zijn op die beveiligde nodes geblokkeerd.
+Via clusteronderhoud kun je een afgeronde applicatie-upgrade wel terugdraaien.
+Gebruik na loskoppeling via het OS de procedure voor een
+[losgekoppelde beschermde node](beheer.md#een-losgekoppelde-beschermde-node-verwijderen).
 
 Werk voor v1.3.0 **beide** HA-nodes bij voordat je hun peersleutel of interne
 certificaat vernieuwt. Bestaande HA blijft op Keepalived werken, tenzij je het

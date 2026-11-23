@@ -41,6 +41,12 @@ function showFeedback(message) {
     if (feedback.textContent !== message) feedback.textContent = message;
 }
 
+function reloadForNodeChange(url = window.location.href) {
+    const next = new URL(url);
+    next.searchParams.set('node_changed', '1');
+    window.location.replace(next);
+}
+
 for (const link of languageLinks) {
     link.addEventListener('click', async event => {
         if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
@@ -52,7 +58,11 @@ for (const link of languageLinks) {
             const localized = new DOMParser().parseFromString(await response.text(), 'text/html');
             const translatedForm = localized.getElementById('loginForm');
             if (!translatedForm || localized.documentElement.lang !== link.lang) throw new Error();
-            for (const selector of ['#signinTitle', '#loginOtpHint', 'label[for="loginUsername"]',
+            if (translatedForm.dataset.node !== form.dataset.node) {
+                reloadForNodeChange(link.href);
+                return;
+            }
+            for (const selector of ['#signinTitle', '#signin-node', '#loginOtpHint', 'label[for="loginUsername"]',
                 'label[for="loginPassword"]', 'label[for="loginOtp"]']) {
                 document.querySelector(selector).textContent = localized.querySelector(selector).textContent;
             }
@@ -147,12 +157,17 @@ form.addEventListener('submit', async event => {
     try {
         const response = await fetch('/api/auth/login', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                ...(form.dataset.node ? { 'X-ProxyPermit-Login-Node': form.dataset.node } : {})
+            },
             body: JSON.stringify(credentials),
             signal: AbortSignal.timeout(8000)
         });
         const result = await response.json();
-        if (result.otpRequired) {
+        if (response.status === 409 && result.nodeChanged) {
+            reloadForNodeChange();
+        } else if (result.otpRequired) {
             otpGroup.hidden = false;
             otp.disabled = false;
             showFeedback('');

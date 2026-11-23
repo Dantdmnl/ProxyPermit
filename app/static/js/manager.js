@@ -1373,13 +1373,6 @@ async function refreshStatus() {
             vipText.textContent = `VIP ${status.vip_address} standby`;
         }
 
-        // Toon actuele keepalived state (MASTER/BACKUP/FAULT/UNKNOWN)
-        const currentStateText = document.createElement('small');
-        currentStateText.style.marginLeft = '8px';
-        currentStateText.style.color = 'var(--muted, #666)';
-        currentStateText.style.fontSize = '12px';
-        vipText.parentElement.title = `Current keepalived state: ${status.current_state || 'UNKNOWN'}`;
-
         // Update tinyproxy status
         const tinyproxyDot = document.getElementById('tinyproxyStatusDot');
         const tinyproxyText = document.getElementById('tinyproxyStatusText');

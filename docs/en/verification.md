@@ -2,6 +2,133 @@
 
 [Nederlands](../nl/verification.md) · [Documentation](README.md)
 
+## 22 November 2026
+
+### Live checks for protected HA preflight
+
+On the Proxmox test pair, the preflight checked both local NSS certificate
+stores against the witness CA. Both nodes returned the same client
+fingerprint and rejected an incorrect CA fingerprint. A separate live
+fencing test used the peer-only agent to turn off the standby VM. The new
+preflight recorded authenticated OFF and ON observations after the VM was
+restored independently. The surviving node kept the virtual IP.
+
+Regression tests cover missing or differing transport proofs before
+reservation, changed or expired fencing evidence, and exclusion of
+preflight files from release archives.
+
+### Network split with no quorum
+
+The lab blocked only the witness and Corosync peer traffic while keeping
+SSH open. Once both nodes lost quorum, neither held the virtual IP. After
+removing the temporary rules, both nodes returned to protected status
+with one VIP owner and unchanged configuration, filter rules and accounts.
+This test used the existing protected Proxmox cluster and its shared host.
+
+### Preparing protected HA from Settings
+
+The browser tests review the plan and firewall preview, confirm local
+staging, prepare packages, and reload the saved fields. The isolated Linux
+worker writes and reads back a root-only plan. Tests cover expired or
+changed plans, the node identity, roles, CSRF, reauthentication and duplicate
+requests. The systemd unit and its single allowed sudo command were checked
+on Linux. This verification used an isolated worker and browser, with
+package installation simulated.
+
+### Migrating an existing HA pair on Proxmox
+
+A separate lab with two proxy nodes and a witness VM migrated from Keepalived
+to protected HA with Pacemaker. The lab started with a paired HA deployment
+whose active filter rules had already synchronized. Each node powered off its
+peer through Proxmox. After each test, the stopped VM was restarted through
+independent lab access.
+
+The migration on B was interrupted just before Keepalived would stop and
+resumed with the same migration ID. A kept the VIP until B was ready for the
+handoff. A refused to proceed when its clock was still unsynchronized after
+a reboot. Once its clock was synchronized, A also rejected an expired
+confirmation from B. With a fresh confirmation, both nodes completed the
+migration. Both reported quorum, a connected witness and fencing readiness.
+Exactly one node held the VIP. Both nodes could reach the proxy port at the
+VIP. The filter rules, Tinyproxy configuration and local accounts remained
+unchanged on each node.
+
+When the witness service was stopped temporarily, both nodes retained quorum
+and the VIP stayed on the same node. After restarting the service, both nodes
+reported full protection again. All three VMs ran on one Proxmox host.
+Complete host loss, network partitions and a node returning after a long
+absence were outside the scope of this test.
+
+### Active-node power loss after migration
+
+In the protected lab, the peer's fencing agent powered off the active Proxmox
+guest A. The independent Proxmox API confirmed that A was off. B took over
+with quorum and accepted a TCP connection to the proxy port on the VIP. The
+test observed takeover within 17 seconds of issuing the power-off command.
+After A restarted, both nodes reported protection and exactly one VIP owner.
+The local accounts, Tinyproxy configuration and filter rules were unchanged.
+
+The updated resource agent was also run in read-only monitor mode on both
+live guests. It recognized A's healthy VIP and B's inactive service. The
+power-loss test used the previously installed cluster agent.
+
+### Network partition and protected release rollback
+
+The Proxmox lab cut only the active node's Corosync traffic to its peer and
+its TLS witness connection. Direct SSH and access to the Proxmox API remained
+available. Pacemaker fenced the isolated node. The independent Proxmox API
+confirmed it was powered off, and the other node held the VIP with quorum and
+accepted a TCP connection on the proxy port. Both nodes returned to protected
+status after recovery. Configuration, filters and local accounts were unchanged.
+
+In the same lab, B was upgraded under a cluster reservation, then rolled back
+to the application source associated with the current upgrade receipt. A
+retained the VIP. Both nodes reported protection and the hashes of the
+Tinyproxy configuration, filter rules and local accounts were unchanged.
+
+### Standby return and policy reconciliation
+
+B rejoined the protected lab after more than five minutes offline. In a
+separate trial, B was stopped again for longer than the status freshness
+window. A kept the VIP and published a new revision with a temporary filter
+comment. When B returned, it applied that revision without taking the VIP.
+A then published the original policy again. Both nodes returned to their
+original Tinyproxy configuration, filter rules and account data.
+
+These trials used the same Proxmox host. A longer absence spanning
+certificate or fencing-token expiration, total host loss and live fencing
+with other platforms still require verification.
+
+### Protected HA planning and recovery of the original lab
+
+The current development build was tested locally. The Settings planner used
+the configured A and B addresses, downloaded JSON in the format accepted by
+the OS validator and rejected a witness configured on the VIP. Browser tests
+covered both languages, themes and viewport sizes. Permission tests confirmed
+that only a system administrator with a valid CSRF token can validate a plan.
+
+In the existing Proxmox lab, Pacemaker had stopped the VIP after monitor
+timeouts left a failure count on each node. Both nodes reported quorum, a
+connected witness, fencing readiness and no VIP owner. After checking local
+Tinyproxy health and confirming there was no maintenance reservation, the OS
+operator cleared the recorded failures for the VIP resource. Pacemaker restored
+the VIP on A. Both nodes then reported protection and exactly one owner.
+The standalone lab VM could reach Tinyproxy at the VIP. The original cause
+of the monitor timeouts remains unconfirmed. Later checks found new monitor
+failures on both nodes and the original VIP was stopped again. The migration
+and power-loss tests were run on the separate lab.
+
+## 18 November 2026 — management access during a VIP handoff
+
+In the development lab, rolling maintenance moved the shared management address
+from A to B. HTTPS validated against the lab CA bundle throughout the successful
+requests. B rejected requests from a stale A page and rejected A's session cookie.
+Signing in with B's local administrator account restored access at the same URL.
+The reverse handoff was also tested in a Dutch mobile browser session. An
+open form retained its draft on the old page until the operator reopened the
+console. The browser then showed A and completed sign-in with a temporary
+local account and 2FA. The fixture account was removed after the test.
+
 The development work below is included in **v1.4.0-dev.1**, a prerelease for
 testing. Historical entries describe the state at the time of each test.
 The final release-candidate checks passed 342 Python tests on Linux, Windows
@@ -309,7 +436,9 @@ date-filter requests, history/live transitions, and destructive-button contrast.
 The deployment organization must still validate its own privacy notice,
 external logs, backup/export retention, network plan, and workload.
 
-## 12 November 2026: operator workflows and HA responsiveness
+## 12 November 2026
+
+### Operator workflows and HA responsiveness
 
 The working build was checked with the full project checks and isolated browser
 fixtures. The Windows Python suite runs 144 tests with 7 platform-specific skips;
@@ -331,7 +460,7 @@ These checks do not establish production availability across a physical network
 partition, upstream outage or shared hypervisor failure. Account replication and
 granular roles were still separate work at this stage. The later [role implementation](roles.md) adds restricted local access.
 
-## 12 November 2026: anti-lockout and visible drafts
+### Anti-lockout and visible drafts
 
 The standalone and both HA lab nodes were upgraded with a reviewed single-host
 management source, their actual SSH/web ports and a root-owned safety profile
@@ -358,17 +487,7 @@ and isolated HTTP/account/2FA/audit/save checks with both Gunicorn and Granian
 (two workers each). The extra backend was installed in a separate test venv;
 the live deployment dependencies were kept intact.
 
-## Documentation website
-
-The Zensical site builds with `--clean --strict`, including link and anchor
-validation. The same build was checked from a generated release archive.
-Playwright checks cover English/Dutch guides, light/dark mode, desktop/mobile
-layout, translation links, real search results and keyboard closing. The local
-preview uses the `/ProxyPermit/` project prefix to check Pages-relative paths.
-Actionlint validates the Pages workflow. This prepares publication; it does not
-mean GitHub Pages has already been enabled or deployed.
-
-## 12 November 2026: local account roles
+### Local account roles
 
 The Windows suite passes 153 Python tests (7 platform-specific skips); the Linux
 installer runs all 153 without skips. The complete checks also pass for typing,
@@ -395,6 +514,16 @@ Monitor rule-layout regression checks cover full-width text at 320, 390 and
 1440 pixels in both languages and themes. Filter exports are now reserved for
 proxy/system administrators; direct monitor export requests return 403. These
 checks passed on all three lab nodes using temporary accounts that were removed.
+
+## Documentation website
+
+The Zensical site builds with `--clean --strict`, including link and anchor
+validation. The same build was checked from a generated release archive.
+Playwright checks cover English/Dutch guides, light/dark mode, desktop/mobile
+layout, translation links, real search results and keyboard closing. The local
+preview uses the `/ProxyPermit/` project prefix to check Pages-relative paths.
+Actionlint validates the Pages workflow. This prepares publication; it does not
+mean GitHub Pages has already been enabled or deployed.
 
 ## Release documentation and historical Actions cleanup
 
@@ -434,7 +563,9 @@ had pyrad 2.4; its RADIUS test failures disappeared with the required 2.6.0 in
 the isolated environment. No service environment was modified.
 
 
-## Reload verification — 15 November 2026
+## 15 November 2026
+
+### Reload verification
 
 The isolated Linux checks passed 191 tests. The Windows run passed the same
 suite with 15 POSIX/root-specific skips, plus quality, type and frontend checks.
@@ -471,7 +602,7 @@ of the management environment, account file and existing peer credentials.
 These reload checks do not prove split-brain protection. Quorum/fencing and
 partition-failure tests remain open in the [roadmap](planned-work.md).
 
-## Key rotation and TLS verification — 15 November 2026
+### Key rotation and TLS verification
 
 The isolated Linux suite passed all 208 tests with no skips. The Windows suite
 passed with 19 platform- or OpenSSL-dependent tests skipped. Rotation tests cover
@@ -489,7 +620,7 @@ and a certificate switch between handshakes are rejected. Controlled certificate
 renewal and pin migration remain open, as do additional storage-failure and
 restart tests for key rotation.
 
-## Extended HA verification — 15 November 2026
+### Extended HA verification
 
 The Linux suite now passes 231 tests without skips, including storage-failure,
 optional fresh-TOTP, VIP-resource and publication-order checks. Both the existing
@@ -538,7 +669,7 @@ The existing standalone and two VirtualBox HA nodes remain running. Default HTTP
 for the management website is still planned; internal HA TLS renewal does not
 enable HTTPS on that website.
 
-### Cluster status and rolling-maintenance verification
+#### Cluster status and rolling-maintenance verification
 
 The separate KVM pair now runs real installer-managed ProxyPermit services on
 top of its OS-prepared cluster. Both nodes passed the supported

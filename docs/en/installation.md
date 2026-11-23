@@ -252,7 +252,9 @@ Share an authenticator secret only with the account owner.
 For an OS-prepared quorum/fencing cluster, use
 [protected-cluster maintenance](administration.md#maintenance-on-an-os-protected-cluster)
 instead of the ordinary upgrade commands below. Independent setup, rollback,
-retirement and uninstallation are blocked on those protected nodes.
+retirement and uninstallation are blocked on those protected nodes. Use
+the protected maintenance workflow to roll back a completed application upgrade.
+After OS detachment, use the [protected node removal procedure](administration.md#remove-a-detached-protected-node).
 
 When upgrading to v1.3.0, upgrade **both** HA nodes before rotating their peer
 key or internal certificate. Existing HA remains Keepalived-based unless you
