@@ -23,7 +23,8 @@ def main(argv=None):
         'cluster_maintenance_started', 'cluster_maintenance_verified', 'cluster_maintenance_recovered',
         'management_tls_requested', 'management_tls_enabled', 'management_tls_renewed', 'management_tls_recovered',
         'management_tls_prepared', 'cluster_setup_reserved', 'cluster_setup_transport_started',
-        'cluster_setup_configuration_seeded', 'cluster_setup_activation_requested', 'cluster_setup_activated'))
+        'cluster_setup_configuration_seeded', 'cluster_setup_activation_requested', 'cluster_setup_activation_retried',
+        'cluster_setup_activated', 'cluster_web_plan_saved', 'cluster_web_packages_prepared'))
     parser.add_argument('operation')
     parser.add_argument('actor_uid', type=int)
     parser.add_argument('--requested-by')

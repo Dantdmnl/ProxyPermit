@@ -37,9 +37,11 @@ class LoggingTests(unittest.TestCase):
         self.assertEqual(len(normal['logs']), 3)
         self.assertEqual(normal['routineMessagesHidden'], 1)
         self.assertEqual(next(item for item in normal['logs'] if item.get('repetitions'))['repetitions'], 2)
+        self.assertEqual(next(item for item in normal['logs'] if item.get('repetitions'))['kind'], 'client-certificate-trust')
         self.assertTrue(any('UNSUPPORTED_PROTOCOL' in item['message'] for item in normal['logs']))
         self.assertTrue(any('Failed' in item['message'] for item in normal['logs']))
         self.assertEqual(len(raw_view['logs']), 5)
+        self.assertFalse(any('kind' in item for item in raw_view['logs']))
         self.assertEqual(len(search['logs']), 2)
         self.assertNotIn('10.0.0.4:', json.dumps(raw_view))
         self.assertNotIn('_raw', json.dumps(normal))
@@ -248,6 +250,17 @@ class LoggingTests(unittest.TestCase):
             result = logs.query_logs(dict(service='manager'), self.path)
         self.assertTrue(result['coverage']['incomplete'])
         self.assertNotIn('private path', json.dumps(result))
+
+    def test_recent_budget_does_not_limit_explicit_history_search(self):
+        self.write(self.path, [self.entry('history', age=1, message='history')])
+        with patch.object(logs, 'audit_records', wraps=logs.audit_records) as read:
+            recent = logs.query_logs({'service': 'audit', 'recent': '1', 'scan_limit': '12000'}, self.path)
+            self.assertEqual(read.call_args.args[-1], 1000)
+            self.assertTrue(recent['pagination']['recent'])
+            search = logs.query_logs({'service': 'audit', 'recent': '1', 'q': 'history', 'scan_limit': '12000'}, self.path)
+            self.assertEqual(read.call_args.args[-1], 12000)
+            self.assertFalse(search['pagination']['recent'])
+            self.assertEqual(search['logs'][0]['message'], 'history')
 
     def test_malformed_journal_and_audit_records_report_incomplete_coverage(self):
         with patch.object(logs, 'journal_lines', return_value=(['invalid json'], False)):

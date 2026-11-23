@@ -55,6 +55,7 @@
     margin: 0 0 4px;
     font-weight: 600;
 }
+.signin-node { margin: 0 0 16px; color: var(--muted); font-weight: 600; overflow-wrap: anywhere; }
 
 .signin-card input {
     display: block;

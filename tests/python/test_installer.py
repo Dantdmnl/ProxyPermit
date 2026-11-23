@@ -95,6 +95,90 @@ class InstallerTests(unittest.TestCase):
                 installer.validate_cluster_upgrade(good, SimpleNamespace(upgrade=True))
         self.assertEqual(installer.main(['--plan', '--cluster-maintenance']), 1)
 
+    def test_protected_rollback_selects_only_the_current_protected_upgrade_receipt(self):
+        stamp = '20261122T120000000002Z'
+        root = Path('/opt/proxypermit')
+        marker = root / 'installed.json'
+        previous = root / 'releases/20261122T120000000001Z'
+        current = root / 'releases' / stamp
+        installed = dict(mode='ha', release=str(current), backup=str(root / 'backups' / stamp))
+        receipt = dict(protectedUpgrade=dict(before=str(previous), after=str(current)))
+        with patch.object(installer, 'installed_deployment', return_value=(installed, None, None, marker)), \
+                patch.object(installer, 'require_trusted_path'), \
+                patch.object(installer.cluster_setup, 'protected', return_value=receipt) as read:
+            self.assertEqual(installer.cluster_rollback_release(str(root), stamp), previous)
+            read.assert_called_once_with(root / 'backups' / stamp / 'service-state.json', private=True)
+            with self.assertRaisesRegex(ValueError, 'currently installed'):
+                installer.cluster_rollback_release(str(root), previous.name)
+            receipt['protectedUpgrade']['after'] = str(previous)
+            with self.assertRaisesRegex(ValueError, 'does not match'):
+                installer.cluster_rollback_release(str(root), stamp)
+            receipt.clear()
+            with self.assertRaisesRegex(ValueError, 'no protected-upgrade record'):
+                installer.cluster_rollback_release(str(root), stamp)
+
+    def test_cluster_agent_upgrade_tracks_only_the_previous_release_agent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            previous = root / 'previous.py'
+            candidate = root / 'candidate.py'
+            agent = root / 'vip'
+            previous.write_bytes(b'old agent\r\n')
+            candidate.write_bytes(b'new agent\n')
+            agent.write_bytes(b'local custom agent\n')
+            transaction = installer.Transaction(root / 'backup')
+            with patch.object(installer, 'require_trusted_path'):
+                installer.upgrade_cluster_agent(transaction, agent, previous, candidate)
+                self.assertEqual(agent.read_bytes(), b'local custom agent\n')
+                self.assertEqual(transaction.entries, [])
+
+                agent.write_bytes(b'old agent\n')
+                installer.upgrade_cluster_agent(transaction, agent, previous, candidate)
+                self.assertEqual(agent.read_bytes(), candidate.read_bytes())
+                self.assertEqual(len(transaction.entries), 1)
+                transaction.restore()
+                self.assertEqual(agent.read_bytes(), b'old agent\n')
+
+    def test_detached_cleanup_requires_persistent_service_masks_and_no_local_vip(self):
+        from scripts.deploy import ha_resource
+        checkpoint = dict(version=1, phase='active', name='node-b', planHash='a' * 64)
+        profile = dict(address='192.0.2.10', vip='192.0.2.10/24', interface='ens18')
+        with patch.object(installer.cluster_setup, 'protected', return_value=checkpoint), \
+                patch.object(installer.socket, 'gethostname', return_value='node-b'), \
+                patch.object(ha_resource, 'profile', return_value=profile), \
+                patch.object(installer, 'local_ipv4_addresses', return_value={'192.0.2.12'}) as addresses, \
+                patch.object(installer, 'run') as run:
+            run.return_value.stdout = 'ActiveState=inactive\nUnitFileState=masked\n'
+            self.assertEqual(installer.detached_cluster(), (checkpoint, profile))
+            self.assertEqual(run.call_count, 4)
+            for unsafe in ('ActiveState=active\nUnitFileState=masked\n',
+                           'ActiveState=inactive\nUnitFileState=masked-runtime\n',
+                           'ActiveState=inactive\nUnitFileState=disabled\n'):
+                run.return_value.stdout = unsafe
+                with self.assertRaisesRegex(ValueError, 'permanently mask'):
+                    installer.detached_cluster()
+            run.return_value.stdout = 'ActiveState=inactive\nUnitFileState=masked\n'
+            addresses.return_value = {'192.0.2.10', '192.0.2.12'}
+            with self.assertRaisesRegex(ValueError, 'still has'):
+                installer.detached_cluster()
+
+    def test_detached_uninstall_requires_matching_retirement_and_stopped_proxy(self):
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(installer, 'detached_cluster', return_value=({'planHash': 'a' * 64}, {})), \
+                patch.object(installer, 'HA_FIREWALL_STATE', Path(folder) / 'ha-firewall.json'), \
+                patch.object(installer.cluster_setup, 'protected') as read, \
+                patch.object(installer, 'run') as run:
+            run.return_value.stdout = 'ActiveState=inactive\nUnitFileState=disabled\n'
+            read.return_value = dict(version=1, planHash='a' * 64)
+            installer.require_retired_cluster()
+            read.return_value['planHash'] = 'b' * 64
+            with self.assertRaisesRegex(ValueError, 'Complete detached HA retirement'):
+                installer.require_retired_cluster()
+            read.return_value['planHash'] = 'a' * 64
+            run.return_value.stdout = 'ActiveState=failed\nUnitFileState=disabled\n'
+            with self.assertRaisesRegex(ValueError, 'Complete detached HA retirement'):
+                installer.require_retired_cluster()
+
     def test_cluster_reservation_blocks_independent_service_mutations(self):
         from app.core import cluster
         with patch.object(cluster, 'reserved', return_value=True), \
@@ -338,6 +422,19 @@ class InstallerTests(unittest.TestCase):
                                             'to', '192.0.2.2', 'proto', 'vrrp', 'comment',
                                             'ProxyPermit HA IN - Keepalived VRRP from peer')
 
+    def test_detached_firewall_cleanup_preserves_pinned_management_rules(self):
+        owned = "ufw allow in from 192.0.2.1 to 192.0.2.2 port 5405 proto udp comment 'ProxyPermit cluster IN - Corosync peer'"
+        management = "ufw allow in from 192.0.2.3 to any port 22 proto tcp comment 'ProxyPermit access safety IN - SSH'"
+        with patch.object(installer, 'ufw_added_rules', side_effect=[{owned, management}, {management}]), \
+                patch.object(installer, 'run') as command:
+            installer.remove_owned_ha_firewall([owned], include_cluster=True)
+            self.assertEqual(command.call_args.args[-1], 'ProxyPermit cluster IN - Corosync peer')
+        with patch.object(installer, 'ufw_added_rules', return_value={owned, management}), \
+                patch.object(installer, 'run') as command:
+            with self.assertRaisesRegex(ValueError, 'firewall rule record is invalid'):
+                installer.remove_owned_ha_firewall([owned, management], include_cluster=True)
+            command.assert_not_called()
+
     def test_retirement_refuses_to_stop_services_when_vip_is_local(self):
         plan = {'vip': '192.0.2.10', 'peer': '192.0.2.12'}
         addresses = subprocess.CompletedProcess([], 0, stdout=json.dumps([
@@ -345,7 +442,7 @@ class InstallerTests(unittest.TestCase):
         ]))
         with (
             patch.multiple(installer, require_linux_root=lambda _: None, maintenance_lock=nullcontext,
-                           build_ha_retirement_plan=lambda _: plan, verify_live_manager=lambda _: None),
+                           build_ha_retirement_plan=lambda _, **_options: plan, verify_live_manager=lambda _: None),
             patch.object(installer, 'run', return_value=addresses) as command,
             patch.object(installer.socket, 'create_connection') as connection,
         ):

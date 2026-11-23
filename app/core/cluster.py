@@ -9,13 +9,15 @@ from .tinyproxy import ConfigError
 
 PROFILE = Path('/etc/proxypermit/cluster-protection.json')
 SERVICE_RESERVATION = Path('/etc/systemd/system/keepalived.service.d/proxypermit-cluster.conf')
+SETUP_CHECKPOINT = Path('/etc/proxypermit/cluster-bootstrap.json')
 STATUS = Path('/run/proxypermit-cluster/status.json')
 MAX_STATUS_AGE = 20
+MIGRATION_PHASES = ('reserving', 'reserved', 'transport', 'running', 'configured', 'activating', 'active')
 
 
 def reserved(profile=None):
     path = PROFILE if profile is None else Path(profile)
-    for candidate in (path, SERVICE_RESERVATION):
+    for candidate in (path, SERVICE_RESERVATION, SETUP_CHECKPOINT):
         try:
             if candidate.exists() or candidate.is_symlink():
                 return True
@@ -31,7 +33,7 @@ def require_independent_control(action, profile=None):
         raise ConfigError('This node is reserved for cluster-managed HA. Arrange OS-level cluster maintenance before ' + action + '.')
 
 
-def read_status(now=None):
+def read_status(now=None, *, include_migration=False):
     """Never retain a healthy claim when protected root evidence is unavailable."""
     unknown = dict(state='unknown')
     configured = reserved()
@@ -68,6 +70,9 @@ def read_status(now=None):
         if state == 'protected' and (owners != 1 or not all(value[key] for key in fields)):
             return unknown
         valid_for = min(MAX_STATUS_AGE, max(0, int(checked + MAX_STATUS_AGE - now)))
-        return dict(state=state, checked=checked, validFor=valid_for, owners=owners, **{key: value[key] for key in fields})
+        result = dict(state=state, checked=checked, validFor=valid_for, owners=owners, **{key: value[key] for key in fields})
+        if include_migration and value.get('migrationPhase') in MIGRATION_PHASES:
+            result['migrationPhase'] = value['migrationPhase']
+        return result
     except (OSError, ValueError, RecursionError):
         return unknown

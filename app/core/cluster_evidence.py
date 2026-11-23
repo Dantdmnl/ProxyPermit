@@ -4,6 +4,7 @@ from xml.etree import ElementTree as ET
 
 RESOURCE = 'proxypermit-vip'
 FENCERS = frozenset(('fence_xvm', 'fence_pve', 'fence_proxypermit_pve', 'fence_vmware_rest', 'fence_ipmilan', 'fence_virsh'))
+HTTPS_FENCERS = frozenset(('fence_pve', 'fence_proxypermit_pve', 'fence_vmware_rest'))
 
 
 def xml(text):
@@ -47,21 +48,30 @@ def fencing_coverage(fencers, ready, members):
                 or len({entry[1] for entry in entries}) != len(entries)):
             return False, False
         endpoint = values.get('ipaddr', values.get('multicast_address', '')).strip().lower()
-        if item.get('type') in ('fence_pve', 'fence_proxypermit_pve'):
+        agent = item.get('type')
+        if agent in HTTPS_FENCERS:
             # A running fencer is insufficient evidence if its management
             # credential would be sent over an unverified TLS connection.
-            if (not endpoint or enabled(values.get('ssl_insecure'))
-                    or not any(enabled(values.get(key)) for key in ('ssl', 'ssl_secure'))
-                    or values.get('vmtype', 'qemu') not in ('qemu', 'lxc')):
+            if (not endpoint or {'ssl_insecure', 'ssl-insecure'} & values.keys()
+                    or not any(enabled(values.get(key)) for key in ('ssl', 'ssl_secure', 'ssl-secure'))):
+                return False, False
+        if agent in ('fence_pve', 'fence_proxypermit_pve') and values.get('vmtype', 'qemu') not in ('qemu', 'lxc'):
+            return False, False
+        if agent == 'fence_ipmilan':
+            # One directly addressed BMC controls one physical chassis.
+            if (not endpoint or len(hosts) != 1 or 'target' in values or values.get('lanplus') != '1'
+                    or values.get('cipher') != '17' or values.get('method', 'onoff') != 'onoff'):
                 return False, False
         for host, target in entries:
             target = target.strip()
-            if item.get('type') in ('fence_pve', 'fence_proxypermit_pve'):
+            if agent in ('fence_pve', 'fence_proxypermit_pve'):
                 if not re.fullmatch(r'[1-9][0-9]{2,8}', target):
                     return False, False
-            normalized = 'fence_pve' if item.get('type') == 'fence_proxypermit_pve' else item.get('type')
-            identity = (normalized, endpoint, values.get('ipport', '8006' if normalized == 'fence_pve' else ''),
-                        values.get('vmtype', 'qemu'), target)
+            normalized = 'fence_pve' if agent == 'fence_proxypermit_pve' else agent
+            default_port = {'fence_ipmilan': '623', 'fence_pve': '8006', 'fence_vmware_rest': '443'}.get(normalized, '')
+            identity = (normalized, endpoint, values.get('ipport', default_port),
+                        values.get('vmtype', 'qemu') if normalized == 'fence_pve' else '',
+                        '' if agent == 'fence_ipmilan' else target)
             if identity in targets and targets[identity] != host:
                 return False, False
             targets[identity] = host
@@ -87,8 +97,8 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
         and item.get('resource_agent') == agents[item.get('id')] and enabled(item.get('active'))
         and enabled(item.get('managed'))
         and not any(enabled(item.get(key)) for key in ('failed', 'blocked', 'orphaned', 'maintenance'))}
-    fencing_configured, fencer_ready = fencing_coverage(fencers, ready,
-        {node.get('uname') for node in configuration.findall('nodes/node')})
+    members = {node.get('uname') for node in configuration.findall('nodes/node')}
+    fencing_configured, fencer_ready = fencing_coverage(fencers, ready, members)
     policy_safe = bool(enabled(options.get('stonith-enabled')) and enabled(options.get('startup-fencing'))
         and len(configuration.findall('nodes/node')) == 2
         and options.get('no-quorum-policy') == 'stop'
@@ -119,7 +129,9 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
         state = 'unsafe'
     elif owners == 0:
         state = 'stopped'
-    elif not (policy_safe and quorate and witness and fencing_configured and fencer_ready and healthy_resource) or local_owner != local_vip:
+    elif (len(nodes) != 1 or nodes[0].get('name') not in members
+          or local_name not in members or local_owner != local_vip
+          or not (policy_safe and quorate and witness and fencing_configured and fencer_ready and healthy_resource)):
         state = 'degraded'
     else:
         state = 'protected'

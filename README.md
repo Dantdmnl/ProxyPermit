@@ -10,10 +10,10 @@
 <p align="center">A clear, secure web console for Tinyproxy.</p>
 
 <p align="center">
-  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> Â·
+  <a href="https://dantdmnl.github.io/ProxyPermit/en/">English docs</a> ·
   <a href="https://dantdmnl.github.io/ProxyPermit/nl/">
-    Nederlandse documentatie</a> Â·
-  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> Â·
+    Nederlandse documentatie</a> ·
+  <a href="https://github.com/Dantdmnl/ProxyPermit/releases">Releases</a> ·
   <a href="https://github.com/Dantdmnl/ProxyPermit/issues">Report an issue</a>
 </p>
 <!-- markdownlint-enable MD033 MD041 -->
@@ -75,11 +75,12 @@ choosing a production setup.
 
 ## Development preview
 
-**[v1.4.0-dev.1](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.1)**
-is a prerelease for disposable or recoverable test deployments. It adds management
-HTTPS setup and further experimental HA integration. Guided protected-cluster
-provisioning and complete recovery/removal workflows remain open. Read the
-[known limitations](CHANGELOG.md#140-dev1---2026-11-17) before testing.
+**[v1.4.0-dev.2](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2)**
+is a prerelease for disposable or recoverable test deployments. It adds local
+protected-HA preparation in Settings, migration checks, rolling application
+rollback and faster log browsing. Witness enrollment, fencing and activation
+require OS administration. Read the
+[release notes](CHANGELOG.md#140-dev2---2026-11-22) before testing.
 **v1.3.0 remains the stable release.**
 
 ## Get started

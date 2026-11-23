@@ -40,6 +40,7 @@
                 <div class="log-actions">
                     <button type="button" class="button button-secondary" id="autoRefreshBtn" onclick="toggleAutoRefresh()">{{ _('⏹️ Pauzeer') }}</button>
                     <button type="button" class="button button-secondary" onclick="refreshLogs('page')">{{ _('Nu verversen') }}</button>
+                    <button type="button" class="button button-secondary" id="logOpenHistory" onclick="openLogHistory()">{{ _('Browse retained logs') }}</button>
                     <button type="button" class="button button-secondary" id="logLiveBanner" onclick="goToLiveLogs()" hidden>{{ _('↩ Terug naar live') }}</button>
                     <details class="log-period">
                         <summary>{{ _('Periode') }}</summary>
@@ -85,6 +86,7 @@
                 <div class="log-footer-status">
                     <span id="logLoadingStatus"><span id="logLoadingSpinner" hidden></span><span id="logLoadingStatusText" role="status">{{ _('Klaar') }}</span></span>
                     <span id="logTimeZoneBadge"></span>
+                    <span id="logFreshness" hidden></span>
                 </div>
                 <div class="log-pagination">
                     <span id="logPageInfo"></span>

@@ -52,6 +52,13 @@ class ClusterEvidenceTests(unittest.TestCase):
                                   'resource_agent="stonith:fence_xvm" active="false" failed="true"')
         self.assertEqual(self.evidence(monitor=monitor)['state'], 'degraded')
 
+    def test_owner_count_alone_cannot_confirm_remote_protection(self):
+        for owner in ('', '<node name="unknown-node"/>'):
+            with self.subTest(owner=owner):
+                monitor = MONITOR.replace('<node name="node-a"/>', owner)
+                self.assertEqual(self.evidence(monitor=monitor, local=False, node='node-b')['state'], 'degraded')
+        self.assertEqual(self.evidence(local=False, node='unknown-node')['state'], 'degraded')
+
     def test_fencer_must_explicitly_cover_both_distinct_nodes(self):
         for value in (CIB.replace('static-list', 'none'), CIB.replace('node-a node-b', 'node-a'),
                       CIB.replace('node-b:vm-b', 'node-b:vm-a'), CIB.replace('node-b:vm-b', 'node-c:vm-b')):
@@ -109,6 +116,30 @@ class ClusterEvidenceTests(unittest.TestCase):
         monitor = MONITOR.replace('nodes_running_on="1"', 'nodes_running_on="0"').replace('<node name="node-a"/>', '')
         self.assertEqual(self.evidence(monitor=monitor, local=False)['state'], 'stopped')
         self.assertEqual(self.evidence(monitor='<crm_mon/>', local=False)['state'], 'unknown')
+
+    def test_vmware_requires_https_with_verified_server_identity(self):
+        cib = CIB.replace('fence_xvm', 'fence_vmware_rest').replace('<instance_attributes>', '<instance_attributes>'
+            '<nvpair name="ipaddr" value="vcenter.example.invalid"/><nvpair name="ssl_secure" value="1"/>', 1)
+        monitor = MONITOR.replace('fence_xvm', 'fence_vmware_rest')
+        self.assertTrue(self.evidence(cib=cib, monitor=monitor)['fencingConfigured'])
+        for insecure in ('ssl_insecure', 'ssl-insecure'):
+            unsafe = cib.replace('</instance_attributes>', f'<nvpair name="{insecure}" value="TRUE"/></instance_attributes>', 1)
+            self.assertFalse(self.evidence(cib=unsafe, monitor=monitor)['fencingConfigured'])
+
+    def test_physical_hosts_require_one_encrypted_bmc_per_chassis(self):
+        template = ('<primitive id="{id}" class="stonith" type="fence_ipmilan"><instance_attributes>'
+            '<nvpair name="pcmk_host_check" value="static-list"/><nvpair name="pcmk_host_list" value="{node}"/>'
+            '<nvpair name="pcmk_host_map" value="{node}:{node}"/><nvpair name="ipaddr" value="{endpoint}"/>'
+            '<nvpair name="lanplus" value="1"/><nvpair name="cipher" value="17"/></instance_attributes></primitive>')
+        fencers = ''.join(template.format(id='fence-' + side, node='node-' + side,
+                                         endpoint='bmc-' + side + '.example.invalid') for side in ('a', 'b'))
+        first = CIB.index('<primitive id="fencer"')
+        last = CIB.index('</primitive>', first) + len('</primitive>')
+        cib = CIB[:first] + fencers + CIB[last:]
+        self.assertTrue(self.evidence(cib=cib)['fencingConfigured'])
+        for unsafe in (cib.replace('bmc-b.', 'bmc-a.'), cib.replace('value="17"', 'value="0"'),
+                       cib.replace('name="lanplus" value="1"', 'name="lanplus" value="0"')):
+            self.assertFalse(self.evidence(cib=unsafe)['fencingConfigured'])
 
     def test_xml_entities_are_never_expanded(self):
         with self.assertRaises(ValueError):

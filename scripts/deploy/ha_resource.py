@@ -15,6 +15,7 @@ import sys
 import time
 
 PROFILE = Path('/etc/proxypermit/cluster-protection.json')
+AGENT_PATH = Path('/usr/lib/ocf/resource.d/proxypermit/vip')
 HEALTH = '/etc/keepalived/proxypermit-health'
 SUCCESS, ERROR, INVALID, NOT_RUNNING = 0, 1, 6, 7
 
@@ -50,16 +51,31 @@ def owns_vip(value):
     return any(address.get('local') == value['address'] for row in rows for address in row.get('addr_info', []))
 
 
-def monitor(value):
-    active = command('systemctl', 'is-active', '--quiet', 'keepalived.service').returncode == 0
+def keepalived_state():
+    result = command('systemctl', 'show', 'keepalived.service', '--property=LoadState,ActiveState')
+    properties = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    if result.returncode or properties.get('LoadState') != 'loaded' or not properties.get('ActiveState'):
+        raise ValueError('The Keepalived unit state could not be verified.')
+    return properties['ActiveState']
+
+
+def monitor(value, *, report=False):
+    state = keepalived_state()
     present = owns_vip(value)
-    if not active:
-        return ERROR if present else NOT_RUNNING
-    if not present:
-        return ERROR
-    # The native configuration is application-controlled. Parse/probe it only
-    # as the existing unprivileged account using the root-installed helper.
-    return SUCCESS if command('runuser', '-u', 'proxypermit', '--', HEALTH).returncode == 0 else ERROR
+    if state == 'inactive' and not present:
+        return NOT_RUNNING
+    if state != 'active':
+        reason = 'Keepalived has not reached the expected unit state.'
+    elif not present:
+        reason = 'The virtual IP is missing from the protected interface.'
+    else:
+        # Probe as the existing unprivileged account using the root-installed helper.
+        if command('runuser', '-u', 'proxypermit', '--', HEALTH).returncode == 0:
+            return SUCCESS
+        reason = 'The local Tinyproxy health check failed.'
+    if report:
+        print(reason, file=sys.stderr)
+    return ERROR
 
 
 def validate_service():
@@ -74,12 +90,12 @@ def validate_service():
 
 def resource(action, value):
     if action == 'monitor':
-        return monitor(value)
+        return monitor(value, report=True)
     if action == 'stop':
         result = command('systemctl', 'stop', 'keepalived.service', timeout=25)
-        if result.returncode or owns_vip(value):
+        if result.returncode or keepalived_state() != 'inactive' or owns_vip(value):
             return ERROR  # Pacemaker must fence if a safe stop cannot be proved.
-        return SUCCESS if command('systemctl', 'is-active', '--quiet', 'keepalived.service').returncode else ERROR
+        return SUCCESS
     validate_service()
     if action == 'validate-all':
         return SUCCESS

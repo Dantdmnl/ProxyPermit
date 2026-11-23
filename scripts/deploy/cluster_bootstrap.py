@@ -5,7 +5,6 @@ installation leaves the new cluster units masked until explicit preparation
 resumes. Existing cluster configuration is never adopted automatically.
 """
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,7 +22,7 @@ JOURNAL = FOLDER / 'preparation.json'
 UNIT_FOLDER = Path('/etc/systemd/system')
 CONFIG = Path('/etc/corosync/corosync.conf')
 CIB = Path('/var/lib/pacemaker/cib/cib.xml')
-PACKAGES = {'node': ('pacemaker', 'pacemaker-cli-utils', 'corosync', 'corosync-qdevice', 'pcs'),
+PACKAGES = {'node': ('pacemaker', 'pacemaker-cli-utils', 'corosync', 'corosync-qdevice', 'pcs', 'libnss3-tools'),
             'witness': ('corosync-qnetd', 'libnss3-tools')}
 UNITS = {'node': ('pcsd.service', 'pacemaker.service', 'corosync.service', 'corosync-qdevice.service'),
          'witness': ('corosync-qnetd.service',)}
@@ -58,16 +57,21 @@ def plan(role):
                       '--property=NTP', '--property=NTPSynchronized').stdout.splitlines() if '=' in line)
     if properties.get('NTP') != 'yes' or properties.get('NTPSynchronized') != 'yes':
         raise ValueError('Confirm working network time before preparing cluster dependencies.')
-    digest = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    digest = cluster_setup.plan_hash(value)
     return dict(version=1, role=role, planHash=digest, packages=list(PACKAGES[role]), units=list(UNITS[role]))
 
 
-def prepare(role):
+def prepare(role, *, expected_hash=None):
     require_linux_root('Cluster dependency preparation')
     with maintenance_lock():
         if cluster.reserved():
             raise ValueError('An existing or pending protected cluster requires its maintenance workflow.')
         proposed = plan(role)
+        if expected_hash is not None:
+            if proposed['planHash'] != expected_hash:
+                raise ValueError('The staged cluster plan changed before dependency preparation.')
+            from scripts.deploy.cluster_setup import check_host
+            check_host(cluster_setup.validate_plan(cluster_setup.protected(cluster_setup.PLAN, private=True)), role)
         require_trusted_path(FOLDER.parent, directory=True)
         FOLDER.mkdir(mode=0o700, exist_ok=True)
         require_trusted_path(FOLDER, directory=True)
