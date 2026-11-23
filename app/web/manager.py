@@ -38,6 +38,7 @@ from ..core.filters import WhitelistManager
 from ..core.accounts import account_role, permits, account_for, consume_totp, load_accounts, matching_totp_step, verify_password
 from ..core.audit import SharedAuditHandler, bounded_setting
 from ..core.files import file_lock
+from ..core import cluster
 from ..core.tinyproxy import atomic_write
 from ..core.validators import WhitelistValidator
 from .proxy import domain_editor_error, PENDING_CHANGES, ha_enabled, has_pending_changes, managed_ha, paired_standby, record_published_policy, register_proxy_api, validate_filter
@@ -978,6 +979,20 @@ def permission_context():
                 role_labels={'admin': 'Systeembeheerder', 'manager': 'Proxybeheerder', 'monitor': 'Monitor'})
 
 
+def management_node_role():
+    role = os.getenv('PROXYPERMIT_HA_NODE')
+    return role if managed_ha() and role in ('a', 'b') else ''
+
+
+@app.context_processor
+def management_node_context():
+    role = management_node_role()
+    public_label = os.getenv('PROXYPERMIT_PUBLIC_NODE_LABEL', '').strip()
+    if not role or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9 _-]{0,31}', public_label):
+        public_label = ''
+    return dict(management_node_role=role, public_node_label=public_label)
+
+
 def get_allowed_origin(origin: Optional[str]) -> Optional[str]:
     if not origin or origin == 'null':
         return None
@@ -1157,6 +1172,10 @@ def settings_reauth(actor, account, password, otp):
 def auth_login():
     if not ENABLE_AUTH:
         return jsonify({'success': True}), 200
+
+    expected_node = request.headers.get('X-ProxyPermit-Login-Node')
+    if expected_node is not None and expected_node != management_node_role():
+        return jsonify(success=False, nodeChanged=True), 409
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict) or not isinstance(data.get('username'), str) or not isinstance(data.get('password'), str):
@@ -1521,8 +1540,11 @@ def requires_sync_auth(f):
 
 @app.route('/connection', methods=['GET'])
 def connection_check():
-    """Public liveness only: no session, configuration or service inspection."""
-    return '', 204, {'Cache-Control': 'no-store', 'X-ProxyPermit-Reachable': '1'}
+    """Report liveness and the same fixed role shown on the sign-in page."""
+    headers = {'Cache-Control': 'no-store', 'X-ProxyPermit-Reachable': '1'}
+    if role := management_node_role():
+        headers['X-ProxyPermit-Node'] = role
+    return '', 204, headers
 
 
 @app.route('/health', methods=['GET'])
@@ -2609,9 +2631,22 @@ def get_status():
                                         check=False, timeout=2).returncode == 0
             service = whitelist_manager.get_service_status()
             responsive = proxy_responsive(os.getenv('TINYPROXY_CONFIG_PATH', '/etc/tinyproxy/tinyproxy.conf'))
+            if not service['running'] or not responsive or (owns_vip and not keepalived):
+                state = 'FAULT'
+            elif cluster.reserved():
+                evidence = cluster.read_status()
+                if evidence['state'] == 'unsafe':
+                    state = 'FAULT'
+                elif evidence['state'] == 'protected':
+                    state = 'MASTER' if owns_vip else 'BACKUP'
+                else:
+                    state = 'UNKNOWN'
+            elif keepalived:
+                state = 'MASTER' if owns_vip else 'BACKUP'
+            else:
+                state = 'FAULT'
             return jsonify(configured_role='MASTER' if os.getenv('PROXYPERMIT_HA_NODE') == 'a' else 'BACKUP',
-                           current_state='FAULT' if not keepalived or not service['running'] or not responsive else
-                           'MASTER' if owns_vip else 'BACKUP',
+                           current_state=state,
                            hostname=socket.gethostname(), tinyproxy_active=service['running'],
                            tinyproxy_check_status=service['status'] if responsive else 'unresponsive', vip_active=owns_vip, vip_address=vip,
                            peer_address=None, peer_online=None, last_sync=None, split_brain_warning=False,
@@ -3335,7 +3370,7 @@ def export_whitelist():
         response.headers['Content-Type'] = 'text/plain; charset=utf-8'
         response.headers['Content-Disposition'] = 'attachment; filename=whitelist_export.txt'
         
-        logger.info("Whitelist geÃ«xporteerd")
+        logger.info("Filter rules exported")
         return response
         
     except Exception as e:
@@ -3639,6 +3674,17 @@ from .https_settings import register_https_settings
 register_https_settings(app, requires_auth, lambda: (Path(AUTH_ACCOUNTS_FILE) if AUTH_ACCOUNTS_FILE else None,
                                                    Path(SESSION_STATE_FILE)), _audit_event)
 register_i18n(app)
+
+
+@app.before_request
+def reject_stale_management_page():
+    expected = request.headers.get('X-ProxyPermit-Page-Node')
+    if expected in ('a', 'b') and request.path.startswith('/api/') and expected != management_node_role():
+        return jsonify(error='The management node changed. Sign in again.'), 409, {
+            'Cache-Control': 'no-store', 'X-ProxyPermit-Node-Changed': '1',
+        }
+
+
 app.before_request(protect_browser_mutations)
 app.before_request(enforce_browser_permissions)
 register_proxy_api(app, requires_auth, _is_authenticated_request, whitelist_manager, _audit_event)

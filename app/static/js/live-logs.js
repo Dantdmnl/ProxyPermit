@@ -6,7 +6,7 @@ let logAutoRefreshInterval = null;
 let logAutoRefreshEnabled = false;
 let logFilterDebounceTimer = null;   // echte debounce voor zoekveld
 let logPageOffset = 0;
-const logPageLimit = 1000;
+const logPageLimit = 100;
 const logScanLimitBase = 12000;
 const logScanLimitMax = 120000;
 let logTotalCount = 0;
@@ -15,7 +15,12 @@ let logAnchor = null;
 let logPeriod = {since: '', until: ''};
 let logRequestSequence = 0;
 let logAutoScrollEnabled = true;     // auto-scroll naar beneden
-let logRefreshIntervalMs = 2000;     // instelbaar refresh interval
+let logRefreshIntervalMs = 5000;
+let logHistoryMode = false;
+let logRequestController;
+let logLastRead = null;
+let logRefreshFailed = false;
+let logConnectionState = 'online';
 let logIsLivePage = true;            // false zodra gebruiker pagineert
 let logCompactMode = false;
 
@@ -28,6 +33,15 @@ document.querySelectorAll('[data-open-live-logs]').forEach(control => {
     });
 });
 window.addEventListener('hashchange', openLogsFromNavigation);
+window.addEventListener('proxypermit:connection', event => {
+    logConnectionState = event.detail.state;
+    if (!loggingDialog.open) return;
+    if (logConnectionState !== 'online') logRefreshFailed = true;
+    updateLogFreshness();
+    if (logConnectionState === 'online' && logIsLivePage && logAutoRefreshEnabled) {
+        void refreshLogs('auto');
+    }
+});
 document.addEventListener('DOMContentLoaded', openLogsFromNavigation);
 let logServerQuery = '';
 let logRequestPending = false;
@@ -36,6 +50,7 @@ protectDialogDismiss(loggingDialog, [], () => false, () => false);
 loggingDialog.addEventListener('close', () => {
     if (loggingDialog.open) return;
     ++logRequestSequence;
+    logRequestController?.abort();
     logRequestPending = false;
     clearInterval(logAutoRefreshInterval);
     logAutoRefreshInterval = null;
@@ -60,16 +75,20 @@ function openLoggingModal() {
     logPeriod = {since: '', until: ''};
     document.getElementById('logPeriodForm').reset();
     allLogs = [];
+    logLastRead = null;
+    logRefreshFailed = false;
+    updateLogFreshness();
     updateSearchFeedback(null, '');
     document.getElementById('logContainer').textContent = '';
     updateLogSummary([]);
     logAutoRefreshEnabled = true;
     logAutoScrollEnabled = true;
     logIsLivePage = true;
+    logHistoryMode = false;
     applyLogCompactMode();
     updateLogTimeZoneBadge();
     // Herstel opgeslagen refresh interval
-    logRefreshIntervalMs = parseInt(localStorage.getItem('logRefreshInterval') || '2000', 10);
+    logRefreshIntervalMs = parseInt(localStorage.getItem('logRefreshInterval') || '5000', 10);
     const intervalSelect = document.getElementById('logRefreshInterval');
     if (intervalSelect) intervalSelect.value = String(logRefreshIntervalMs);
     resetLogPagination();
@@ -127,7 +146,7 @@ function updateAutoRefreshButton() {
 function handleRefreshIntervalChange() {
     const select = document.getElementById('logRefreshInterval');
     if (!select) return;
-    logRefreshIntervalMs = parseInt(select.value, 10) || 2000;
+    logRefreshIntervalMs = parseInt(select.value, 10) || 5000;
     localStorage.setItem('logRefreshInterval', String(logRefreshIntervalMs));
     // Herstart interval met nieuwe waarde als auto-refresh aan staat
     if (logAutoRefreshEnabled) {
@@ -183,6 +202,7 @@ function goToLiveLogs() {
     logPeriod = {since: '', until: ''};
     document.getElementById('logPeriodForm').reset();
     logIsLivePage = true;
+    logHistoryMode = false;
     logAutoScrollEnabled = true;
     updateAutoScrollButton();
     logServerQuery = '';
@@ -199,7 +219,17 @@ function updateLiveBanner() {
     const banner = document.getElementById('logLiveBanner');
     if (!banner) return;
     banner.hidden = logIsLivePage;
+    document.getElementById('logOpenHistory').hidden = logHistoryMode;
     document.getElementById('autoRefreshBtn').disabled = !logIsLivePage;
+}
+
+function openLogHistory() {
+    logHistoryMode = true;
+    logIsLivePage = false;
+    if (logAutoRefreshEnabled) toggleAutoRefresh();
+    updateLiveBanner();
+    resetLogPagination();
+    refreshLogs('page');
 }
 
 // Download logs van huidige pagina als schone .txt (uit data-array, niet uit DOM)
@@ -309,6 +339,7 @@ function jumpToFirstLogMatch() {
         return;
     }
     logServerQuery = textFilter;
+    logHistoryMode = true;
     logIsLivePage = false;
     if (logAutoRefreshEnabled) {
         if (logAutoRefreshInterval) { clearInterval(logAutoRefreshInterval); logAutoRefreshInterval = null; }
@@ -432,11 +463,29 @@ function getLogLoadingLabel(reason = 'page') {
     return I18n.msg`Pagina ${getCurrentLogPage()} wordt geladen...`;
 }
 
+function updateLogFreshness() {
+    const label = document.getElementById('logFreshness');
+    const stale = logRefreshFailed || logConnectionState !== 'online';
+    label.hidden = logLastRead === null;
+    label.toggleAttribute('data-stale', stale);
+    if (logLastRead === null) {
+        label.textContent = '';
+        return;
+    }
+    const time = logLastRead.toLocaleTimeString(I18n.tag, { timeStyle: 'medium' });
+    label.textContent = stale ? I18n.msg`Mogelijk verouderd · Laatst opgehaald om ${time}` :
+        I18n.msg`Laatst opgehaald om ${time}`;
+}
+
 async function refreshLogs(reason = 'page') {
     const logContainer = document.getElementById('logContainer');
     if (!loggingDialog.open || (reason === 'auto' &&
-        (logRequestPending || logContainer.contains(document.activeElement) || logContainer.querySelector('details[open]')))) return;
+        (logConnectionState !== 'online' || logRequestPending || logContainer.contains(document.activeElement) ||
+        logContainer.querySelector('details[open]')))) return;
     const requestId = ++logRequestSequence;
+    logRequestController?.abort();
+    const controller = new AbortController();
+    logRequestController = controller;
     logRequestPending = true;
     const showLoadingIndicator = reason !== 'auto';
     let failed = false;
@@ -452,7 +501,8 @@ async function refreshLogs(reason = 'page') {
             logScanLimitMax,
             Math.max(logScanLimitBase, logPageOffset + (logPageLimit * 5))
         );
-        let url = `/api/logs?limit=${logPageLimit}&offset=${logPageOffset}&service=${encodeURIComponent(selectedService)}&scan_limit=${requestedScanLimit}`;
+        let url = `/api/logs?limit=${logPageLimit}&offset=${logPageOffset}&service=${encodeURIComponent(selectedService)}&scan_limit=${logHistoryMode ? requestedScanLimit : 1000}`;
+        if (!logHistoryMode) url += '&recent=1';
         if (document.getElementById('logHealthChecks')?.checked) url += '&health=include';
         if (document.getElementById('logRoutineMessages')?.checked) url += '&routine=include';
         if (query) url += `&q=${encodeURIComponent(query)}`;
@@ -460,16 +510,19 @@ async function refreshLogs(reason = 'page') {
         for (const [name,value] of Object.entries(logPeriod)) if (value) url += `&${name}=${encodeURIComponent(value)}`;
         if (!logIsLivePage && logAnchor) url += `&anchor=${encodeURIComponent(logAnchor)}`;
 
-        const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const response = await fetch(url, { signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15000)]) });
         const payload = await response.json();
-        const data = response.ok ? payload : null;
-        if (!response.ok && typeof payload.error === 'string') failureMessage = I18n.t(payload.error);
+        const data = response.ok && Array.isArray(payload?.logs) ? payload : null;
+        if (!response.ok && typeof payload?.error === 'string') failureMessage = I18n.t(payload.error);
         if (requestId !== logRequestSequence) return;
 
         failed = !data;
         if (!failed) {
-            allLogs = data.logs || [];
+            const nextLogs = data.logs;
             const pagination = data.pagination || {};
+            const redraw = reason !== 'auto' || logTotalCount !== pagination.total ||
+                JSON.stringify(allLogs) !== JSON.stringify(nextLogs);
+            allLogs = nextLogs;
             logAnchor = pagination.anchor || logAnchor;
             const coverage = document.getElementById('logCoverageFeedback');
             coverage.hidden = !data.coverage?.incomplete && !data.retention?.externalFileLogging;
@@ -487,10 +540,10 @@ async function refreshLogs(reason = 'page') {
             }
 
             updateLogPaginationUI();
-            filterLogs();
+            if (redraw) filterLogs();
 
             // Auto-scroll alleen op live pagina met vergrendeling aan
-            if (logIsLivePage && logAutoScrollEnabled) {
+            if (redraw && logIsLivePage && logAutoScrollEnabled) {
                 scrollLogToTop();
             }
         }
@@ -499,6 +552,9 @@ async function refreshLogs(reason = 'page') {
     } finally {
         if (requestId === logRequestSequence) {
             logRequestPending = false;
+            logRefreshFailed = failed || logConnectionState !== 'online';
+            if (!failed) logLastRead = new Date();
+            updateLogFreshness();
             const error = failed ? (failureMessage || I18n.t('Logs konden niet worden geladen. Probeer opnieuw.')) : '';
             setLogLoadingState(false, error, failed);
         }
@@ -727,7 +783,10 @@ function filterLogs() {
         const icon = levelIcons[log.level] || '•';
         const serviceIcon = serviceIcons[log.service] || '◻️';
         const timestamp = formatTimestamp(log.timestamp);
-        const highlighted = highlightLogText(log.message || '', textFilter);
+        const message = log.kind === 'client-certificate-trust'
+            ? I18n.t('A client did not trust the management HTTPS certificate. Check that it trusts this node’s CA.')
+            : log.message || '';
+        const highlighted = highlightLogText(message, textFilter);
         const metaChips = buildLogMetaChips(log.meta || {}, textFilter);
         const repeated = Number.isSafeInteger(log.repetitions) && log.repetitions > 1
             ? I18n.html`<span class="log-meta-chip" title="${escapeLogHtml(I18n.t('Repeated client certificate trust alerts within one minute'))}">×${log.repetitions}</span>` : '';
@@ -784,6 +843,7 @@ document.getElementById('logPeriodForm').addEventListener('submit', event => {
         return;
     }
     logPeriod = {since: since ? new Date(since).toISOString() : '', until: until ? new Date(until).toISOString() : ''};
+    logHistoryMode = true;
     logIsLivePage = false;
     if (logAutoRefreshEnabled) toggleAutoRefresh();
     resetLogPagination();

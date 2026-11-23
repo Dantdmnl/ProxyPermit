@@ -132,7 +132,8 @@ def archive(root=ROOT, output=None):
             if path.name.startswith('.env') and path.name != '.env.example':
                 continue
             if path.name in ('accounts.json', 'totp-steps.json', 'login-attempts.json', 'tinyproxy-activation.json', 'cluster-protection.json', 'cluster-maintenance.json',
-                             'cluster-plan.json', 'cluster-bootstrap.json', 'proxmox-fencing.json', 'authkey') or path.match('enroll-*.json'):
+                             'cluster-plan.json', 'cluster-bootstrap.json', 'cluster-plan-web-request.json', 'proxmox-fencing.json', 'authkey',
+                             'qdevice-ready.json', 'fencing-tested.json', 'fencing-off-observed.json', 'preflight-current.json') or path.match('enroll-*.json'):
                 continue
             if 'generated' in path.name:
                 continue

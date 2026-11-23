@@ -13,17 +13,18 @@ from scripts.deploy import ha_resource as agent
 class ProtectedResourceTests(unittest.TestCase):
     value = {'interface': 'ens3', 'address': '192.0.2.10'}
 
-    def runner(self, active=True, vip=True, healthy=True, stop=True, mode='control-group'):
+    def runner(self, active=True, vip=True, healthy=True, stop=True, mode='control-group', state=None):
         def command(*args, **_options):
             code, output = 0, ''
-            if args[:3] == ('systemctl', 'is-active', '--quiet'):
-                code = 0 if active else 3
-            elif args[0] == 'ip':
+            if args[0] == 'ip':
                 output = json.dumps([{'addr_info': [{'local': '192.0.2.10'}] if vip else []}])
             elif args[0] == 'runuser':
                 code = 0 if healthy else 1
             elif args[:2] == ('systemctl', 'stop'):
                 code = 0 if stop else 1
+            elif args[-1] == '--property=LoadState,ActiveState':
+                unit_state = state or ('active' if active else 'inactive')
+                output = f'ActiveState={unit_state}\nLoadState=loaded\n'
             elif args[:2] == ('systemctl', 'show'):
                 output = {'KillMode': mode, 'SendSIGKILL': 'yes', 'Restart': 'no'}[args[-2]]
             elif args[:2] == ('systemctl', 'is-enabled'):
@@ -46,6 +47,20 @@ class ProtectedResourceTests(unittest.TestCase):
     def test_running_children_do_not_count_as_stopped(self):
         with patch.object(agent, 'command', side_effect=self.runner(active=True, vip=False)):
             self.assertEqual(agent.resource('stop', self.value), 1)
+
+    def test_failed_or_transitioning_service_is_not_a_verified_stop(self):
+        for state in ('failed', 'activating', 'deactivating', 'unknown'):
+            with self.subTest(state=state), patch.object(
+                    agent, 'command', side_effect=self.runner(vip=False, state=state)):
+                self.assertEqual(agent.resource('stop', self.value), agent.ERROR)
+                self.assertEqual(agent.monitor(self.value), agent.ERROR)
+
+    def test_failed_or_unloaded_unit_status_cannot_confirm_inactivity(self):
+        for code, load in ((1, 'loaded'), (0, 'not-found')):
+            with self.subTest(code=code, load=load), patch.object(agent, 'command', return_value=CompletedProcess(
+                    [], code, f'ActiveState=inactive\nLoadState={load}\n', '')):
+                with self.assertRaisesRegex(ValueError, 'unit state could not be verified'):
+                    agent.keepalived_state()
 
     def test_unsafe_kill_mode_is_rejected_before_start(self):
         with patch.object(agent, 'command', side_effect=self.runner(mode='process')) as command:

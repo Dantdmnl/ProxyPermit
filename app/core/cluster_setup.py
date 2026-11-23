@@ -1,4 +1,5 @@
 """Public prerequisite evidence and secret-free protected-cluster plans."""
+import hashlib
 import ipaddress
 import json
 import os
@@ -9,6 +10,14 @@ import time
 
 PLAN = Path('/etc/proxypermit/cluster-plan.json')
 READINESS = Path('/run/proxypermit-cluster/readiness.json')
+WEB_UNIT = 'proxypermit-cluster-web.service'
+WEB_MARKER = '# Managed by ProxyPermit cluster web preparation\n'
+WEB_REQUEST = Path('/var/lib/proxypermit/cluster-plan-web-request.json')
+WEB_RESULT = Path('/run/proxypermit-cluster-web/result.json')
+WEB_COMMAND = ('/usr/bin/sudo', '-n', '/usr/bin/systemctl', 'start', '--no-block', WEB_UNIT)
+WEB_ACTIONS = ('stage', 'prepare')
+REQUEST_AGE = 120
+JOB_TIMEOUT = 660
 MAX_AGE = 90
 AGENTS = {'proxmox': 'fence_proxypermit_pve', 'libvirt': 'fence_xvm',
           'vmware': 'fence_vmware_rest', 'ipmi': 'fence_ipmilan'}
@@ -63,7 +72,55 @@ def validate_plan(value):
     return result
 
 
-def read_readiness(now=None):
+def require_installed_pair(plan, values):
+    """Check a validated plan against the installed HA network."""
+    if ((values.get('PROXYPERMIT_MANAGED_HA') or '').lower() != 'true'
+            or [node['address'] for node in plan['nodes']] != [values.get('NODE0_ADDRESS'), values.get('NODE1_ADDRESS')]):
+        raise ValueError('The plan must match the installed HA pair in A/B order.')
+    vip = str(ipaddress.IPv4Address(values.get('VIP_ADDRESS', '')))
+    infrastructure = {plan['witness'], plan['fenceAddress']}
+    if len(infrastructure) != 2 or vip in infrastructure:
+        raise ValueError('Use separate addresses for the witness, fencing endpoint and virtual IP.')
+
+
+def plan_hash(plan):
+    """Fingerprint the normalized plan consistently across all three hosts."""
+    return hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+
+
+def web_enabled():
+    from .management_https import root_text
+    try:
+        return root_text(Path('/etc/systemd/system') / WEB_UNIT).startswith(WEB_MARKER)
+    except (OSError, ValueError):
+        return False
+
+
+def plan_revision(value):
+    return isinstance(value, str) and (value == '' or re.fullmatch(r'[0-9a-f]{64}', value) is not None)
+
+
+def web_result(now=None):
+    now = time.time() if now is None else now
+    try:
+        value = protected(WEB_RESULT)
+        if (not isinstance(value, dict) or not isinstance(value.get('id'), str)
+                or not re.fullmatch(r'[0-9a-f]{32}', value['id']) or value.get('action') not in WEB_ACTIONS
+                or value.get('phase') not in ('running', 'complete', 'failed')
+                or type(value.get('created')) is not int or not -5 <= now - value['created'] <= 86400):
+            return None
+        phase = value['phase']
+        if phase == 'running' and now - value['created'] > JOB_TIMEOUT + REQUEST_AGE:
+            phase = 'failed'
+        result = dict(id=value['id'], action=value['action'], phase=phase)
+        if phase == 'complete' and plan_revision(value.get('planHash')) and value['planHash']:
+            result['planHash'] = value['planHash']
+        return result
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
+def read_readiness(now=None, *, include_plan=False):
     """Return fixed public checks only; never expose addresses, targets or credentials."""
     unknown = dict(state='unknown', checks={key: 'unknown' for key in CHECKS})
     try:
@@ -74,7 +131,17 @@ def read_readiness(now=None):
                 or not isinstance(value.get('checks'), dict) or set(value['checks']) != set(CHECKS)
                 or any(state not in ('pass', 'blocked', 'pending', 'unknown') for state in value['checks'].values())):
             return unknown
-        return dict(state='preparation', checked=value['checked'], validFor=max(0, int(value['checked'] + MAX_AGE - now)),
-                    checks={key: value['checks'][key] for key in CHECKS})
+        result = dict(state='preparation', checked=value['checked'], validFor=max(0, int(value['checked'] + MAX_AGE - now)),
+                      checks={key: value['checks'][key] for key in CHECKS})
+        if plan_revision(value.get('planRevision')):
+            result['planRevision'] = value['planRevision']
+        for field in ('packagesPrepared', 'planLocked'):
+            if type(value.get(field)) is bool:
+                result[field] = value[field]
+        if include_plan and 'stagedPlan' in value:
+            plan = validate_plan(value['stagedPlan'])
+            if plan_hash(plan) == result.get('planRevision'):
+                result['stagedPlan'] = plan
+        return result
     except (OSError, ValueError, TypeError, RecursionError):
         return unknown

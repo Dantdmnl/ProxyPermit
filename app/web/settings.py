@@ -7,6 +7,8 @@ import json
 import os
 import re
 import secrets
+import shlex
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -18,10 +20,10 @@ from ..core.management_tls import status as management_tls_status
 from ..core.management_https import available as https_control_available
 from werkzeug.security import generate_password_hash
 
-from ..core.accounts import ROLES, account_role, admin_count, consume_totp, load_accounts, matching_totp_step
+from ..core.accounts import ROLES, account_for, account_role, admin_count, consume_totp, load_accounts, matching_totp_step
 from ..core.files import file_lock
 from ..core.access_safety import read_profile
-from ..core import cluster, cluster_setup
+from ..core import cluster, cluster_setup, cluster_topology
 from ..core.ha import HA_SETUP_ENV, HA_SETUP_REQUEST, HA_SETUP_RESULT, ha_firewall_rules, ha_proxy_config, ha_setup_firewall_rules, ha_topology, setup_revision
 from ..core.tinyproxy import ConfigError, atomic_write
 from .proxy import activation_supported, ha_enabled, has_pending_changes, managed_ha
@@ -85,10 +87,150 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         response.headers['Cache-Control'] = 'no-store'
         return response
 
+    def cluster_web_available():
+        return bool(session.get('user') and secure_access() and managed_ha() and activation_supported()
+                    and not cluster.reserved() and cluster_setup.web_enabled())
+
+    def settings_csrf_valid():
+        token = session.get('settings_csrf', '')
+        supplied = request.headers.get('X-CSRF-Token', '')
+        return bool(token and supplied.isascii() and secrets.compare_digest(token, supplied))
+
     @settings.get('/api/settings/cluster-readiness')
     @requires_auth
     def cluster_readiness():
-        return jsonify(cluster_setup.read_readiness())
+        if cluster.reserved():
+            status = cluster.read_status(include_migration=True)
+            return jsonify(state='migration', phase=status.get('migrationPhase'), validFor=status.get('validFor', 0))
+        web = cluster_web_available()
+        readiness = cluster_setup.read_readiness(include_plan=web)
+        if web:
+            readiness.update(webAvailable=True, job=cluster_setup.web_result())
+        return jsonify(readiness)
+
+    @settings.post('/api/settings/cluster-plan/preview')
+    @requires_auth
+    def preview_cluster_plan():
+        if not session.get('user') or not secure_access() or not managed_ha() or cluster.reserved():
+            return jsonify(error='Protected HA planning is unavailable on this node.'), 403
+        if not settings_csrf_valid():
+            return jsonify(error='Session expired. Reload the page.'), 403
+        try:
+            body = request.stream.read(4097) if request.is_json else b''
+            data = json.loads(body) if len(body) <= 4096 else None
+        except (ValueError, RecursionError):
+            data = None
+        keys = ('nodeAName', 'nodeBName', 'nodeATarget', 'nodeBTarget', 'witness', 'fenceAddress')
+        imported = isinstance(data, dict) and set(data) == {'plan'}
+        try:
+            if imported:
+                plan = cluster_setup.validate_plan(data['plan'])
+                if plan['platform'] != 'proxmox':
+                    raise ValueError('This workflow supports Proxmox plans only.')
+            else:
+                if not isinstance(data, dict) or set(data) != set(keys) or any(
+                        not isinstance(data[key], str) or len(data[key]) > 128 for key in keys):
+                    return jsonify(error='Enter two hostnames, two distinct VM IDs, and two infrastructure IPv4 addresses.'), 400
+                nodes = [dict(name=data[f'node{node}Name'].strip(), target=data[f'node{node}Target'].strip(),
+                              address=os.environ[f'NODE{index}_ADDRESS']) for index, node in enumerate(('A', 'B'))]
+                plan = cluster_setup.validate_plan(dict(version=1, platform='proxmox', nodes=nodes,
+                    witness=data['witness'].strip(), fenceAddress=data['fenceAddress'].strip()))
+            cluster_setup.require_installed_pair(plan, os.environ)
+        except (KeyError, ValueError):
+            if imported:
+                return jsonify(error='This plan is invalid or does not match the configured HA pair.'), 400
+            return jsonify(error='Check the hostnames, distinct VM IDs and infrastructure addresses. Use a separate witness and never use the virtual IP.'), 400
+        fingerprint = cluster_setup.plan_hash(plan)
+        readiness = {}
+        firewall_preview = []
+        if cluster_web_available():
+            role = os.getenv('PROXYPERMIT_HA_NODE')
+            if role not in ('a', 'b') or plan['nodes'][0 if role == 'a' else 1]['name'] != socket.gethostname().split('.')[0]:
+                return jsonify(error='The local hostname in the plan does not match this node.'), 400
+            interface = os.getenv('PROXYPERMIT_HA_INTERFACE', '')
+            if re.fullmatch(r'[A-Za-z0-9_.:-]{1,15}', interface):
+                firewall_preview = [shlex.join(['ufw', *rule]) for rule in cluster_topology.firewall_rules(plan, role, interface)]
+            readiness = cluster_setup.read_readiness()
+        expected = readiness.get('planRevision')
+        can_stage = cluster_setup.plan_revision(expected) and readiness.get('planLocked') is not True
+        if can_stage:
+            session['cluster_plan_review'] = dict(planHash=fingerprint, expected=expected, reviewed=int(time.time()))
+        else:
+            session.pop('cluster_plan_review', None)
+        return jsonify(plan=plan, planHash=fingerprint, canStage=can_stage, firewallPreview=firewall_preview)
+
+    @settings.post('/api/settings/cluster-plan/jobs')
+    @requires_auth
+    def queue_cluster_plan():
+        if not cluster_web_available():
+            return jsonify(error='Local cluster preparation is unavailable on this node.'), 403
+        if not settings_csrf_valid():
+            return jsonify(error='Session expired. Reload the page.'), 403
+        try:
+            body = request.stream.read(8193) if request.is_json else b''
+            data = json.loads(body) if len(body) <= 8192 else None
+        except (ValueError, RecursionError):
+            data = None
+        if (not isinstance(data, dict) or data.get('action') not in cluster_setup.WEB_ACTIONS
+                or data.get('confirmed') is not True or not cluster_setup.plan_revision(data.get('planHash'))
+                or not data['planHash']):
+            return jsonify(error='Review the cluster plan and confirm the local change first.'), 400
+        action, fingerprint = data['action'], data['planHash']
+        expected = fingerprint
+        plan = None
+        try:
+            if action == 'stage':
+                review = session.get('cluster_plan_review') or {}
+                plan = cluster_setup.validate_plan(data.get('plan'))
+                cluster_setup.require_installed_pair(plan, os.environ)
+                if (plan['platform'] != 'proxmox' or review.get('planHash') != fingerprint
+                        or cluster_setup.plan_hash(plan) != fingerprint or not cluster_setup.plan_revision(review.get('expected'))
+                        or not 0 <= time.time() - review.get('reviewed', 0) < 600):
+                    raise ValueError('Invalid reviewed plan.')
+                expected = review['expected']
+            elif cluster_setup.read_readiness().get('planRevision') != fingerprint:
+                raise ValueError('A different local plan is staged.')
+        except (ValueError, TypeError, RecursionError):
+            return jsonify(error='The reviewed cluster plan expired or changed. Review it again.'), 409
+
+        actor = session['user']
+        path, _ = paths()
+        account = account_for(path, actor) if path else None
+        if not account or account_role(account) != 'admin' or not isinstance(account.get('revision'), str):
+            return jsonify(error='Authentication required'), 403
+        error = app.extensions['reauthenticate_admin_change'](data)
+        if error is not None:
+            return error
+        try:
+            with file_lock(str(cluster_setup.WEB_REQUEST) + '.lock'):
+                service = subprocess.run(('/usr/bin/systemctl', 'show', '--property=ActiveState', '--value',
+                    cluster_setup.WEB_UNIT), check=True, capture_output=True, text=True, timeout=3)
+                if service.stdout.strip() not in ('inactive', 'failed'):
+                    return jsonify(error='Local cluster preparation is already queued or running.'), 409
+                pending = cluster_setup.WEB_REQUEST
+                try:
+                    if time.time() - pending.lstat().st_mtime <= cluster_setup.REQUEST_AGE:
+                        return jsonify(error='Local cluster preparation is already queued or running.'), 409
+                    pending.unlink()
+                except FileNotFoundError:
+                    pass
+                identifier = secrets.token_hex(16)
+                job = dict(id=identifier, action=action, plan=plan, expected=expected, username=actor,
+                           accountRevision=account['revision'], created=int(time.time()))
+                atomic_write(pending, json.dumps(job), 0o600)
+                try:
+                    audit('cluster_web_preparation_queued', request_id=identifier, action=action, plan_hash=fingerprint)
+                    subprocess.run(cluster_setup.WEB_COMMAND, check=True, capture_output=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass  # systemd may have accepted the job before the connection timed out.
+                except (OSError, subprocess.SubprocessError):
+                    pending.unlink(missing_ok=True)
+                    raise
+            if action == 'stage':
+                session.pop('cluster_plan_review', None)
+            return jsonify(id=identifier), 202
+        except (OSError, ValueError, TimeoutError, subprocess.SubprocessError):
+            return jsonify(error='Local cluster preparation could not be started. Check the system service.'), 409
 
     @settings.get('/settings')
     def page():
@@ -108,6 +250,10 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
                                editable=bool(path and secure_access() and os.access(path.parent, os.W_OK)),
                                ha_enabled=ha_enabled(), managed_ha=managed_ha(),
                                cluster_reserved=cluster.reserved(),
+                               cluster_web_available=bool(can_admin and cluster_web_available()),
+                               cluster_local_role=os.getenv('PROXYPERMIT_HA_NODE'),
+                               cluster_local_name=socket.gethostname().split('.')[0] if can_admin else '',
+                               cluster_plan_addresses=[os.getenv('NODE0_ADDRESS', ''), os.getenv('NODE1_ADDRESS', '')] if can_admin else [],
                                ha_policy_role=os.getenv('PROXYPERMIT_HA_NODE') if managed_ha() and secure_access() and activation_supported() else None,
                                ha_policy_csrf=session.setdefault('proxy_csrf', secrets.token_urlsafe(32)) if managed_ha() else None,
                                ha_retire_available=bool(can_admin and path and secure_access() and ha_retirement_available()),

@@ -1,6 +1,6 @@
 # HTTPS voor de beheerinterface
 
-[English](../en/management-https.md) Â· [Beheerdershandleiding](beheer.md)
+[English](../en/management-https.md) · [Beheerdershandleiding](beheer.md)
 
 !!! warning "Functie in de prerelease"
 
@@ -15,10 +15,10 @@ Tinyproxy en Keepalived niet.
 
 ## Via de webinterface
 
-Open **Instellingen â†’ HTTPS voor beheer** met een account met de rol
+Open **Instellingen → HTTPS voor beheer** met een account met de rol
 **Systeembeheerder**. Proxybeheerders en monitors kunnen geen HTTPS-taken
 starten of de CA via de beheer-API downloaden. Een bestaande installatie heeft
-eerst Ã©Ã©n ondersteunde applicatie-update nodig om de beperkte systeemhelper
+eerst één ondersteunde applicatie-update nodig om de beperkte systeemhelper
 te installeren.
 
 - Kies op een HTTP-node **HTTPS voorbereiden** en bevestig je huidige wachtwoord
@@ -37,7 +37,7 @@ te installeren.
   vernieuwing blijft ingeschakeld.
 
 Het paneel toont de doelnode en de door het OS goedgekeurde beheernamen. De
-browser kan geen bestandspaden kiezen, rootcommandoâ€™s uitvoeren of certificaten
+browser kan geen bestandspaden kiezen, rootcommando’s uitvoeren of certificaten
 voor willekeurige domeinen laten uitgeven. Extra DNS-namen vereisen goedkeuring
 door de OS-beheerder. Een verlopen plan, gewijzigde configuratie of ingetrokken
 beheerdersrol wordt geweigerd. Wachtwoorden en authenticatorcodes komen nooit
@@ -116,7 +116,7 @@ sudo journalctl --namespace=proxypermit \
 ```
 
 Applicatie-updates behouden TLS. Terugdraaien behoudt de huidige certificaatkoppeling
-en weigert releases van vÃ³Ã³r deze werkwijze. Verwijderen ruimt overeenkomende
+en weigert releases van vóór deze werkwijze. Verwijderen ruimt overeenkomende
 eigen vernieuwings- en herstelunits op en bewaart certificaten in `/etc/proxypermit`.
 
 ## HSTS en eigen certificaten

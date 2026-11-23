@@ -171,8 +171,8 @@
             ? 'Wijzigingen zijn pas actief na publiceren. De bestaande regels worden niet gewist.'
             : 'Kies eerst een filterbestand om een allowlist of blocklist te gebruiken.');
         [['Filtering', modes[result.summary.filterMode]],
-            ['Patroontype', filtering ? result.summary.filterType.toUpperCase() : 'â€”'],
-            ['Filterdoel', filtering ? (result.summary.filterURLs ? 'HTTP-URLâ€™s' : 'Domeinen') : 'â€”']].forEach(([label, value]) => {
+            ['Patroontype', filtering ? result.summary.filterType.toUpperCase() : '—'],
+            ['Filterdoel', filtering ? (result.summary.filterURLs ? 'HTTP-URL’s' : 'Domeinen') : '—']].forEach(([label, value]) => {
             const card = document.createElement('div'), small = document.createElement('small'), strong = document.createElement('strong');
             small.textContent = I18n.t(label); strong.textContent = I18n.t(value); card.append(small, strong); $('summary').append(card);
         });
@@ -215,7 +215,7 @@
         if (!spec) return;
         const value = spec.name === 'Upstream' ? upstreamValue() : ($('choice').hidden ? $('value') : $('choice')).value.trim();
         if (!value || /[\r\n]/.test(value)) {
-            return settingFeedback(spec.name === 'Upstream' ? 'Gebruik host:poort en eventueel een bestemming. Direct verbinden vereist een bestemming.' : 'Vul Ã©Ã©n regel met geldige argumenten in.', true);
+            return settingFeedback(spec.name === 'Upstream' ? 'Gebruik host:poort en eventueel een bestemming. Direct verbinden vereist een bestemming.' : 'Vul één regel met geldige argumenten in.', true);
         }
         const lines = $('config').value.split('\n'), pattern = new RegExp('^\\s*' + spec.name + '\\s+', 'i');
         if (spec.name === 'FilterDefaultDeny' && !lines.some(line => /^\s*Filter\s+\S/i.test(line))) {
@@ -270,7 +270,7 @@
         filterStaged = result.staged;
         $('filter-discard').hidden = !result.draft;
         const modes = { allowlist: 'Allowlist', blocklist: 'Blocklist' };
-        $('filter-mode').textContent = I18n.t(modes[result.filterMode]) + ' Â· ' + result.filterType.toUpperCase();
+        $('filter-mode').textContent = I18n.t(modes[result.filterMode]) + ' · ' + result.filterType.toUpperCase();
         showValidation(result); message('Filterbestand geladen.');
     }
     $('filter-load').addEventListener('click', () => {

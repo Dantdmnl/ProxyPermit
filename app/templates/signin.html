@@ -29,8 +29,10 @@
             </div>
         </header>
         <h1 id="signinTitle">{{ _('Inloggen') }}</h1>
+        <p id="signin-node" class="signin-node" {% if not management_node_role %}hidden{% endif %}>{{ _('Node A') if management_node_role == 'a' else _('Node B') if management_node_role == 'b' else '' }}{% if public_node_label %} · {{ public_node_label }}{% endif %}</p>
         <form id="loginForm" method="post" novalidate
               data-destination="{{ destination }}"
+              data-node="{{ management_node_role }}"
               data-missing="{{ _('Vul gebruikersnaam en wachtwoord in') }}"
               data-otp="{{ _('Voer de code uit je authenticator-app in.') }}"
               data-failure="{{ _('Inloggen mislukt') }}"
@@ -54,7 +56,7 @@
                 </div>
                 <small id="loginOtpHint">{{ _('Voer de code uit je authenticator-app in.') }}</small>
             </div>
-            <p class="signin-feedback" id="loginFeedback" role="alert"></p>
+            <p class="signin-feedback" id="loginFeedback" role="alert">{% if request.args.get('node_changed') == '1' %}{{ _('The management node changed. Sign in using this node’s account.') }}{% endif %}</p>
             <button type="submit" class="button button-primary" id="loginButton" disabled>{{ _('Inloggen') }}</button>
             <noscript><p>{{ _('Schakel JavaScript in om in te loggen.') }}</p></noscript>
         </form>
