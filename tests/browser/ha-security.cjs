@@ -12,6 +12,21 @@ const python = process.env.PP_TEST_PYTHON || path.join(root, '.venv', process.pl
 const password = 'isolated HA browser passphrase';
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+async function assertCredentialSpacing(dialog) {
+    const password = await dialog.locator('input[type="password"]').boundingBox();
+    const footer = await dialog.locator('.workspace-dialog-footer').boundingBox();
+    const [cancel, confirm] = await Promise.all(
+        (await dialog.locator('.workspace-dialog-footer button').all()).map(button => button.boundingBox())
+    );
+    assert.ok(footer.y - (password.y + password.height) >= 12, 'Keep breathing room below the password field');
+    assert.ok(cancel.height >= 40 && confirm.height >= 40, 'Keep comfortable button targets');
+    const gap = Math.abs(confirm.y - cancel.y) < 2
+        ? confirm.x - (cancel.x + cancel.width)
+        : confirm.y - (cancel.y + cancel.height);
+    assert.ok(gap >= 11, 'Separate cancel and confirm when adjacent or wrapped');
+    assert.ok(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth));
+}
+
 async function main() {
     const state = mkdtempSync(path.join(os.tmpdir(), 'proxypermit-ha-browser-'));
     const file = name => path.join(state, name);
@@ -41,7 +56,10 @@ async function main() {
             'proxy.activation_supported = lambda: True',
             'settings.activation_supported = lambda: True',
             'import json,os; from pathlib import Path; from app.core import cluster',
-            'cluster.read_status = lambda: json.loads(Path(os.environ["PP_TEST_CLUSTER_STATUS"]).read_text())',
+            'cluster.read_status = lambda **kwargs: json.loads(Path(os.environ["PP_TEST_CLUSTER_STATUS"]).read_text())',
+            'cluster.reserved = lambda: bool(cluster.read_status().get("migrationPhase"))',
+            'settings.cluster_setup.web_enabled = lambda: Path(os.environ["PP_TEST_CLUSTER_STATUS"]).with_name("cluster-web-enabled").exists()',
+            'settings.cluster_setup.read_readiness = lambda **kwargs: dict(planRevision="")',
             'settings.management_tls_status = lambda: json.loads(Path(os.environ["PP_TEST_TLS_STATUS"]).read_text())',
             'from app.core import management_https as https_control',
             'from app.web import https_settings; import subprocess,types,time',
@@ -60,6 +78,8 @@ async function main() {
             ...process.env, FLASK_SECRET_KEY: 'isolated-ha-browser-fixture', ENABLE_AUTH: 'true', ENABLE_RADIUS: 'false',
             AUTH_ACCOUNTS_FILE: file('accounts.json'), SESSION_COOKIE_SECURE: 'false', MANAGER_SCHEME: 'http',
             DEPLOYMENT_MODE: 'ha', PROXYPERMIT_MANAGED_HA: 'true', PROXYPERMIT_HA_NODE: 'a', DEMO_MODE: 'true',
+            PROXYPERMIT_HA_INTERFACE: 'ens18',
+            PROXYPERMIT_PUBLIC_NODE_LABEL: 'Lab West',
             NODE0_ADDRESS: '192.0.2.11', NODE1_ADDRESS: '192.0.2.12', VIP_ADDRESS: '192.0.2.10',
             WHITELIST_PATH: file('filter.txt'), TINYPROXY_CONFIG_PATH: file('tinyproxy.conf'),
             SESSION_STATE_FILE: file('session.json'), AUDIT_LOG_PATH: file('audit.log'),
@@ -74,6 +94,21 @@ async function main() {
         }
         browser = await chromium.launch(process.env.PLAYWRIGHT_CHANNEL ? { channel: process.env.PLAYWRIGHT_CHANNEL } : {});
         const page = await browser.newPage();
+        await page.goto(base + '/?lang=en');
+        assert.equal(await page.locator('#signin-node').textContent(), 'Node A · Lab West');
+        await page.locator('#loginUsername').fill('admin');
+        await page.locator('#loginPassword').fill(password);
+        await page.locator('.signin-languages [lang="nl"]').click();
+        await page.waitForFunction(() => document.documentElement.lang === 'nl');
+        assert.equal(await page.locator('#loginPassword').inputValue(), password);
+        await page.route('**/api/auth/login', async route => {
+            assert.equal(route.request().headers()['x-proxypermit-login-node'], 'a');
+            await route.fulfill({ status: 409, json: { nodeChanged: true } });
+        }, { times: 1 });
+        await page.locator('#loginButton').click();
+        await page.waitForURL(url => url.searchParams.get('lang') === 'nl' && url.searchParams.get('node_changed') === '1');
+        await page.locator('#loginFeedback').filter({ hasText: 'De beheernode is gewisseld' }).waitFor();
+        assert.equal(await page.locator('#loginPassword').inputValue(), '');
         let readinessLifetime = 90;
         await page.route('**/api/settings/cluster-readiness', route => route.fulfill({ json: {
             state: 'preparation', validFor: readinessLifetime,
@@ -87,10 +122,48 @@ async function main() {
                     seed();
                     await page.setViewportSize({ width, height: 740 });
                     await page.goto(base + '/settings?lang=' + language);
+                    assert.equal(await page.locator('#ha-management-node').textContent(), 'Node A · Lab West');
                     await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
                     await page.locator('#cluster-preparation > summary').click();
                     await page.locator('[data-cluster-check="time"]').filter({ hasText: language === 'en' ? 'Action required' : 'Actie nodig' }).waitFor();
                     assert.equal(await page.locator('[data-cluster-check="powerTest"]').textContent(), language === 'en' ? 'Still to verify' : 'Nog te controleren');
+                    if (width === 360 && theme === 'dark') {
+                        const guide = page.locator('.cluster-plan-guide');
+                        await guide.locator('summary').click();
+                        for (const port of ['5405', '5403', '8006']) {
+                            await guide.getByText(port, { exact: false }).waitFor();
+                        }
+                        const form = page.locator('#cluster-plan-form');
+                        for (const [name, value] of Object.entries({ nodeAName: 'node-a', nodeBName: 'node-b',
+                            nodeATarget: '8101', nodeBTarget: '8102', witness: '192.0.2.13', fenceAddress: '192.0.2.14' })) {
+                            await form.locator(`[name="${name}"]`).fill(value);
+                        }
+                        await form.locator('button[type=submit]').click();
+                        const link = page.locator('#cluster-plan-download');
+                        await link.waitFor();
+                        const fingerprint = await page.locator('#cluster-plan-fingerprint').textContent();
+                        assert.match(fingerprint, /^[a-f0-9]{64}$/);
+                        const downloadEvent = page.waitForEvent('download');
+                        await link.click();
+                        const planFile = await downloadEvent;
+                        assert.equal(planFile.suggestedFilename(), 'cluster-plan.json');
+                        const plan = JSON.parse(readFileSync(await planFile.path(), 'utf8'));
+                        assert.deepEqual(plan.nodes.map(node => node.address), ['192.0.2.11', '192.0.2.12']);
+                        await form.locator('[name=witness]').fill('192.0.2.10');
+                        await link.waitFor({ state: 'hidden' });
+                        await form.locator('button[type=submit]').click();
+                        await page.locator('#cluster-plan-feedback[data-error]').waitFor();
+                        await page.locator('#cluster-plan-file').setInputFiles(await planFile.path());
+                        await link.waitFor();
+                        assert.equal(await page.locator('#cluster-plan-fingerprint').textContent(), fingerprint);
+                        assert.equal(await form.locator('[name=witness]').inputValue(), '192.0.2.13');
+                        await page.locator('#cluster-plan-file').setInputFiles({ name: 'foreign.json',
+                            mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
+                                ...plan, nodes: [{ ...plan.nodes[0], address: '192.0.2.99' }, plan.nodes[1]]
+                            })) });
+                        await page.locator('#cluster-plan-feedback[data-error]').waitFor();
+                        await link.waitFor({ state: 'hidden' });
+                    }
                     await page.locator('#management-tls-title').filter({ hasText: language === 'en' ? 'Management HTTPS' : 'HTTPS voor beheer' }).waitFor();
                     assert.equal(await page.locator('.management-tls-fingerprint').first().textContent(), 'c'.repeat(64));
                     const button = page.locator('[data-ha-policy="rotate-key"]');
@@ -101,6 +174,7 @@ async function main() {
                     const dialog = page.locator('#ha-key-dialog');
                     const input = dialog.locator('[name="password"]');
                     await input.waitFor();
+                    await assertCredentialSpacing(dialog);
                     assert.equal(await input.evaluate(el => document.activeElement === el), true);
                     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
                     const box = await dialog.boundingBox();
@@ -121,6 +195,7 @@ async function main() {
                     const revocation = page.locator('#ha-disconnect-dialog');
                     const current = revocation.locator('[name="password"]');
                     await current.waitFor();
+                    await assertCredentialSpacing(revocation);
                     assert.equal(await current.evaluate(el => document.activeElement === el), true);
                     const bounds = await revocation.boundingBox();
                     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width + 1);
@@ -138,6 +213,7 @@ async function main() {
                     const httpsDialog = page.locator('#https-dialog');
                     const httpsPassword = httpsDialog.locator('[name="password"]');
                     await httpsPassword.waitFor();
+                    await assertCredentialSpacing(httpsDialog);
                     assert.equal(await httpsPassword.evaluate(el => document.activeElement === el), true);
                     await httpsPassword.fill('draft');
                     page.once('dialog', event => event.dismiss());
@@ -206,6 +282,19 @@ async function main() {
         await page.context().setOffline(true);
         await page.locator('#ha-protection-status').filter({ hasText: 'De clusterbescherming kon niet worden bevestigd' }).waitFor();
         await page.context().setOffline(false);
+        writeFileSync(file('cluster-status.json'), JSON.stringify({
+            state: 'degraded', validFor: 20, quorate: true, witnessConnected: false,
+            fencingConfigured: true, fencingReady: true, policySafe: true
+        }));
+        for (const [language, reason] of [
+            ['en', 'Witness connection not confirmed'],
+            ['nl', 'Verbinding met de witness niet bevestigd']
+        ]) {
+            await page.goto(base + '/settings?lang=' + language);
+            const protection = page.locator('#ha-protection-status');
+            await protection.filter({ hasText: reason }).waitFor();
+            assert.ok(!(await protection.textContent()).includes(language === 'en' ? 'No cluster quorum' : 'Geen quorum in het cluster'));
+        }
         writeFileSync(file('cluster-status.json'), JSON.stringify({ state: 'unsafe', validFor: 20 }));
         await page.reload();
         await page.locator('#ha-protection-status').filter({ hasText: 'Tegenstrijdig clusterbezit gedetecteerd' }).waitFor();
@@ -229,6 +318,28 @@ async function main() {
         assert.equal((await proxyManager.request.get(base + '/api/settings/https/ca')).status(), 403);
         assert.equal((await proxyManager.request.post(base + '/api/settings/https/jobs', { data: { action: 'renew', password } })).status(), 403);
         await proxyManager.close();
+        // A stale console keeps its open form in place and sends no further writes.
+        await page.goto(base + '/settings?lang=nl');
+        await page.locator('.ha-maintenance > summary').click();
+        await page.locator('[data-ha-policy="disconnect"]').click();
+        const pendingPassword = page.locator('#ha-disconnect-form [name="password"]');
+        await pendingPassword.fill('local unsaved fixture');
+        await page.route('**/connection', route => route.fulfill({
+            status: 204, headers: { 'X-ProxyPermit-Reachable': '1', 'X-ProxyPermit-Node': 'b' }
+        }));
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        const notice = page.locator('#connectivityNotice');
+        await notice.locator('strong').filter({ hasText: 'De beheernode is gewisseld' }).waitFor();
+        assert.equal(await pendingPassword.inputValue(), 'local unsaved fixture');
+        let requestsAfterSwitch = 0;
+        await page.route('**/api/auth/logout', route => { requestsAfterSwitch++; return route.abort(); });
+        assert.equal(await page.evaluate(async () => {
+            try { await fetch('/api/auth/logout', { method: 'POST' }); return false; }
+            catch { return true; }
+        }), true);
+        assert.equal(requestsAfterSwitch, 0);
+        await page.unroute('**/connection');
+        await page.unroute('**/api/auth/logout');
         // A lost activation response must not strand the browser on HTTP or replay the POST.
         let activationPosts = 0;
         await page.route('**/api/settings/https', route => route.fulfill({ json: {
@@ -249,6 +360,86 @@ async function main() {
         assert.equal(await page.locator('#https-feedback a').getAttribute('href'), secure.href);
         assert.equal(await page.locator('[data-https-transition]').getAttribute('href'), secure.href);
         assert.equal(activationPosts, 1);
+        await page.unroute('**/api/settings/cluster-readiness');
+        writeFileSync(file('cluster-web-enabled'), '');
+        let planRevision = '', job, stagedPlan, packagesPrepared = false;
+        await page.route('**/api/settings/cluster-readiness', route => route.fulfill({ json: {
+            state: 'preparation', validFor: 90, webAvailable: true, planRevision, packagesPrepared,
+            planLocked: packagesPrepared, checks: { time: 'pass' }, job, stagedPlan
+        } }));
+        await page.route('**/api/settings/cluster-plan/jobs', async route => {
+            const data = route.request().postDataJSON();
+            assert.equal(data.password, password);
+            assert.equal(data.confirmed, true);
+            assert.match(route.request().headers()['x-csrf-token'], /.+/);
+            const id = data.action === 'stage' ? 'a'.repeat(32) : 'b'.repeat(32);
+            if (data.action === 'stage') {
+                assert.equal(data.plan.nodes[0].name, os.hostname().split('.')[0]);
+                planRevision = data.planHash;
+                stagedPlan = data.plan;
+            } else {
+                assert.equal(data.action, 'prepare');
+                assert.equal(data.planHash, planRevision);
+                assert.equal(data.plan, undefined);
+                packagesPrepared = true;
+            }
+            job = { id, action: data.action, phase: 'complete' };
+            await route.fulfill({ status: 202, json: { id } });
+        });
+        await page.setViewportSize({ width: 360, height: 740 });
+        await page.goto(base + '/settings?lang=nl');
+        await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+        await page.locator('#cluster-preparation > summary').click();
+        const clusterForm = page.locator('#cluster-plan-form');
+        assert.equal(await clusterForm.locator('[name=nodeAName]').inputValue(), os.hostname().split('.')[0]);
+        for (const [name, value] of Object.entries({ nodeBName: 'node-b', nodeATarget: '8101',
+            nodeBTarget: '8102', witness: '192.0.2.13', fenceAddress: '192.0.2.14' })) {
+            await clusterForm.locator(`[name="${name}"]`).fill(value);
+        }
+        await clusterForm.locator('[type=submit]').click();
+        const firewall = page.locator('#cluster-plan-firewall');
+        await firewall.locator('summary').click();
+        await firewall.locator('code').filter({ hasText: /port 5405 proto udp/ }).waitFor();
+        assert.ok(await firewall.evaluate(element => element.scrollWidth <= element.clientWidth));
+        const clusterDialog = page.locator('#cluster-plan-dialog');
+        for (const [button, result] of [['#cluster-plan-stage', 'Het plan is op deze node opgeslagen.'],
+            ['#cluster-plan-prepare', 'De clusterpakketten zijn voorbereid op deze node.']]) {
+            await page.locator(button).click();
+            assert.equal(await clusterDialog.locator('[name=password]').evaluate(el => document.activeElement === el), true);
+            await assertCredentialSpacing(clusterDialog);
+            await clusterDialog.locator('[name=password]').fill(password);
+            await clusterDialog.locator('[type=submit]').click();
+            await page.locator('#cluster-plan-job-status').filter({ hasText: result }).waitFor();
+        }
+        assert.equal(await page.locator('#cluster-local-saved code').textContent(), planRevision);
+        assert.equal(await page.locator('#cluster-plan-prepare').isDisabled(), true);
+        await clusterForm.locator('[name=witness]').fill('192.0.2.55');
+        await page.locator('#cluster-plan-load').click();
+        assert.equal(await clusterForm.locator('[name=witness]').inputValue(), stagedPlan.witness);
+        await page.unroute('**/api/settings/cluster-readiness');
+        writeFileSync(file('cluster-status.json'), JSON.stringify({
+            state: 'unknown', migrationPhase: 'reserving', validFor: 20
+        }));
+        for (const [language, theme, width] of [['en', 'light', 1440], ['nl', 'dark', 360]]) {
+            await page.setViewportSize({ width, height: 740 });
+            await page.goto(base + '/settings?lang=' + language);
+            await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+            const migration = page.locator('#cluster-migration');
+            await migration.locator('summary').focus();
+            await page.keyboard.press('Enter');
+            await migration.getByText(language === 'en' ? 'Reservation interrupted or in progress.' :
+                'De reservering loopt nog of is onderbroken.', { exact: false }).waitFor();
+            await migration.locator('code').filter({ hasText: '--phase status' }).waitFor();
+            assert.ok(await migration.evaluate(element => element.scrollWidth <= element.clientWidth));
+        }
+        await page.route('**/api/settings/cluster-readiness', route => route.fulfill({ json: {
+            state: 'migration', phase: 'activating', validFor: 1
+        } }));
+        await page.goto(base + '/settings?lang=en');
+        await page.locator('#cluster-migration > summary').click();
+        const phase = page.locator('#cluster-migration-phase');
+        await phase.filter({ hasText: 'Activation requested.' }).waitFor();
+        await phase.filter({ hasText: 'The local migration phase could not be confirmed.' }).waitFor();
         console.log('Playwright HA: NL/EN, light/dark, mobile/desktop, focus, discard confirmation, reauthentication and monitor restrictions passed.');
     } finally {
         if (browser) await browser.close();

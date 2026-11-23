@@ -1,4 +1,6 @@
+import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +37,35 @@ class ProxyApiTests(unittest.TestCase):
     def token_and_revision(self):
         data = self.client.get('/api/proxy/config').get_json()
         return {'X-CSRF-Token': data['csrfToken']}, data['revision']
+
+    def test_summary_distinguishes_protected_standby_from_fault(self):
+        with patch.dict(os.environ, DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true',
+                        PROXYPERMIT_HA_NODE='b', VIP_ADDRESS='192.0.2.10'), \
+                patch.object(main.cluster, 'reserved') as reserved, \
+                patch.object(main.cluster, 'read_status') as evidence, \
+                patch.object(main, 'proxy_responsive') as responsive, \
+                patch.object(main.whitelist_manager, 'get_service_status', return_value={'running': True, 'status': 'active'}), \
+                patch('subprocess.run') as run:
+            for protected, proof, owns, running, healthy, expected in (
+                (True, 'protected', False, False, True, 'BACKUP'),
+                (True, 'protected', True, True, True, 'MASTER'),
+                (True, 'protected', True, False, True, 'FAULT'),
+                (True, 'protected', False, False, False, 'FAULT'),
+                (True, 'unknown', False, False, True, 'UNKNOWN'),
+                (True, 'unsafe', False, False, True, 'FAULT'),
+                (False, 'unknown', False, False, True, 'FAULT'),
+                (False, 'unknown', False, True, True, 'BACKUP'),
+            ):
+                with self.subTest(expected=expected, protected=protected, proof=proof, owns=owns, healthy=healthy):
+                    reserved.return_value = protected
+                    evidence.return_value = {'state': proof}
+                    responsive.return_value = healthy
+                    addresses = [{'addr_info': [{'local': '192.0.2.10'}]}] if owns else []
+                    run.side_effect = [subprocess.CompletedProcess([], 0, json.dumps(addresses)),
+                                       subprocess.CompletedProcess([], 0 if running else 3)]
+                    result = self.client.get('/api/status')
+                    self.assertEqual(result.status_code, 200)
+                    self.assertEqual(result.json['current_state'], expected)
 
     def test_rule_mutations_reject_stale_ids_without_writing_or_restarting(self):
         self.config.write_text(self.content.replace('fnmatch', 'ere'), encoding='utf-8')

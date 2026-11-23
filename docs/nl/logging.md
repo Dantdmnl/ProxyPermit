@@ -38,6 +38,17 @@ verwijdert deze oorspronkelijke records niet.
 
 ## Zoeken, datums en archieven
 
+Livelogs openen met 100 regels per pagina en lezen maximaal 1.000 recente
+records per bron. Kies **Bewaarde logs bekijken** voor een grotere zoekomvang
+zonder automatisch verversen. **Zoek op server** en **Periode** doorzoeken
+eveneens de bewaarde logs.
+
+Onderaan staat wanneer je browser de resultaten voor het laatst heeft opgehaald.
+Valt de verbinding weg of mislukt het verversen? Dan blijven de regels zichtbaar
+met de melding dat ze mogelijk verouderd zijn. Zodra de server weer bereikbaar
+is, worden livelogs automatisch bijgewerkt als automatisch verversen aanstaat.
+Gebruik **Nu verversen** als je automatisch verversen hebt gepauzeerd.
+
 Open **Logs → Periode**, vul begin en einde in je lokale tijdzone in en pas de
 periode toe. De browser verstuurt UTC-tijdstempels. Historisch zoeken pauzeert
 automatisch vernieuwen; **Terug naar live** wist de periode. Bron-, niveau- en
@@ -54,7 +65,8 @@ periode en controleer de rechten op de bronnen. Het begrensde aantal resultaten
 is niet het totale aantal records in alle bewaarde geschiedenis.
 
 De logweergave bundelt herhaalde meldingen van clients die het certificaat niet
-vertrouwen per minuut en toont het aantal. Succesvolle start- en stopmeldingen
+vertrouwen per minuut. Je ziet het aantal en een korte uitleg over het vertrouwen
+van de node-CA op de client. Succesvolle start- en stopmeldingen
 van de periodieke clusterstatuscontrole zijn standaard verborgen. Andere TLS-fouten
 en mislukte statuscontroles blijven zichtbaar. Kies **Weergave en export →
 Routineberichten en herhalingen tonen**, of zoek op tekst, om de afzonderlijke

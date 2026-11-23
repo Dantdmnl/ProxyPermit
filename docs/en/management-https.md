@@ -1,6 +1,6 @@
 # HTTPS for the management interface
 
-[Nederlands](../nl/beheer-https.md) Â· [Administration](administration.md)
+[Nederlands](../nl/beheer-https.md) · [Administration](administration.md)
 
 !!! warning "Pre-release feature"
 
@@ -14,7 +14,7 @@ renewal does not change replication pins or restart Tinyproxy and Keepalived.
 
 ## Use the web interface
 
-Open **Settings â†’ Management HTTPS** using a **System administrator** account.
+Open **Settings → Management HTTPS** using a **System administrator** account.
 Proxy managers and monitors cannot start HTTPS jobs or download the CA through
 the management API. Existing installations need one supported app upgrade to
 install the restricted system helper.

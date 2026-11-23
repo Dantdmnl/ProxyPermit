@@ -6,6 +6,7 @@
     const nativeFetch = window.fetch.bind(window);
     let notice, state = 'online', pending = null, timer, uncertain = false;
     let generation = 0;
+    const pageNode = () => document.querySelector('[data-management-node]')?.dataset.managementNode;
 
     function show() {
         // Elements outside a modal dialog are inert, even in the popover layer.
@@ -17,12 +18,15 @@
             parent.append(notice);
         }
         notice.dataset.state = state;
+        const switched = state === 'node-changed';
         notice.querySelector('#connectivityTitle').textContent = notice.dataset[
-            state === 'online' ? (uncertain ? 'uncertain' : 'restored') : state === 'offline' ? 'offline' : 'unavailable'];
-        notice.querySelector('[data-connection-detail]').hidden = state === 'online';
+            switched ? 'nodeChanged' : state === 'online' ? (uncertain ? 'uncertain' : 'restored') : state === 'offline' ? 'offline' : 'unavailable'];
+        notice.querySelector('[data-connection-detail]').hidden = switched || state === 'online';
         notice.querySelector('[data-connection-restored]').hidden = state !== 'online';
         notice.querySelector('[data-connection-uncertain]').hidden = !uncertain;
-        notice.querySelector('[data-connection-retry]').hidden = state === 'online';
+        notice.querySelector('[data-connection-node-detail]').hidden = !switched;
+        notice.querySelector('[data-connection-signin]').hidden = !switched;
+        notice.querySelector('[data-connection-retry]').hidden = switched || state === 'online';
         notice.querySelector('[data-connection-dismiss]').hidden = state !== 'online';
         notice.dataset.visible = '';
         // A manual popover stays above open dialogs without moving keyboard focus.
@@ -30,6 +34,7 @@
     }
 
     function change(next) {
+        if (state === 'node-changed') return;
         const previous = state;
         state = next;
         if (next !== 'online' || previous !== 'online') show();
@@ -38,11 +43,11 @@
 
     function schedule() {
         clearTimeout(timer);
-        timer = setTimeout(check, state === 'online' ? 15000 : 5000);
+        if (state !== 'node-changed') timer = setTimeout(check, state === 'online' ? 15000 : 5000);
     }
 
     async function check() {
-        if (!notice) return;
+        if (!notice || state === 'node-changed') return;
         if (!navigator.onLine) { change('offline'); schedule(); return; }
         if (pending) return pending;
         const current = generation;
@@ -55,8 +60,12 @@
                     cache: 'no-store', credentials: 'omit', redirect: 'error',
                     signal: AbortSignal.timeout(4000)
                 });
-                if (generation === current) change(response.status === 204 &&
-                    response.headers.get('X-ProxyPermit-Reachable') === '1' ? 'online' : 'unavailable');
+                if (generation === current) {
+                    const reachable = response.status === 204 && response.headers.get('X-ProxyPermit-Reachable') === '1';
+                    const role = response.headers.get('X-ProxyPermit-Node');
+                    const switched = reachable && pageNode() && role && role !== pageNode();
+                    change(switched ? 'node-changed' : reachable ? 'online' : 'unavailable');
+                }
             } catch {
                 if (generation === current) change(navigator.onLine ? 'unavailable' : 'offline');
             } finally {
@@ -77,15 +86,25 @@
         const method = (options?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
         const unsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(method);
         const validation = method === 'POST' && ['/api/validate', '/api/proxy/config/validate',
-            '/api/settings/ha/preview', '/api/merge/remote-preview', '/api/proxy/ha-replication/status', '/api/proxy/ha-policy/status'].includes(url.pathname);
+            '/api/settings/ha/preview', '/api/settings/cluster-plan/preview', '/api/merge/remote-preview',
+            '/api/proxy/ha-replication/status', '/api/proxy/ha-policy/status'].includes(url.pathname);
         const mutation = unsafeMethod && !validation;
         if (local && unsafeMethod && state !== 'online') {
             show();
             void check();
-            throw new TypeError(notice.dataset[state === 'offline' ? 'offline' : 'unavailable']);
+            throw new TypeError(notice.dataset[state === 'node-changed' ? 'nodeChanged' : state === 'offline' ? 'offline' : 'unavailable']);
+        }
+        if (local && url.pathname.startsWith('/api/') && pageNode()) {
+            const headers = new Headers(options?.headers ?? (input instanceof Request ? input.headers : undefined));
+            headers.set('X-ProxyPermit-Page-Node', pageNode());
+            options = { ...options, headers };
         }
         try {
             const response = await nativeFetch(input, options);
+            if (local && response.status === 409 && response.headers.get('X-ProxyPermit-Node-Changed') === '1' && notice) {
+                change('node-changed');
+                schedule();
+            }
             if (local && response.status >= 500) {
                 if (mutation) { uncertain = true; if (notice) show(); }
                 void check();
@@ -116,6 +135,11 @@
             } catch { /* Only a same-host, same-port HTTPS upgrade is accepted. */ }
         });
         notice.querySelector('[data-connection-retry]').addEventListener('click', check);
+        notice.querySelector('[data-connection-signin]').addEventListener('click', () => {
+            const next = new URL(location.href);
+            next.searchParams.set('node_changed', '1');
+            location.replace(next);
+        });
         new MutationObserver(() => {
             if ('visible' in notice.dataset) show();
         }).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });

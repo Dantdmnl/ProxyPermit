@@ -310,6 +310,22 @@ oorspronkelijke standby-instelling en geeft hij de reservering vrij. Wacht op ee
 stabiele clusterstatus voordat je de tweede node bijwerkt. Gedeeld beleid wordt
 nog steeds op A gepubliceerd; VIP-overname geeft B geen schrijfrechten.
 
+Na een afgeronde clusterupgrade kun je de vorige applicatieversie
+terugzetten. Gebruik de back-upnaam die de laatste clusterupgrade heeft
+getoond. Voer dezelfde installer uit vanuit de uitgepakte bronmap:
+
+```bash
+sudo bash install.sh --rollback BACKUPNAAM --cluster-maintenance --plan
+sudo bash install.sh --rollback BACKUPNAAM --cluster-maintenance --apply
+```
+
+Controleer in het plan welke versie wordt teruggezet. Eerst neemt de andere
+node het VIP over. De installer bouwt de vorige applicatieversie opnieuw op
+met de huidige configuratie, accounts en filterregels. Fencing, firewallregels
+en het beheeradres blijven behouden. Controleer vooraf of de vorige
+applicatieversie de huidige gegevens ondersteunt. De installer heeft het
+bewijsbestand van de afgeronde clusterupgrade nodig.
+
 Bij een onderbroken of mislukte update blijft de onderhoudsreservering staan.
 Deze verloopt niet automatisch, zodat de andere node niet tegelijk in onderhoud
 kan gaan. Controleer het back-upmanifest van de installer en herstel eerst de
@@ -322,14 +338,53 @@ sudo .venv/bin/python -m scripts.deploy.cluster_maintenance --recover
 
 Deze opdracht controleert de lokale beheerinterface en proxy, de beveiliging op
 de andere node en het eigenaarschap van de reservering voordat hij standby
-herstelt. Gewijzigde beheerdersinstellingen of een onduidelijk herstelbestand
+herstelt. Bij tijdelijk onbevestigde bescherming controleert ProxyPermit tot
+20 seconden opnieuw voordat het herstelbestand behouden blijft. Gewijzigde
+beheerdersinstellingen of een onduidelijk herstelbestand
 worden geweigerd. Verwijder `/etc/proxypermit/cluster-maintenance.json` niet,
 wis geen reservering van de andere node en start Keepalived niet rechtstreeks om
 een weigering te omzeilen. Onderzoek zulke situaties via OS-clusterbeheer en
-onafhankelijke beheertoegang. Gewone installerrollback, HA-inrichting, het uit
-dienst nemen van een node en de-installatie blijven op beveiligde nodes
-geblokkeerd. Volledige clusterondersteuning voor die handelingen en andere
-fencingplatformen staat nog open.
+onafhankelijke beheertoegang. Voor herstel van een volledige installatieback-up
+is op beveiligde nodes een aparte herstelprocedure via het OS nodig.
+
+### Een losgekoppelde beschermde node verwijderen
+
+Houd rechtstreekse SSH- en beheertoegang tot beide nodes open. Zorg ook voor
+onafhankelijke hersteltoegang tot het fencingplatform. Regel eerst via het
+OS-clusterbeheer dat de andere node het VIP bedient en quorum behoudt
+tijdens de wijziging. Haal de vertrekkende node uit het actieve cluster.
+Op die node moeten `pacemaker.service`, `corosync.service`,
+`corosync-qdevice.service` en `keepalived.service` inactief en permanent
+gemaskeerd zijn. De installer wijzigt het clusterlidmaatschap, de witness
+en de fencinginstellingen van de overblijvende node niet.
+
+Voer de installer op de losgekoppelde node uit vanuit de uitgepakte bronmap.
+Controleer in het plan welke services en firewallregels worden verwijderd:
+
+```bash
+sudo bash install.sh --retire-ha --detached-ha --plan
+sudo bash install.sh --retire-ha --detached-ha --apply
+```
+
+De installer controleert de opgeslagen migratiestatus, het ontbreken van
+een lokaal VIP en de bereikbaarheid van de proxy op de andere node en
+de lokale beheerconsole. Hij verwijdert alleen de vastgelegde HA- en
+clusterregels. De vaste beheerregels blijven behouden en de lokale
+beheerconsole blijft na het uit bedrijf nemen beschikbaar.
+
+Wil je de console ook verwijderen? Controleer eerst je SSH-toegang en
+bekijk daarna het plan voordat je het uitvoert:
+
+```bash
+sudo bash install.sh --uninstall --detached-ha --plan
+sudo bash install.sh --uninstall --detached-ha --apply
+```
+
+De uninstaller controleert of de vorige stap is afgerond en de
+clusterdiensten nog gemaskeerd zijn. OS-pakketten, herstelgegevens van het
+cluster, beleid en back-ups blijven beschikbaar voor de OS-beheerder.
+Volg de procedure van je cluster om de node te vervangen of de overblijvende
+installatie opnieuw in te richten.
 
 De installer controleert ook de afgeschermde back-ups van native concepten. Hij
 weigert symlinks, bestanden met meerdere harde koppelingen en oude concepten met

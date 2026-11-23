@@ -24,6 +24,7 @@ UNITS = ('proxypermit.service', 'proxypermit-ha-policy.service', 'proxypermit-ha
 UNITS += ('proxypermit-management-tls-renew.service', 'proxypermit-management-tls-recover.service',
           'proxypermit-management-tls-web.service')
 LEVELS = ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+RECENT_SCAN_LIMIT = 1000
 
 
 def presentation_records(records, include_routine=False):
@@ -49,6 +50,7 @@ def presentation_records(records, include_routine=False):
                 groups[key]['repetitions'] += 1
                 continue
             item['repetitions'] = 1
+            item['kind'] = 'client-certificate-trust'
             groups[key] = item
         result.append(item)
     return result, hidden
@@ -238,6 +240,7 @@ def journal_lines(command):
 
 def journal_records(namespace, since, until, maximum):
     command = ['journalctl', '--no-pager', '--quiet', '-o', 'json', '--reverse', '-n', str(maximum + 1),
+               '--output-fields=MESSAGE,PRIORITY,_SYSTEMD_UNIT,UNIT,SYSLOG_IDENTIFIER,_PID',
                '--since=@' + str(since), '--until=@' + str(until)]
     if namespace:
         command.append('--namespace=' + namespace)
@@ -383,6 +386,9 @@ def query_logs(arguments, audit_path):
     query = str(arguments.get('q', '')).strip().casefold()
     if len(query) > 256:
         raise ValueError('Use a search query of at most 256 characters.')
+    recent = arguments.get('recent') == '1' and not (query or arguments.get('since') or arguments.get('until'))
+    if recent:
+        maximum = min(maximum, RECENT_SCAN_LIMIT)
     records, errors, truncated, malformed = [], [], False, 0
     if service in ('all', 'audit'):
         try:
@@ -393,13 +399,18 @@ def query_logs(arguments, audit_path):
             errors.append('audit')
     if service != 'audit' and sys.platform != 'win32':
         namespaces = ['proxypermit', 'proxypermit-traffic', None] if configuration['managed'] else [None]
+        days = {'manager': configuration['managementDays'], 'keepalived': configuration['managementDays'],
+                'tinyproxy': configuration['trafficDays'], 'proxy_traffic': configuration['trafficDays']}
         for namespace in namespaces:
             if namespace == 'proxypermit' and service in ('tinyproxy', 'proxy_traffic'):
                 continue
             if namespace == 'proxypermit-traffic' and service in ('manager', 'keepalived'):
                 continue
+            journal_since = max(since, now - days.get(service, max(days.values())) * 86400)
+            if journal_since > until:
+                continue
             try:
-                items, partial = journal_records(namespace, since, until, maximum)
+                items, partial = journal_records(namespace, journal_since, until, maximum)
                 records.extend(items)
                 truncated |= partial
             except (OSError, subprocess.SubprocessError):
@@ -413,7 +424,8 @@ def query_logs(arguments, audit_path):
         except (OSError, ValueError, EOFError):
             errors.append('Tinyproxy file logging')
     configuration['externalFileLogging'] = external_file
-    identify_health_checks(records)
+    if service in ('all', 'tinyproxy', 'proxy_traffic'):
+        identify_health_checks(records)
     include_health = arguments.get('health') == 'include' or bool(query)
     hidden_health = 0
     seen, filtered = set(), []
@@ -436,7 +448,7 @@ def query_logs(arguments, audit_path):
     filtered, hidden_routine = presentation_records(filtered, arguments.get('routine') == 'include' or bool(query))
     page = [{key: value for key, value in item.items() if not key.startswith('_')} for item in filtered[offset:offset + limit]]
     return dict(success=True, logs=page, healthChecksHidden=hidden_health, routineMessagesHidden=hidden_routine, pagination=dict(offset=offset, limit=limit, total=len(filtered), returned=len(page),
-                hasMore=offset + len(page) < len(filtered), query=query, anchor=iso(until), truncated=truncated),
+                hasMore=offset + len(page) < len(filtered), query=query, anchor=iso(until), truncated=truncated, recent=recent),
                 serviceCounts={name: sum(item['service'] == name for item in filtered) for name in SERVICES},
                 coverage=dict(since=iso(since), until=iso(until), incomplete=bool(truncated or errors or malformed),
                               unavailable=errors, malformed=malformed), retention=configuration)

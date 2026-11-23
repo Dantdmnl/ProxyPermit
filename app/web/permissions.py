@@ -29,7 +29,8 @@ PROXY = frozenset({'merge_remote_preview', 'sync_merge_data', 'sync_merge_apply'
                    'proxy.discard_draft', 'proxy.native_filter'})
 ADMIN = frozenset({'auth_force_logout', 'settings.ha_network', 'settings.preview_ha',
                    'settings.apply_ha_setup', 'settings.retire_ha', 'proxy.ha_policy',
-                   'https_settings.state', 'https_settings.ca', 'https_settings.queue', 'settings.cluster_readiness'})
+                   'https_settings.state', 'https_settings.ca', 'https_settings.queue', 'settings.cluster_readiness',
+                   'settings.preview_cluster_plan', 'settings.queue_cluster_plan'})
 SELF = frozenset({'auth_logout', 'auth_transfer', 'settings.change'})
 
 

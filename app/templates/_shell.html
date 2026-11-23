@@ -1,5 +1,5 @@
 <a class="skip-link" href="#workspace">{{ _('Naar inhoud') }}</a>
-<aside class="sidebar" aria-label="{{ _('Hoofdnavigatie') }}">
+<aside class="sidebar" data-management-node="{{ management_node_role }}" aria-label="{{ _('Hoofdnavigatie') }}">
     <div class="shell-top">
         <a href="/" class="shell-brand" aria-label="{{ _('ProxyPermit') }}"><img class="brand-symbol" src="{{ url_for('static', filename='logo.svg', v=app_version) }}" width="32" height="32" alt=""><span class="shell-brand-text">{{ _('ProxyPermit') }}<small>{{ _('NETWORK CONTROL') }}</small></span></a>
         <button type="button" class="shell-toggle" aria-controls="shellNavigation" aria-expanded="true"

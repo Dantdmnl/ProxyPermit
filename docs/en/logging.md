@@ -37,6 +37,15 @@ not erasure of those original records.
 
 ## Search, dates and archives
 
+Live logs open with 100 records per page and a recent scan of up to 1,000
+records per source. Choose **Browse retained logs** for a larger scan without
+automatic refresh. **Search server** and **Date range** also search retained logs.
+
+The footer shows when your browser last fetched the results. If the connection
+drops or a refresh fails, the displayed records stay visible and are marked as
+potentially out of date. When the server is reachable again, live logs resume
+if automatic refresh is enabled. With refresh paused, use **Refresh now**.
+
 Open **Live logs → Date range**, enter local start/end times and apply.
 The browser sends UTC timestamps. History pauses automatic refresh; **Back to
 live** clears the date range. Source, severity and text filters combine with
@@ -52,7 +61,7 @@ reached. Narrow the date range and check source permissions. A bounded result
 count is not the total size of all retained history.
 
 The viewer groups repeated client certificate-trust warnings within each minute
-and displays their count. Successful periodic cluster-status start/finish messages
+and shows the count with a short explanation of client CA trust. Successful periodic cluster-status start/finish messages
 are hidden by default. Other TLS failures and failed status jobs remain visible.
 Choose **Display and export → Show routine and repeated messages**, or search
 for text, to see individual records. This only changes the view: it does not

@@ -19,16 +19,19 @@ import tempfile
 import time
 from xml.etree import ElementTree as ET
 
-from app.core import cluster, cluster_setup, cluster_topology
+from app.core import cluster, cluster_lease, cluster_setup, cluster_topology
 from app.core.files import sync_directory
 from app.core.ha import ha_topology
 from app.core.tinyproxy import atomic_write
 from scripts.deploy import cluster_bootstrap as bootstrap, cluster_maintenance, cluster_status, ha_resource, install, logging_policy
 
-STATE = Path('/etc/proxypermit/cluster-bootstrap.json')
+STATE = cluster.SETUP_CHECKPOINT
 MARKER = '# Managed by ProxyPermit native cluster\n'
-AGENT = Path('/usr/lib/ocf/resource.d/proxypermit/vip')
+RESERVATION = MARKER + '[Service]\nKillMode=control-group\nSendSIGKILL=yes\nRestart=no\nTimeoutStopSec=10s\n'
+PEER_RESERVATION_MAX_AGE = 300
+AGENT = ha_resource.AGENT_PATH
 KEY = Path('/etc/corosync/authkey')
+REPORT_FIELDS = ('operation', 'planHash', 'phase', 'name', 'vipPresent', 'transportProof')
 
 
 def digest(path):
@@ -75,16 +78,16 @@ def context(operation):
     role = values.get('PROXYPERMIT_HA_NODE')
     if values.get('PROXYPERMIT_MANAGED_HA') != 'true' or role not in ('a', 'b'):
         raise ValueError('Migrate a managed, paired two-node installation only.')
+    cluster_setup.require_installed_pair(plan, values)
     topology = ha_topology(role, values['PROXYPERMIT_HA_INTERFACE'], values['NODE0_ADDRESS'], values['NODE1_ADDRESS'],
         values['VIP_ADDRESS'] + '/' + values['HA_VIP_PREFIX'], values['HA_CLIENT_CIDR'], int(values['HA_VRID']))
     index = 0 if role == 'a' else 1
-    if ([node['address'] for node in plan['nodes']] != [topology['nodeA'], topology['nodeB']]
-            or socket.gethostname().split('.')[0] != plan['nodes'][index]['name']):
+    if socket.gethostname().split('.')[0] != plan['nodes'][index]['name']:
         raise ValueError('The native plan must match the installed node identities and addresses.')
     from scripts.deploy.management_tls import protected as text
     if text(Path('/etc/keepalived/keepalived.conf')) != install.keepalived_text(topology):
         raise ValueError('An administrator-modified Keepalived configuration needs an explicit migration plan.')
-    stamp = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+    stamp = cluster_setup.plan_hash(plan)
     folder = bootstrap.FOLDER / operation
     return plan, topology, stamp, folder
 
@@ -99,7 +102,7 @@ def load(operation):
     host_hash = hashlib.sha256(json.dumps(topology, sort_keys=True).encode()).hexdigest()
     if (not isinstance(state, dict) or state.get('operation') != operation or state.get('planHash') != stamp
             or state.get('hostHash') != host_hash
-            or state.get('phase') not in ('reserving', 'reserved', 'transport', 'running', 'configured', 'activating', 'active')):
+            or state.get('phase') not in cluster.MIGRATION_PHASES):
         raise ValueError('The retained native operation differs; review recovery before proceeding.')
     if state['phase'] != 'reserving':
         expected = dict(version=1, interface=topology['interface'], vip=topology['vip'])
@@ -120,24 +123,76 @@ def require_prepared(stamp):
     if not isinstance(prepared, dict) or prepared.get('phase') != 'ready' or prepared.get('role') != 'node' or prepared.get('planHash') != stamp:
         raise ValueError('Finish the matching dependency preparation first.')
     bootstrap.plan('node')  # Recheck local address and genuine OS time status.
-    for command in ('corosync', 'corosync-qdevice-tool', 'corosync-quorumtool', 'crm_mon', 'cibadmin', 'crm_node'):
+    for command in ('corosync', 'corosync-qdevice-tool', 'corosync-quorumtool', 'crm_mon', 'cibadmin', 'crm_node', 'certutil'):
         if shutil.which(command, path=bootstrap.ENVIRONMENT['PATH']) is None:
             raise ValueError('A required native cluster executable is missing: ' + command)
+
+
+def fencing_identity(stamp, credential):
+    return dict(profileHash=digest('/etc/proxypermit/proxmox-fencing.json'),
+        caHash=digest('/etc/proxypermit/proxmox-fencing-ca.pem'), agentHash=digest('/usr/sbin/fence_proxypermit_pve'),
+        planHash=stamp, target=credential['target'])
 
 
 def verify_power_receipt(folder, stamp):
     receipt = cluster_setup.protected(folder / 'fencing-tested.json', private=True)
     credential = cluster_setup.protected(Path('/etc/proxypermit/proxmox-fencing.json'), private=True)
-    expected = dict(profileHash=digest('/etc/proxypermit/proxmox-fencing.json'),
-        caHash=digest('/etc/proxypermit/proxmox-fencing-ca.pem'), agentHash=digest('/usr/sbin/fence_proxypermit_pve'),
-        planHash=stamp, target=credential['target'])
+    if not isinstance(credential, dict) or type(credential.get('expires')) is not int or credential['expires'] <= time.time():
+        raise ValueError('The peer fencing credential has expired or has no valid expiry.')
+    expected = fencing_identity(stamp, credential)
     if (not isinstance(receipt, dict) or any(receipt.get(key) != value for key, value in expected.items())
             or receipt.get('offConfirmed') is not True or receipt.get('recoveryConfirmed') is not True
             or type(receipt.get('checked')) is not int or not -5 <= time.time() - receipt['checked'] <= 86400):
         raise ValueError('An OS-verified off/recovery receipt for the current credential and agent is required.')
 
 
+def prepared_transport(plan, stamp, folder, *, required=False):
+    try:
+        ready = cluster_setup.protected(folder / 'qdevice-ready.json', private=True)
+    except FileNotFoundError as exc:
+        if required:
+            raise ValueError('Enroll and verify the witness before reserving the first node.') from exc
+        return None  # Preserve reservations created before native preflight was available.
+    if not isinstance(ready, dict) or ready.get('cluster') != cluster_topology.name(plan) or ready.get('planHash') != stamp:
+        raise ValueError('Complete the matching native qdevice certificate enrollment first.')
+    if 'version' not in ready and not required:
+        return None  # Existing OS-prepared installations used the earlier receipt format.
+    if 'version' not in ready:
+        raise ValueError('Run native witness preflight to generate a fresh enrollment proof before reserving this node.')
+    if type(ready['version']) is not int or ready['version'] != 1:
+        raise ValueError('Unsupported witness enrollment proof version.')
+    hashes = {key: ready.get(key) for key in ('caHash', 'certificateHash')}
+    if any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes.values()):
+        raise ValueError('Incomplete witness enrollment proof.')
+    from scripts.deploy.cluster_preflight import certificate_material
+    if certificate_material(ready['cluster'], hashes['caHash']) != hashes['certificateHash']:
+        raise ValueError('The installed witness client certificate changed after preflight.')
+    key = private_bytes(folder / 'authkey', 1024)
+    if len(key) != 1024:
+        raise ValueError('Both nodes must use the same private 1024-byte Corosync key.')
+    return {**hashes, 'keyHash': hashlib.sha256(key).hexdigest()}
+
+
+def require_peer_reserved(folder, operation, stamp, name, *, proof=None):
+    peer = cluster_setup.protected(folder / 'peer-reserved.json', private=True)
+    if (not isinstance(peer, dict) or peer.get('operation') != operation or peer.get('planHash') != stamp
+            or peer.get('phase') != 'reserved' or peer.get('vipPresent') is not False or peer.get('name') != name
+            or type(peer.get('checked')) is not int or not -5 <= time.time() - peer['checked'] <= PEER_RESERVATION_MAX_AGE):
+        raise ValueError('Obtain a fresh reservation report from the standby node before stopping the VIP owner.')
+    if peer.get('transportProof') != proof:
+        raise ValueError('The witness fingerprints or Corosync key differ between the two nodes.')
+
+
+def verify_reservation(profile):
+    active = bootstrap.run('/usr/bin/systemctl', 'show', 'keepalived.service', '--property=ActiveState', '--value')
+    if active.stdout.strip() != 'inactive' or ha_resource.owns_vip(profile):
+        raise ValueError('Keepalived is not confirmed inactive or the VIP is still present.')
+    ha_resource.validate_service()
+    return int(time.time())
+
+
 def reserve(operation):
+    from scripts.deploy.management_tls import protected
     plan, topology, stamp, folder = context(operation)
     require_prepared(stamp)
     install.require_trusted_path(bootstrap.FOLDER, directory=True)
@@ -145,30 +200,45 @@ def reserve(operation):
     install.require_trusted_path(folder, directory=True)
     if folder.stat().st_mode & 0o077:
         raise ValueError('Native operation storage must be private.')
-    if STATE.exists() or STATE.is_symlink():
+    profile = dict(version=1, interface=topology['interface'], vip=topology['vip'])
+    local_profile = {**profile, 'address': topology['vip'].split('/')[0]}
+    resuming = STATE.exists() or STATE.is_symlink()
+    proof = prepared_transport(plan, stamp, folder, required=not resuming)
+    if resuming:
         _, _, _, state = load(operation)
+        if state.get('transportProof') != proof:
+            raise ValueError('The reserved witness or Corosync key changed. Restore the prepared inputs before resuming.')
         if state['phase'] != 'reserving':
+            if state['phase'] == 'reserved':
+                if protected(cluster.SERVICE_RESERVATION) != RESERVATION:
+                    raise ValueError('The Keepalived reservation override changed; leave the operation reserved.')
+                return {**state, 'vipPresent': False, 'checked': verify_reservation(local_profile)}
             return state
     else:
         if cluster.reserved():
             raise ValueError('An existing protected cluster must use its maintenance workflow.')
-        for unit in ('pacemaker.service', 'corosync.service', 'corosync-qdevice.service'):
-            if bootstrap.run('/usr/bin/systemctl', 'is-active', '--quiet', unit, check=False).returncode == 0:
-                raise ValueError('Do not adopt an existing active cluster.')
-        verify_power_receipt(folder, stamp)
-        local_profile = dict(version=1, interface=topology['interface'], vip=topology['vip'])
-        if ha_resource.owns_vip({**local_profile, 'address': topology['vip'].split('/')[0]}):
-            peer = cluster_setup.protected(folder / 'peer-reserved.json', private=True)
-            if (not isinstance(peer, dict) or peer.get('operation') != operation or peer.get('planHash') != stamp
-                    or peer.get('phase') != 'reserved' or peer.get('vipPresent') is not False
-                    or peer.get('name') != plan['nodes'][1 if topology['node'] == 'a' else 0]['name']):
-                raise ValueError('Drain and verify the standby node before stopping the current VIP owner.')
+    for unit in ('pacemaker.service', 'corosync.service', 'corosync-qdevice.service'):
+        result = bootstrap.run('/usr/bin/systemctl', 'show', unit, '--property=ActiveState', '--value')
+        if result.stdout.strip() != 'inactive':
+            raise ValueError('Confirm that native cluster services are inactive before reserving the node.')
+    verify_power_receipt(folder, stamp)
+    peer_name = plan['nodes'][1 if topology['node'] == 'a' else 0]['name']
+    if ha_resource.owns_vip(local_profile):
+        require_peer_reserved(folder, operation, stamp, peer_name, proof=proof)
+    profile_exists = cluster.PROFILE.exists() or cluster.PROFILE.is_symlink()
+    service_exists = cluster.SERVICE_RESERVATION.exists() or cluster.SERVICE_RESERVATION.is_symlink()
+    if profile_exists and cluster_setup.protected(cluster.PROFILE, private=True) != profile:
+        raise ValueError('The Keepalived reservation profile changed; leave the operation reserved.')
+    if service_exists and protected(cluster.SERVICE_RESERVATION) != RESERVATION:
+        raise ValueError('The Keepalived reservation override changed; leave the operation reserved.')
+    if not resuming:
         state = dict(version=1, operation=operation, planHash=stamp, phase='reserving',
                      hostHash=hashlib.sha256(json.dumps(topology, sort_keys=True).encode()).hexdigest(),
                      name=socket.gethostname().split('.')[0], vipPresent=False)
+        if proof is not None:
+            state['transportProof'] = proof
         # Keep the old, package-supplied Corosync configuration for explicit recovery.
         if bootstrap.CONFIG.exists():
-            from scripts.deploy.management_tls import protected
             original = protected(bootstrap.CONFIG)
             conffiles = bootstrap.run('/usr/bin/dpkg-query', '-W', '-f=${Conffiles}', 'corosync').stdout
             expected_md5 = next((row.split()[1] for row in conffiles.splitlines()
@@ -179,28 +249,27 @@ def reserve(operation):
         state['keepalivedEnabled'] = bootstrap.run('/usr/bin/systemctl', 'is-enabled', 'keepalived.service', check=False).stdout.strip()
         save(state)
         audit('cluster_setup_reserved', operation)
-    profile = dict(version=1, interface=topology['interface'], vip=topology['vip'])
-    atomic_write(cluster.PROFILE, json.dumps(profile), 0o600)
-    dropin = MARKER + '[Service]\nKillMode=control-group\nSendSIGKILL=yes\nRestart=no\nTimeoutStopSec=10s\n'
-    if cluster.SERVICE_RESERVATION.exists() or cluster.SERVICE_RESERVATION.is_symlink():
-        if cluster.SERVICE_RESERVATION.is_symlink() or cluster.SERVICE_RESERVATION.read_text() != dropin:
-            raise ValueError('The Keepalived reservation changed; leave the operation reserved.')
-    logging_policy.write_asset(cluster.SERVICE_RESERVATION, dropin)
+    if not profile_exists:
+        atomic_write(cluster.PROFILE, json.dumps(profile), 0o600)
+    if not service_exists:
+        logging_policy.write_asset(cluster.SERVICE_RESERVATION, RESERVATION)
     bootstrap.run('/usr/bin/systemctl', 'daemon-reload')
     bootstrap.run('/usr/bin/systemctl', 'disable', 'keepalived.service')
+    if ha_resource.owns_vip(local_profile):
+        require_peer_reserved(folder, operation, stamp, peer_name, proof=proof)
     bootstrap.run('/usr/bin/systemctl', 'stop', 'keepalived.service', timeout=25)
-    if ha_resource.owns_vip({**profile, 'address': topology['vip'].split('/')[0]}):
-        raise ValueError('The VIP was not safely removed; do not activate a new owner.')
-    ha_resource.validate_service()
+    checked = verify_reservation(local_profile)
     state['phase'] = 'reserved'
     save(state)
-    return state
+    return {**state, 'checked': checked}
 
 
 def transport(operation):
     plan, topology, folder, state = load(operation)
     if state['phase'] not in ('reserved', 'transport'):
         raise ValueError('Reserve the node before configuring cluster transport.')
+    if state.get('transportProof') != prepared_transport(plan, state['planHash'], folder):
+        raise ValueError('The reserved witness or Corosync key changed. Restore the prepared inputs before resuming.')
     key = private_bytes(folder / 'authkey', 1024)
     if len(key) != 1024:
         raise ValueError('Use a fresh 1024-byte shared Corosync key for this operation.')
@@ -282,7 +351,10 @@ def configuration_matches(cib, plan, host, pve_node, target_role='Stopped'):
     if own is None:
         return False
     settings.remove(own)
-    cluster_topology.initial_configuration(candidate, plan, host, pve_node)
+    try:
+        cluster_topology.initial_configuration(candidate, plan, host, pve_node)
+    except ValueError:
+        return False
     candidate.find("configuration/resources/primitive[@id='proxypermit-vip']/meta_attributes/nvpair[@name='target-role']").set('value', target_role)
     for xpath in ('configuration/resources', 'configuration/constraints', "configuration/crm_config/cluster_property_set[@id='proxypermit-bootstrap-options']"):
         if ET.canonicalize(ET.tostring(cib.find(xpath), encoding='unicode'), strip_text=True) != ET.canonicalize(ET.tostring(candidate.find(xpath), encoding='unicode'), strip_text=True):
@@ -332,24 +404,68 @@ def seed(operation):
     return state
 
 
-def activate(operation):
+def activation_ready(evidence):
+    return evidence.get('owners') == 0 and all(evidence.get(key) is True for key in (
+        'quorate', 'witnessConnected', 'fencingConfigured', 'fencingReady', 'policySafe'))
+
+
+def status(operation):
+    """Read the retained setup checkpoint and the live cluster without changing either."""
+    if operation is None:
+        operation = cluster_setup.protected(STATE, private=True)['operation']
+    plan, topology, folder, state = load(operation)
+    phase = state['phase']
+    report = {key: state[key] for key in REPORT_FIELDS if key != 'vipPresent' and key in state}
+    if phase == 'reserving':
+        vip = dict(interface=topology['interface'], address=topology['vip'].split('/')[0])
+    else:
+        vip = ha_resource.profile()
+    report['vipPresent'] = ha_resource.owns_vip(vip)
+    report['next'] = {'reserving': 'inspect-reservation', 'reserved': 'transport',
+                      'transport': 'start', 'running': 'inspect-transport-and-pacemaker'}.get(phase, 'review')
+    if phase in ('configured', 'activating', 'active'):
+        credential = cluster_setup.protected(Path('/etc/proxypermit/proxmox-fencing.json'), private=True)
+        cib = cluster_maintenance.query()
+        evidence = cluster_status.evidence()
+        report['protection'] = evidence['state']
+        if cib.find(f".//*[@id='{cluster_lease.LEASE_ID}']") is not None:
+            return report
+        if configuration_matches(cib, plan, credential['host'], credential['pveNode'], 'Started'):
+            if evidence['state'] == 'protected':
+                report['next'] = 'maintenance' if phase == 'active' else 'finalize'
+            else:
+                report['next'] = 'inspect-vip-health'
+        elif (phase != 'active' and activation_ready(evidence)
+                and configuration_matches(cib, plan, credential['host'], credential['pveNode'])):
+            try:
+                verify_power_receipt(folder, state['planHash'])
+            except (OSError, ValueError, KeyError, TypeError):
+                report['next'] = 'verify-fencing-test'
+            else:
+                report['next'] = 'retry-activation' if phase == 'activating' else 'activate'
+    return report
+
+
+def activate(operation, *, retry=False):
     plan, _, folder, state = load(operation)
-    if state['phase'] not in ('configured', 'activating'):
+    if state['phase'] not in ('configured', 'activating') or (retry and state['phase'] != 'activating'):
         raise ValueError('Configure the stopped resource before explicit activation.')
     bootstrap.plan('node')
     credential = cluster_setup.protected(Path('/etc/proxypermit/proxmox-fencing.json'), private=True)
     cib = cluster_maintenance.query()
-    if state['phase'] == 'configured':
+    if state['phase'] == 'configured' or retry:
         verify_power_receipt(folder, state['planHash'])
+        if cib.find(f".//*[@id='{cluster_lease.LEASE_ID}']") is not None:
+            raise ValueError('A cluster maintenance reservation is active.')
         if not configuration_matches(cib, plan, credential['host'], credential['pveNode']):
             raise ValueError('The reviewed cluster configuration changed before activation.')
         evidence = cluster_status.evidence()
-        if evidence['owners'] != 0 or not all(evidence[key] for key in ('quorate', 'witnessConnected', 'fencingConfigured', 'fencingReady', 'policySafe')):
+        if not activation_ready(evidence):
             raise ValueError('Confirm quorum, mutual TLS and ready fencing while the VIP remains stopped.')
         target = cib.find("configuration/resources/primitive[@id='proxypermit-vip']/meta_attributes/nvpair[@name='target-role']")
         target.set('value', 'Started')
         state['phase'] = 'activating';save(state)
-        audit('cluster_setup_activation_requested', operation)
+        audit('cluster_setup_activation_retried' if retry else 'cluster_setup_activation_requested', operation)
         if not cluster_maintenance.replace(cib):
             raise ValueError('Activation reply uncertain; re-read cluster status before any retry.')
     deadline = time.monotonic() + 60
@@ -381,20 +497,27 @@ def finalize(operation):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--operation', required=True)
-    parser.add_argument('--phase', choices=('reserve', 'transport', 'start', 'pacemaker', 'seed', 'activate', 'finalize'), required=True)
+    parser.add_argument('--operation', help='Setup operation ID. Status can read it from the local checkpoint.')
+    parser.add_argument('--phase', choices=('reserve', 'transport', 'start', 'pacemaker', 'seed',
+                                           'activate', 'retry-activation', 'finalize', 'status'), required=True)
     parser.add_argument('--experimental', action='store_true', help='Explicitly acknowledge the OS-prepared experimental workflow.')
     args = parser.parse_args(argv)
     try:
         install.require_linux_root('Native cluster setup')
+        if args.phase == 'status':
+            print(json.dumps(status(args.operation), indent=2))
+            return 0
+        if not args.operation:
+            parser.error('Changing the cluster requires an explicit setup operation ID.')
         if not args.experimental:
             raise ValueError('Experimental native setup requires explicit operator acknowledgement.')
         with install.maintenance_lock():
-            result = globals()[args.phase](args.operation)
-        print(json.dumps({key: result[key] for key in ('operation', 'planHash', 'phase', 'name', 'vipPresent')}, indent=2))
+            result = (activate(args.operation, retry=True) if args.phase == 'retry-activation'
+                      else globals()[args.phase](args.operation))
+        print(json.dumps({key: result[key] for key in (*REPORT_FIELDS, 'checked') if key in result}, indent=2))
         return 0
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
-        print('Native cluster setup stopped. Keep the retained reservation and inspect OS recovery before retrying.')
+        print('Native cluster setup could not proceed. Keep the reservation and inspect the setup with --phase status.')
         return 1
 
 

@@ -67,7 +67,7 @@ def main():
         if args.action == 'set':
             password = getpass.getpass('New password: ')
             if not 12 <= len(password) <= 256 or password != getpass.getpass('Repeat password: '):
-                raise ValueError('Enter matching passwords of 12â€“256 characters.')
+                raise ValueError('Enter matching passwords of 12–256 characters.')
             updated = dict(password_hash=generate_password_hash(password), revision=secrets.token_hex(16),
                            role=args.role or (account_role(previous) if previous else 'monitor'))
             if args.totp:
