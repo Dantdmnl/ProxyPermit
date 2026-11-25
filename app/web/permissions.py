@@ -21,7 +21,7 @@ def ensure_policy_only(previous, proposed):
         raise PolicyPermissionError('Only a system administrator can change service identity, listener settings or file paths.')
 
 READ = frozenset({'api_config', 'get_logs', 'get_entries', 'get_status', 'service_status',
-                  'sync_peer_status', 'run_sync_status', 'settings.ha_setup_status'})
+                  'sync_peer_status', 'run_sync_status', 'settings.ha_setup_status', 'health_check'})
 PROXY = frozenset({'merge_remote_preview', 'sync_merge_data', 'sync_merge_apply', 'run_sync_now',
                    'add_entry', 'update_entry', 'delete_entry', 'reorder_entries', 'validate_entry',
                    'restart_service', 'domain_to_regex', 'import_whitelist', 'export_whitelist',
@@ -30,7 +30,7 @@ PROXY = frozenset({'merge_remote_preview', 'sync_merge_data', 'sync_merge_apply'
 ADMIN = frozenset({'auth_force_logout', 'settings.ha_network', 'settings.preview_ha',
                    'settings.apply_ha_setup', 'settings.retire_ha', 'proxy.ha_policy',
                    'https_settings.state', 'https_settings.ca', 'https_settings.queue', 'settings.cluster_readiness',
-                   'settings.preview_cluster_plan', 'settings.queue_cluster_plan'})
+                   'settings.preview_cluster_plan', 'settings.queue_cluster_plan', 'settings.diagnostics'})
 SELF = frozenset({'auth_logout', 'auth_transfer', 'settings.change'})
 
 

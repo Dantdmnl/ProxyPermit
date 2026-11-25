@@ -127,6 +127,9 @@
     });
     if (mode) mode.addEventListener('change', () => {
         const joining = mode.value === 'join';
+        document.getElementById('haSetupCreateHint').hidden = joining;
+        document.getElementById('haSetupJoinHint').hidden = !joining;
+        mode.setAttribute('aria-describedby', joining ? 'haSetupJoinHint' : 'haSetupCreateHint');
         invalidate();
         result.hidden = true;
         firewall.hidden = true;

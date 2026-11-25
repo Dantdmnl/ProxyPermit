@@ -22,6 +22,16 @@ Voordat je een versienummer kiest:
   Beschrijf een geplande functie niet als onderdeel van de release.
 - Controleer de back-up- en herstelinstructies voordat beheerders gaan bijwerken.
 
+CI controleert de checksum en het volledige bestandsmanifest. Daarna draait
+CI vanuit het archief de installatieplannen voor standalone HTTP, standalone
+HTTPS en HA met twee nodes. Test met datzelfde archief op tijdelijke hosts
+een schone installatie, een upgrade vanaf de laatste ondersteunde stabiele
+versie, rollback en uninstall. Noteer de versie, het platform en de checksum
+van het archief. Controleer na installatie, upgrade en rollback de aanmelding
+en het actieve beleid. Test via Tinyproxy een toegestane en een geblokkeerde
+bestemming. Controleer na verwijdering of SSH en de vaste beheerregels in de
+firewall nog werken.
+
 De documentatiewebsite volgt `main`, inclusief werk dat nog niet is uitgebracht.
 Voor een stabiele release bepalen de bijbehorende tag en meegeleverde documentatie
 welke versie je gebruikt. De website is statische documentatie, geen beheerinterface.
@@ -77,6 +87,7 @@ Vanuit een virtuele Python-omgeving met `requirements/dev.txt` geïnstalleerd:
 ```sh
 python scripts/check.py
 python scripts/release.py archive
+python scripts/release.py verify-archive
 ```
 
 Gebruik Linux/WSL voor shellcontroles en Gunicorn. De Windows-controle gebruikt
@@ -90,7 +101,9 @@ Bouw de documentatie met de vastgelegde tools uit `requirements/docs.txt` en
 legt de voorbereiding uit.
 
 Het archief heet `dist/proxypermit-VERSION.tar.gz` en krijgt een SHA-256-checksum.
-Het interne manifest bevat de hashes van de bestanden. Geheimen, lokale
+Het interne manifest bevat de hashes van de bestanden. Met dezelfde
+bouwomgeving, bronbestanden en uitvoerrechten krijg je bij opnieuw bouwen
+dezelfde checksum. Geheimen, lokale
 omgevingen, runtimegegevens en de gegenereerde website horen niet in het archief.
 
 ## 4. Push, controleer CI en tag de geteste commit

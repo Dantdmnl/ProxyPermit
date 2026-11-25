@@ -2,6 +2,279 @@
 
 [Nederlands](../nl/verification.md) · [Documentation](README.md)
 
+## Protected HA acceptance checks for v1.4.0
+
+Run these scenarios on a recoverable test deployment with direct management
+access to both proxy hosts, independent access to the witness and a way to
+restore fenced hosts. Record the version, platform, UTC start and end times,
+time to restore client traffic, fencing result and VIP ownership as seen on both nodes.
+
+| Scenario | Pass criteria | Current evidence |
+| --- | --- | --- |
+| Loss of the active host or its power feed | The surviving host fences the exact target when required, keeps quorum and serves the VIP. From a client, check an allowed destination and a blocked destination after takeover. | Abrupt loss of a VM verified on Proxmox. Independent physical host and power failure remain open. |
+| Partition across cluster and witness links | No more than one VIP owner. With no quorum on either node, neither serves the VIP. If fencing is required and its management path is unavailable, verify that the other node waits. | VM partition and loss of quorum verified on Proxmox. A frozen owner with an unavailable fencer was tested on libvirt. |
+| Standby returns after a long absence | Keep direct management access and check time, witness certificate and fencing authentication before making the node eligible. Compare active policy on A and B and verify B applies the latest revision. Include a run spanning credential expiry. | Standby rejoin, policy catch-up and rejection of expired fencing tokens and witness certificates were tested separately. Recovery and takeover after an absence spanning expiry remain open. |
+| Retirement, removal and recovery | Verify the peer continues serving the VIP and direct SSH remains reachable. Compare firewall rules before and after. Interrupt retirement, resume it, and confirm the uninstaller only accepts completed retirement. | Local detachment, retirement and console removal verified on Proxmox. Interruption and resumption are covered by isolated regression tests. Removing a member from cluster configuration and replacing it remain open. |
+
+Repeat the relevant scenarios for each platform and failure domain. A lab with
+both nodes and a witness on one hypervisor can verify guest failures and
+partitions, while a host-failure trial requires separate infrastructure.
+
+## 25 November 2026
+
+### Interrupted policy publication followed by a Tinyproxy restart
+
+On the Ubuntu QEMU guest, killed the publication worker with `SIGKILL` in
+two independent fixtures. When the worker stopped after replacing the
+configuration and before replacing the filter, the disk retained a mixed
+configuration and filter. When it stopped after replacing both files but
+before activating the service, the running Tinyproxy kept returning HTTP 200
+for the previously allowed destination. Restarting Tinyproxy from disk changed
+that response to HTTP 403, applying the unconfirmed filter. The stored rollback
+files restored the original policy in both fixtures when applied explicitly.
+This first trial tested worker failure and exposed the missing automatic
+recovery step before Tinyproxy starts.
+
+### Recovery before Tinyproxy starts
+
+Upgraded the standalone QEMU lab through the normal installer. Repeated
+the worker interruption before filter replacement, after it, and after the
+worker had requested and completed a service restart. In each case a
+subsequent systemd restart restored the original configuration and filter
+before launching the new Tinyproxy process. Both files matched the baseline
+and HTTP 200 and 403 were restored for the allowed and blocked destinations.
+
+Also cut power to the disposable QEMU guest after the unconfirmed pair had
+been written. After boot, Tinyproxy again returned HTTP 200 and 403 for the
+same destinations. Both policy files matched hashes recorded on the host
+before the test. The boot journal showed recovery before Tinyproxy started.
+
+### Protected Proxmox lab inspection
+
+Node A had no quorum and did not hold the VIP. The witness accepted connections
+and supplied a vote, while Corosync still reported `WaitForAll` and blocked
+cluster activity. The newest retained VIP monitor timeout coincided with
+Pacemaker IPC timeouts. VM 8107 still refused SSH, so replacement enrollment
+and its failover could not be tested. Cluster policy and fencing were kept intact.
+
+### Disk-full error during policy publication
+
+Ran an isolated Tinyproxy process on the Ubuntu QEMU guest with its policy
+files on a 160 KiB tmpfs. After the configuration replacement, filled the
+filesystem before publishing the filter. The actual filter write failed
+with `ENOSPC`. ProxyPermit restored both original files from reserved
+rollback copies, kept the same Tinyproxy process running and still returned
+HTTP 200 for the allowed destination and HTTP 403 for the blocked one.
+The browser API regression also checked that the filter draft remained
+available and could be published once space was available.
+
+### Recovery from an expired management certificate
+
+On the standalone QEMU candidate, temporarily served an expired leaf
+certificate signed by the existing node CA. A client that trusted that CA
+rejected the leaf as expired. The regular renewal command detected that
+renewal was due, issued a new leaf and restored the HTTPS liveness endpoint.
+The same client accepted the new certificate with its existing CA trust.
+
+### Reboot with UFW enabled and management HTTPS
+
+On the same candidate, verified that the stored firewall rule covered the
+actual SSH client address before enabling UFW with a default inbound deny
+policy. After a normal guest reboot, a new SSH session succeeded with UFW
+active. The management endpoint answered over HTTPS with the same CA, the
+renewal timer was active, and the Tinyproxy requests still returned HTTP 200
+and 403 for the allowed and denied destinations respectively.
+
+## 24 November 2026 at 17:39–17:53 UTC
+
+### Standalone release archive on Ubuntu 24.04.5
+
+Used two clean QEMU guests. Verified the checksum of the published v1.3.0
+archive and the checksum and file manifest of a locally built
+`1.4.0-dev.2` candidate. Candidate SHA-256:
+
+```text
+e18430bba5ca7d5455ad3be8eff441519944aacabab057c0c23357a1db709cf1
+```
+
+- Both clean installations passed sign-in and two Tinyproxy requests. The
+  allowed origin returned HTTP 200 and the blocked destination returned HTTP 403.
+- Upgraded v1.3.0, rolled back to v1.3.0 and upgraded again. After each step,
+  sign-in and both proxy requests passed. The original filter checksum matched.
+- Uninstalled the candidate. The console stopped, Tinyproxy and a new SSH
+  session remained available, and the filter checksum and recorded UFW
+  management rules matched the baseline.
+- On the other guest, moved the HTTP console to HTTPS on the same port.
+  Sign-in worked with the node CA and a secure session cookie. Forced renewal
+  changed the server certificate while preserving the CA.
+
+The candidate installer ran all 394 Python tests as root with no skips.
+Repeat these checks against the final stable release archive.
+
+## 24 November 2026 at 17:08–17:16 UTC
+
+### Replacement power-off and VIP monitor recovery on Proxmox
+
+The detached original B shut down normally. The clean replacement booted on
+B's address and accepted SSH with its pinned key. It had no cluster services
+or VIP. The test token powered it off through the Proxmox API. The separate
+lab account started it again, and Proxmox reported it running. The guest
+answered on the expected MAC address, but its SSH port refused connections
+and the guest-agent network query failed. Guest recovery is still open.
+
+A retained quorum with the witness. During the trial, the VIP monitor
+returned an error without an exit reason and Pacemaker stopped the VIP.
+After the local proxy health probe and old peer's fenced status passed,
+clearing only A's five-second VIP monitor failure restored service. A proxy
+request from the witness then received the expected HTTP 403. The cause of
+the monitor error remains open. The updated agent correctly formatted an
+isolated probe error on A. The active Pacemaker configuration and installed
+agent were left in place. Cluster enrollment and failover on the replacement
+remain unverified.
+
+## 24 November 2026 at 17:04–17:06 UTC
+
+### Preflight for replacing node B on Proxmox
+
+A and the witness had quorum with two of three votes. A still held the VIP.
+A clean replacement VM was provisioned and left powered off because it has
+the same network settings as B. The detached original was retained for
+recovery. Changing only B's VM ID in an offline plan changed the generated
+Corosync cluster name. Since that name also identifies witness enrollment,
+the initial setup procedure cannot be reused for this change on a running
+protected cluster. For each new fencing token, the Proxmox API returned the
+peer's power state and denied status requests for its own VM, the old B and
+the witness. Membership, witness enrollment and live fencing were left in
+place. Power-off fencing, replacement and failover still require verification.
+
+## 24 November 2026 at 16:46–16:51 UTC
+
+### VIP recovery and detached-node removal on Proxmox
+
+Both nodes were online with three votes, while retained monitor failures had
+left the VIP stopped. Each Tinyproxy probe and both peer-specific fencing
+status checks passed. Clearing only A's failed 5-second VIP monitor let
+Pacemaker restore the VIP on A. A request from the witness then received the
+expected Tinyproxy denial. The cause of the original timeouts remains open.
+
+Around the VIP timeout on B, Pacemaker reported that its scheduler,
+controller, executor and other local processes stopped responding to IPC.
+On A, the scheduler missed an IPC check before its VIP timeout, and the
+controller missed one around the fencing monitor timeout on 24 November.
+The timeouts therefore coincided with wider process delays. The logs do not
+identify what caused those delays.
+
+B was placed in standby and its cluster services were stopped and persistently
+masked. The installer refused removal before local retirement completed. The
+retirement removed seven recorded HA rules and kept the local console and
+pinned SSH and management rules. Repeating retirement made no changes. The
+subsequent uninstall left policy, service masks and the OS fencing agent in
+place. A had quorum with the witness and served the VIP at each checkpoint,
+and a fresh SSH connection to B succeeded after uninstall. Cluster membership
+was preserved for recovery.
+
+## 24 November 2026 at 16:28–16:35 UTC
+
+### Upgrade and rollback on a Keepalived pair with HTTPS
+
+On two Ubuntu 24.04 VMware guests, upgraded B, restored its previous release
+from the installer backup, then upgraded B again before upgrading A. A used
+Granian with the local CA. B used Gunicorn with an administrator-provided PEM
+certificate. The first upgrade attempt exposed a test fixture that read the
+running host's systemd unit. The installer kept the earlier release active.
+After isolating that fixture, the installer passed all 388 tests on the guests.
+
+Both consoles answered over HTTPS after the upgrade, the certificates or trust
+root and the account, filter and firewall files were preserved, and B
+acknowledged A's full published revision. A held the VIP before and after the
+trial. This trial covered ordinary Keepalived HA.
+
+## 23 November 2026 at 12:38–16:44 UTC
+
+### VIP moved from B to A after a monitor timeout
+
+| Time (UTC) | Pacemaker event |
+| --- | --- |
+| 12:38:35 | B’s VIP monitor exceeded its 10-second timeout. Pacemaker recorded a failure count of `1`, excluded B and scheduled recovery on A. |
+| 12:38:42 | Pacemaker confirmed the successful VIP start on A after stopping the resource on B. |
+| 12:53:44–12:53:46 | The monitor on A also timed out. With B still excluded, Pacemaker stopped the VIP on A. |
+| 16:44 | Both hosts were online. Pacemaker still showed the VIP stopped and both failure counts were retained. |
+
+The installed lab policy preferred A with a score of `100`, retained the
+current owner with stickiness `1000`, and used a migration threshold of `1`.
+The move to A was recovery from B’s monitor failure. The reason the monitor
+process did not finish within its timeout remains open.
+
+## 23 November 2026 at 12:15–12:18 UTC
+
+### Recovery commands and a stopped Proxmox VIP
+
+The candidate's `cluster_maintenance --status` ran on both assigned Proxmox
+nodes and reported no reservation. The detached retirement and uninstall
+guards refused the still-attached standby. The lab was running an older
+development build and the proxy VIP was already stopped.
+
+Pacemaker showed historical VIP monitor errors for both nodes. Both loopback
+Tinyproxy health probes passed, quorum and fencing were confirmed, and no
+maintenance lease existed. The operator cleared the failure counters for the
+VIP resource only. Pacemaker returned the VIP to service. At 12:17:58 UTC,
+both nodes reported one owner, B, and reached the proxy port. The reason for
+the older monitor errors remains open. This trial did not detach or uninstall
+either live node.
+
+## 23 November 2026 at 11:56–12:04 UTC
+
+### Proxmox fencing credential expiry
+
+The actual fencing agent on the standby VM reported its peer as online with
+the existing credential. With a past expiry in a private mount namespace, the
+same read-only status action failed. The live profile stayed byte-for-byte
+unchanged and the peer continued serving the VIP. Automated checks also
+verify that the expired local credential prevents a healthy claim from the
+management interface even when the shared fencer appears ready. With live
+Corosync and Pacemaker evidence, the new status code reported `protected`
+with the real profile, `degraded` with the expired copy, and `protected`
+again with the real profile. In all three checks the VIP had one owner.
+
+On the same standby, OpenSSL accepted the enrolled public witness-client
+chain at the current time and rejected it with a verification time after the
+client certificate expired. The proxy at the VIP remained reachable. These
+two checks isolate expiry without changing a live token, certificate or clock.
+They provide no timing measurement for recovery after an actual offline period.
+
+## 23 November 2026 at 11:28–11:35 UTC
+
+### KVM/libvirt fencing and return
+
+In the disposable OS-managed libvirt lab, A initially served the VIP
+through the KVM guests. After A was suspended at 11:29:17 UTC, the host confirmed
+it had been fenced before B took the VIP. The TCP proxy listener on B was
+reachable 19.1 seconds after suspension. A then restarted and remained without
+the VIP. Both nodes reported a single owner and an available proxy listener.
+
+After rejoining, A's qdevice snapshot still showed two expected votes even
+though votequorum showed three and mutual TLS with the witness was active. The
+updated status code confirmed protection on both live nodes using the current
+votequorum report. Regression tests cover missing quorum and missing client TLS.
+
+At 11:34:36 UTC, the lab fencer was stopped and the new VIP owner B was
+suspended. A did not serve the VIP during 24 seconds of observation. When the
+fencer returned, B was seen powered off and A served the proxy port within
+seven seconds. After B returned, both nodes reported one owner and a reachable
+proxy. The witness and VMs shared one hypervisor throughout these tests.
+
+## 23 November 2026 at 11:12–11:17 UTC
+
+### Returning a missing Proxmox node
+
+On the existing protected `v1.4.0-dev.1` lab, B was online and connected to
+the witness while A was powered off. B reported no quorum and no VIP owner.
+After starting A at 11:12:21 UTC, quorum and the two healthy Pacemaker resources
+were observed by 11:16:37. A held the only VIP at the 11:17 check. Both nodes
+reported a ready fencer, reached the proxy TCP listener at the VIP, and had the
+same filter-file hash. The observation samples bound the recovery time. The
+offline duration and behavior across expiry were outside this check.
+
 ## 22 November 2026
 
 ### Live checks for protected HA preflight

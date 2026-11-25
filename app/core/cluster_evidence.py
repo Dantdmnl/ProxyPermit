@@ -81,7 +81,8 @@ def fencing_coverage(fencers, ready, members):
     return covered == members and len(members) == 2, available == members and len(members) == 2
 
 
-def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local_name):
+def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local_name, *,
+              quorum_text, native_credential='unknown'):
     cib, monitor = xml(cib_text), xml(monitor_text)
     configuration = cib.find('configuration')
     if configuration is None:
@@ -99,6 +100,12 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
         and not any(enabled(item.get(key)) for key in ('failed', 'blocked', 'orphaned', 'maintenance'))}
     members = {node.get('uname') for node in configuration.findall('nodes/node')}
     fencing_configured, fencer_ready = fencing_coverage(fencers, ready, members)
+    credential_status = {}
+    if any(item.get('type') == 'fence_proxypermit_pve' for item in fencers):
+        if native_credential not in ('current', 'expired', 'unknown'):
+            native_credential = 'unknown'
+        credential_status['localFencingCredential'] = native_credential
+        fencer_ready = fencer_ready and native_credential == 'current'
     policy_safe = bool(enabled(options.get('stonith-enabled')) and enabled(options.get('startup-fencing'))
         and len(configuration.findall('nodes/node')) == 2
         and options.get('no-quorum-policy') == 'stop'
@@ -109,14 +116,18 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
         and re.search(r'^totem\.crypto_cipher \(str\) = aes(?:128|192|256)$', crypto_text, re.M)
         and re.search(r'^totem\.crypto_hash \(str\) = sha(?:256|384|512)$', crypto_text, re.M))
     dc = monitor.find('summary/current_dc')
-    quorate = bool(dc is not None and enabled(dc.get('present')) and enabled(dc.get('with_quorum')))
-    witness = bool(re.search(r'^State:\s+Connected\s*$', device_text, re.M)
-        and re.search(r'^TLS active:\s+Yes \(client certificate sent\)\s*$', device_text, re.M)
-        and re.search(r'^Expected votes:\s+3\s*$', device_text, re.M))
+    quorate = bool(dc is not None and enabled(dc.get('present')) and enabled(dc.get('with_quorum'))
+        and re.search(r'^Quorate:[ \t]+Yes[ \t]*$', quorum_text, re.M))
+    # qdevice can retain an earlier expected-vote snapshot after rejoining.
+    expected_witness = (re.search(r'^Expected votes:[ \t]+3[ \t]*$', quorum_text, re.M)
+        and re.search(r'^Quorum:[ \t]+2[ \t]*$', quorum_text, re.M)
+        and re.search(r'^Flags:[ \t]+[^\n]*\bQdevice\b', quorum_text, re.M))
+    witness = bool(expected_witness and re.search(r'^State:\s+Connected\s*$', device_text, re.M)
+        and re.search(r'^TLS active:\s+Yes \(client certificate sent\)\s*$', device_text, re.M))
     reported = monitor.find(f"resources/resource[@id='{RESOURCE}']")
     if reported is None:
         return dict(state='unknown', owners=0, quorate=quorate, witnessConnected=witness,
-                    fencingConfigured=fencing_configured, fencingReady=fencer_ready, policySafe=False)
+                    fencingConfigured=fencing_configured, fencingReady=fencer_ready, policySafe=False, **credential_status)
     nodes = reported.findall('node')
     owners = max(int(reported.get('nodes_running_on', '0')), len(nodes))
     if not 0 <= owners <= 2:
@@ -136,4 +147,5 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
     else:
         state = 'protected'
     return dict(state=state, owners=max(owners, 1 if local_vip else 0), quorate=quorate,
-                witnessConnected=witness, fencingConfigured=fencing_configured, fencingReady=fencer_ready, policySafe=policy_safe)
+                witnessConnected=witness, fencingConfigured=fencing_configured, fencingReady=fencer_ready,
+                policySafe=policy_safe, **credential_status)

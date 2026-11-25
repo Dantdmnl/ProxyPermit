@@ -4,6 +4,7 @@ import argparse
 import base64
 import getpass
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -26,18 +27,23 @@ from typing import Any, TypedDict
 SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE))
 from app.core.tinyproxy import atomic_write, parse
-from app.core.files import file_lock, access_acl, restore_access_acl
+from app.core.files import file_lock, access_acl, restore_access_acl, sync_directory
 from app.core import cluster, cluster_setup
 from app.core.ha import ha_firewall_rules, ha_topology
+from app.web.ha_network import discover_network
 from scripts.deploy.install_terminal import InstallTerminal
 from scripts.deploy.logging_policy import MARKER as LOGGING_MARKER, assets as logging_assets, write_asset as write_logging_asset
+from app.runtime import policy_recovery
 from scripts.deploy.cluster_status import MARKER as CLUSTER_STATUS_MARKER, assets as cluster_status_assets
 
 KEEPALIVED_CONFIG = Path('/etc/keepalived/keepalived.conf')
 KEEPALIVED_HEALTH = Path('/etc/keepalived/proxypermit-health')
 UFW_RULE_FILES = (Path('/etc/ufw/user.rules'), Path('/etc/ufw/user6.rules'))
+UFW_CONFIG = Path('/etc/ufw/ufw.conf')
+UFW_DEFAULTS = Path('/etc/default/ufw')
 HA_FIREWALL_STATE = Path('/etc/proxypermit/ha-firewall.json')
 HA_RETIRED_STATE = Path('/etc/proxypermit/ha-retired.json')
+HA_PEER_STATE = (Path('/var/lib/proxypermit/ha-peer.json'), Path('/var/lib/proxypermit/ha-enrollment.json'))
 HA_RETIRE_UNIT = Path('/etc/systemd/system/proxypermit-ha-retire.service')
 HA_RETIRE_SUDOERS = Path('/etc/sudoers.d/proxypermit-ha-retire')
 HA_RETIRE_RULE = 'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl start proxypermit-ha-retire.service\n'
@@ -171,7 +177,7 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
     candidates = [host('/etc/proxypermit/.env'), host(install_dir + '/.env')]
     for candidate in candidates:
         if candidate.parent.exists() and not os.access(candidate.parent, os.R_OK | os.X_OK):
-            raise ValueError('Cannot access the existing configuration directory. Run the plan with sudo to detect the existing installation.')
+            raise PermissionError('Cannot access the existing configuration directory. Run the plan with sudo to detect the existing installation.')
     # Source .env matters for legacy in-place upgrades, not arbitrary dry-run roots.
     if root == Path('/'):
         candidates.append(SOURCE / '.env')
@@ -220,7 +226,7 @@ def build_plan(root, install_dir, requested_mode=None, requested_server=None, ha
     if ha:
         plan['ha'] = ha
         plan['firewallRules'] = ha_firewall_rules(ha)
-        steps.append('Configure UFW rules for the proxy VIP and bidirectional VRRP. Keep the existing UFW activation state.')
+        steps.append('Configure scoped UFW rules for the proxy VIP and bidirectional VRRP.')
         steps.append('Install and configure Keepalived, check the local Tinyproxy port, and start VRRP.')
         notes.append('Repeat on the other host with the same cluster settings. Publish policy on each node.')
     if mode == 'ha' and values.get('PROXYPERMIT_MANAGED_HA') == 'true':
@@ -456,6 +462,19 @@ def prepare_release_permissions(release):
             raise ValueError('Release code must contain only regular files and directories.')
 
 
+def prepare_release_parent(path):
+    """Make newly created install ancestors traversable even under a private umask."""
+    pending = []
+    while not path.exists() and not path.is_symlink():
+        pending.append(path)
+        path = path.parent
+    for directory in (path, *path.parents):
+        require_trusted_path(directory, directory=True)
+    for directory in reversed(pending):
+        directory.mkdir(mode=0o755)
+        directory.chmod(0o755)
+
+
 def configure_reload_access(config_path, filter_path):
     """Grant only native config/filter reads, never management-secret access."""
     if sys.platform != 'linux':
@@ -533,9 +552,24 @@ def remove_owned_ha_firewall(owned, *, include_cluster=False):
 
 
 def reload_ufw():
-    config = Path('/etc/ufw/ufw.conf')
-    if config.is_file() and re.search(r'^ENABLED=yes\s*$', config.read_text(encoding='utf-8'), re.M):
+    if ufw_enabled():
         run('ufw', 'reload')
+
+
+def ufw_enabled():
+    return env_values(UFW_CONFIG).get('ENABLED') == 'yes'
+
+
+def prepare_ufw_activation(transaction):
+    for path in (UFW_CONFIG, UFW_DEFAULTS):
+        require_trusted_path(path.parent, directory=True)
+        require_trusted_path(path, directory=False)
+    if ufw_enabled():
+        return False
+    if env_values(UFW_DEFAULTS).get('DEFAULT_INPUT_POLICY') not in ('DROP', 'REJECT'):
+        raise ValueError('Set UFW to deny or reject incoming traffic before enabling it.')
+    transaction.track(UFW_CONFIG)
+    return True
 
 
 def ufw_rule_fingerprints():
@@ -544,7 +578,7 @@ def ufw_rule_fingerprints():
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in UFW_RULE_FILES}
 
 
-def probe_manager(values):
+def probe_manager(values, expected_fingerprint=None):
     """Check the configured HTTP listener, including legacy TLS/Unix sockets."""
     import http.client
     import socket
@@ -573,6 +607,11 @@ def probe_manager(values):
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
                 connection = http.client.HTTPSConnection(host, int(port), timeout=2, context=context)
+                if expected_fingerprint:
+                    connection.connect()
+                    raw = connection.sock.getpeercert(binary_form=True) if isinstance(connection.sock, ssl.SSLSocket) else None
+                    if not raw or hashlib.sha256(raw).hexdigest() != expected_fingerprint:
+                        return False
             else:
                 connection = http.client.HTTPConnection(host, int(port), timeout=2)
         connection.request('GET', '/')
@@ -586,6 +625,15 @@ def probe_manager(values):
             connection.close()
 
 
+def wait_manager(probe, timeout=60):
+    deadline = time.monotonic() + timeout
+    while not probe():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+    return True
+
+
 def manager_values(env_path, unit_path):
     values = env_values(env_path)
     if unit_path.exists():
@@ -596,11 +644,11 @@ def manager_values(env_path, unit_path):
     return values
 
 
-def service_text(release, mode, bind, port, preserve_binding=False):
+def service_text(release, mode, bind, port, preserve_binding=False, tls=False):
     # Existing HA requires legacy root-level Keepalived/sync operations. Preserve
     # that compatibility explicitly; standalone uses a dedicated account.
     account = '' if mode == 'ha' else 'User=proxypermit\nGroup=proxypermit\nSupplementaryGroups=adm systemd-journal\n'
-    binding = '' if preserve_binding else f'Environment=GUNICORN_BIND={bind}:{port}\nEnvironment=GUNICORN_USE_TLS=false\n'
+    binding = '' if preserve_binding else f'Environment=GUNICORN_BIND={bind}:{port}\nEnvironment=GUNICORN_USE_TLS={str(tls).lower()}\n'
     return f'''[Unit]
 Description=ProxyPermit Tinyproxy Manager
 After=network.target tinyproxy.service
@@ -662,6 +710,12 @@ def apply(plan, args):
                 raise ValueError('An HA service is active in standalone mode. Check the topology first.')
     from scripts.deploy.cluster_maintenance import rolling
     with maintenance_lock(), (rolling(lambda: cluster_upgrade_health(plan['installDir']), plan['installDir']) if cluster_upgrade else nullcontext()):
+        if (getattr(args, 'reviewed_action', None) or getattr(args, 'enable_ufw', False)
+                or getattr(args, 'manager_tls', None)):
+            existing = build_plan('/', args.install_dir, args.mode, args.server, plan.get('ha'))
+            if existing['action'] != plan['action'] or existing['existingEnv'] != plan['existingEnv']:
+                raise ValueError('The installation changed. Run the wizard again and review the new plan.')
+        validate_ufw_activation(plan, args)
         if args.upgrade or cluster_upgrade:
             installed_deployment('/', plan['installDir'])
             verify_live_manager(plan['installDir'])
@@ -705,11 +759,14 @@ def cluster_upgrade_health(install_dir):
 
 
 def _apply_locked(plan, args, frozen=False, source=None):
+    from scripts.deploy import management_tls
     source = SOURCE if source is None else source
     cluster_upgrade = bool(getattr(args, 'cluster_maintenance', False))
     release_rollback = cluster_upgrade and bool(getattr(args, 'rollback', None))
     ha = plan.get('ha')
     managed = plan['mode'] == 'standalone' or ha or plan.get('managedHa')
+    direct_tls = getattr(args, 'manager_tls', None) in ('local-ca', 'custom')
+    tls_profile = fingerprint = None
     base = Path(plan['installDir'])
     stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     current = base / 'current'
@@ -726,6 +783,11 @@ def _apply_locked(plan, args, frozen=False, source=None):
         check_ha_host(ha, config_path)
     if managed and (config_path.parent != Path('/etc/tinyproxy') or filter_path.parent != Path('/etc/tinyproxy')):
         raise ValueError('Custom configuration paths require manually configured permissions. Use /etc/tinyproxy with this installer.')
+    if getattr(args, 'manager_tls', None) == 'custom':
+        management_tls.protected(args.manager_cert, 128 * 1024)
+        management_tls.protected(args.manager_key, 32 * 1024, private=True)
+    if managed or HA_RETIRE_UNIT.is_file():
+        prepare_release_parent(release.parent)
     transaction = Transaction(base / 'backups' / stamp)
     for path in (current, env_path, config_path, filter_path,
                  base / 'installed.json', Path('/etc/systemd/system/proxypermit.service'), Path('/etc/sudoers.d/proxypermit')):
@@ -768,6 +830,10 @@ def _apply_locked(plan, args, frozen=False, source=None):
         log_assets = {path: content for path, content in log_assets.items() if 'keepalived.service.d' not in path.parts}
     cluster_assets = cluster_status_assets(current) if managed else {}
     if managed:
+        recovery = policy_recovery.DROP_IN
+        if recovery.is_symlink() or (recovery.exists() and not recovery.read_text(encoding='utf-8').startswith(policy_recovery.MARKER)):
+            raise ValueError('An administrator-owned Tinyproxy policy recovery service requires review.')
+        transaction.track(recovery)
         run('systemctl', 'cat', 'systemd-journald@.service', stdout=subprocess.DEVNULL)
         for path in log_assets:
             if path.is_symlink() or (path.is_file() and not path.read_text().startswith(LOGGING_MARKER)):
@@ -787,6 +853,8 @@ def _apply_locked(plan, args, frozen=False, source=None):
         auxiliary_units.extend(('proxypermit-audit-retention.timer', 'proxypermit-journal-retention.timer',
                                 'systemd-journald@proxypermit.service', 'systemd-journald@proxypermit-traffic.service',
                                 'proxypermit-cluster-status.timer', 'proxypermit-cluster-status.service'))
+    if getattr(args, 'manager_tls', None) == 'local-ca':
+        auxiliary_units.extend((management_tls.RENEW + '.timer', management_tls.RECOVER))
     auxiliary = {unit: service_state(unit) for unit in auxiliary_units}
     service_snapshot: dict[str, Any] = dict(**previous, auxiliary=auxiliary, ufw=False)
     if cluster_upgrade:
@@ -795,23 +863,37 @@ def _apply_locked(plan, args, frozen=False, source=None):
     atomic_write(transaction.directory / 'service-state.json', json.dumps(service_snapshot))
     touched_service = False
     touched_ufw = False
+    activate_ufw = False
+    starting_ufw = False
     password = None
     if plan['action'] == 'install':
         if args.admin_password_file:
             password = Path(args.admin_password_file).read_text(encoding='utf-8').rstrip('\r\n')
         else:
-            password = getpass.getpass('New administrator password (at least 12 characters): ')
-            if password != getpass.getpass('Repeat password: '):
-                raise ValueError('The passwords do not match.')
+            while True:
+                password = getpass.getpass('New administrator password (at least 12 characters): ')
+                if len(password) < 12:
+                    issue = 'Use a password of at least 12 characters.'
+                elif password != getpass.getpass('Repeat password: '):
+                    issue = 'The passwords do not match.'
+                else:
+                    break
+                if not sys.stdin.isatty():
+                    raise ValueError(issue)
+                print(f'  {issue} Try again, or press Ctrl+C to cancel.')
         if len(password) < 12:
             raise ValueError('Use a password of at least 12 characters.')
     try:
         if not cluster_upgrade:
             run('apt-get', 'update')
             packages = ['python3-venv', 'tinyproxy', 'sudo', 'logrotate', 'ufw', 'acl']
+            if direct_tls:
+                packages.append('openssl')
             if ha:
                 packages.append('keepalived')
             run('apt-get', 'install', '-y', *packages)
+        if getattr(args, 'enable_ufw', False):
+            activate_ufw = prepare_ufw_activation(transaction)
         if ha:
             for path in UFW_RULE_FILES:
                 if path.is_symlink() or not path.is_file():
@@ -890,6 +972,9 @@ def _apply_locked(plan, args, frozen=False, source=None):
             chown(accounts_path, 0, gid)
             os.chmod(accounts_path, 0o640)
             additions['AUTH_ACCOUNTS_FILE'] = str(accounts_path)
+            if direct_tls:
+                updates, tls_profile, fingerprint = management_tls.prepare_installation(args, transaction, current, gid)
+                additions.update(updates)
         elif managed:
             additions['SERVICE_CONTROL_SUDO'] = 'true'
             if migrate_accounts:
@@ -1024,7 +1109,7 @@ def _apply_locked(plan, args, frozen=False, source=None):
             upgrade_cluster_agent(transaction, AGENT_PATH, current / agent_source, release / agent_source)
         atomic_write('/etc/systemd/system/proxypermit.service',
                      service_text(current, 'standalone' if managed else 'ha', args.manager_bind, args.manager_port,
-                                  preserve_binding=plan['action'] == 'upgrade'), 0o644)
+                                  preserve_binding=plan['action'] == 'upgrade', tls=direct_tls), 0o644)
         temporary_link = base / '.current-new'
         if temporary_link.is_symlink():
             temporary_link.unlink()
@@ -1034,6 +1119,8 @@ def _apply_locked(plan, args, frozen=False, source=None):
             write_logging_asset(path, content)
         for path, content in cluster_assets.items():
             atomic_write(path, content, 0o644)
+        if managed:
+            write_logging_asset(policy_recovery.DROP_IN, policy_recovery.drop_in(base))
         run('systemctl', 'daemon-reload')
         if managed:
             for namespace in ('proxypermit', 'proxypermit-traffic'):
@@ -1041,16 +1128,15 @@ def _apply_locked(plan, args, frozen=False, source=None):
         touched_service = True
         run('systemctl', 'enable', 'proxypermit.service')
         run('systemctl', 'restart', 'proxypermit.service')
-        # An HTTP response verifies Gunicorn booted, rather than merely spawned.
-        ready = False
         effective_values = env_values(env_path)
-        for _ in range(20):
-            ready = probe_manager(effective_values)
-            if ready:
-                break
-            time.sleep(0.5)
-        if not ready:
+        def check_manager():
+            if tls_profile:
+                return management_tls.probe(effective_values, tls_profile)
+            return probe_manager(effective_values, fingerprint) if fingerprint else probe_manager(effective_values)
+        if not wait_manager(check_manager):
             raise RuntimeError('The web service did not become available. Restoring the previous configuration.')
+        if tls_profile:
+            run('systemctl', 'enable', '--now', 'proxypermit-management-tls-renew.timer')
         if ha:
             touched_ufw = True
             owned_rules = apply_ha_firewall(plan['firewallRules'])
@@ -1082,6 +1168,14 @@ def _apply_locked(plan, args, frozen=False, source=None):
             start_ha()
         if update_legacy_sync:
             atomic_write(LEGACY_SYNC_SCRIPT, (release / 'legacy/sync_whitelist_v2.py').read_text(encoding='utf-8'), 0o755)
+        if activate_ufw:
+            if ufw_enabled():
+                raise ValueError('UFW was enabled while installation was in progress. Review the firewall before retrying.')
+            starting_ufw = True
+            run('ufw', '--force', 'enable')
+            if not ufw_enabled():
+                raise RuntimeError('UFW could not be enabled.')
+            service_snapshot['enabledUfwConfigHash'] = hashlib.sha256(UFW_CONFIG.read_bytes()).hexdigest()
         atomic_write(base / 'installed.json', json.dumps(dict(release=str(release), mode=plan['mode'], backup=str(transaction.directory)), indent=2))
         if touched_ufw:
             service_snapshot['ufw'] = True
@@ -1092,25 +1186,38 @@ def _apply_locked(plan, args, frozen=False, source=None):
         elif plan['action'] == 'upgrade':
             print('Upgrade complete. The existing management listener was preserved.')
         else:
-            print(f'Installation complete. Management console: http://127.0.0.1:{args.manager_port}/')
+            scheme = 'https' if direct_tls else 'http'
+            print(f'Installation complete. Management console listener: {scheme}://127.0.0.1:{args.manager_port}/')
+            if tls_profile:
+                print(f'Trust {management_tls.FOLDER / "ca.pem"} on each client after verifying its SHA-256 fingerprint: {tls_profile["caFingerprint"]}')
+            elif direct_tls:
+                print('Connect using a hostname or IP listed on the server certificate.')
         if ha:
             print(f"HA node {ha['node'].upper()} is configured. Shared proxy address: {ha['vip'].split('/')[0]}:3128.")
         print(f'Backup and recovery manifest: {transaction.directory}')
     except (Exception, KeyboardInterrupt):
-        if touched_service:
-            subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
-        for unit in auxiliary:
-            subprocess.run(['systemctl', 'stop', unit], check=False)
-        transaction.restore()
-        if touched_ufw:
-            reload_ufw()
-        if touched_service:
-            run('systemctl', 'daemon-reload')
-            subprocess.run(['systemctl', 'restart' if previous['active'] else 'stop', 'proxypermit.service'], check=False)
-            if not previous['enabled']:
-                subprocess.run(['systemctl', 'disable', 'proxypermit.service'], check=False)
-        restore_auxiliary_services(auxiliary)
+        try:
+            if starting_ufw:
+                run('ufw', '--force', 'disable')
+        finally:
+            restore_failed_install(transaction, auxiliary, previous, touched_service, touched_ufw)
         raise
+
+
+def restore_failed_install(transaction, auxiliary, previous, touched_service, touched_ufw):
+    if touched_service:
+        subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
+    for unit in auxiliary:
+        subprocess.run(['systemctl', 'stop', unit], check=False)
+    transaction.restore()
+    if touched_ufw:
+        reload_ufw()
+    if touched_service:
+        run('systemctl', 'daemon-reload')
+        subprocess.run(['systemctl', 'restart' if previous['active'] else 'stop', 'proxypermit.service'], check=False)
+        if not previous['enabled']:
+            subprocess.run(['systemctl', 'disable', 'proxypermit.service'], check=False)
+    restore_auxiliary_services(auxiliary)
 
 
 def installed_deployment(root, install_dir):
@@ -1133,9 +1240,12 @@ def installed_deployment(root, install_dir):
     return installed, unit, current, marker
 
 
-def build_uninstall_plan(root, install_dir):
+def build_uninstall_plan(root, install_dir, *, purge=False):
     installed, unit, current, marker = installed_deployment(root, install_dir)
     paths = [unit, current, marker]
+    recovery = Path(root).resolve() / policy_recovery.DROP_IN.as_posix().lstrip('/')
+    if not recovery.is_symlink() and recovery.is_file() and recovery.read_text(encoding='utf-8') == policy_recovery.drop_in(Path(install_dir)):
+        paths.append(recovery)
     sudoers = Path(root).resolve() / 'etc/sudoers.d/proxypermit'
     if not sudoers.is_symlink() and sudoers.is_file() and sudoers.read_text(encoding='utf-8') == (
         'proxypermit ALL=(root) NOPASSWD: /usr/bin/systemctl restart tinyproxy.service, /usr/bin/systemctl kill --kill-whom=main --signal=SIGUSR1 tinyproxy.service\n'
@@ -1151,10 +1261,6 @@ def build_uninstall_plan(root, install_dir):
         target = Path(root).resolve() / path.as_posix().lstrip('/')
         if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
             paths.append(target)
-    from scripts.deploy.proxmox_fence import TARGET as fencing_target, content as fencing_content
-    target = Path(root).resolve() / fencing_target.as_posix().lstrip('/')
-    if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == fencing_content():
-        paths.append(target)
     from scripts.deploy.management_tls import assets as management_tls_assets
     for path, content in management_tls_assets(Path(install_dir) / 'current').items():
         target = Path(root).resolve() / path.as_posix().lstrip('/')
@@ -1166,13 +1272,54 @@ def build_uninstall_plan(root, install_dir):
             target = Path(root).resolve() / path.as_posix().lstrip('/')
             if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8') == content:
                 paths.append(target)
-    return {
+    plan = {
         'action': 'uninstall', 'mode': installed.get('mode'), 'installDir': install_dir,
         'service': 'proxypermit.service', 'paths': [str(path) for path in paths],
         'preserved': ['/etc/proxypermit', '/var/lib/proxypermit', '/var/log/proxypermit',
                       f'{install_dir}/releases', f'{install_dir}/backups',
-                      'Tinyproxy, Keepalived, legacy sync, system packages, and the service account'],
+                      'SSH configuration and firewall rules',
+                      'Tinyproxy, Keepalived, fencing agents, legacy sync, system packages, and the service account'],
     }
+    if purge:
+        root = Path(root).resolve()
+        for path in logging_assets(Path(install_dir) / 'current', {'DEPLOYMENT_MODE': 'ha'}):
+            target = root / path.as_posix().lstrip('/')
+            if not target.is_symlink() and target.is_file() and target.read_text(encoding='utf-8').startswith(LOGGING_MARKER):
+                paths.append(target)
+        config = root / 'etc/proxypermit'
+        if installed.get('mode') == 'ha':
+            from scripts.deploy import ha_setup
+            for path in (ha_setup.TLS_SERVICE, ha_setup.POLICY_SERVICE, ha_setup.POLICY_TIMER):
+                unit_path = root / path.as_posix().lstrip('/')
+                if unit_path.is_symlink() or not unit_path.is_file():
+                    continue
+                if path == ha_setup.TLS_SERVICE:
+                    try:
+                        address = str(ipaddress.IPv4Address(env_values(config / '.env')['NODE0_ADDRESS']))
+                    except (KeyError, ValueError):
+                        continue
+                    expected = ha_setup.tls_unit(Path(install_dir), address)
+                else:
+                    expected = (SOURCE / 'deploy/systemd' / path.name).read_text(encoding='utf-8')
+                    expected = expected.replace('/opt/proxypermit/', f'{install_dir}/')
+                if unit_path.read_text(encoding='utf-8') == expected:
+                    paths.append(unit_path)
+        local_config = [config / name for name in ('.env', 'accounts.json', 'management-tls', 'ha-tls',
+                        'management-tls-web.json', 'ha-certificate-transition.json', 'ha-retired.json', 'sync-secret.key')]
+        data = [*local_config, root / 'var/lib/proxypermit', root / 'var/log/proxypermit',
+                marker.parent / 'releases', marker.parent / 'backups']
+        machine_id = root / 'etc/machine-id'
+        if machine_id.is_file() and not machine_id.is_symlink():
+            value = machine_id.read_text(encoding='ascii').strip()
+            if re.fullmatch(r'[0-9a-f]{32}', value):
+                data.extend(root / store / f'{value}.{namespace}' for store in ('var/log/journal', 'run/log/journal')
+                            for namespace in ('proxypermit', 'proxypermit-traffic'))
+        plan.update(paths=list(map(str, paths)), purgePaths=list(map(str, data)), preserved=[
+            'Pinned management access, SSH and UFW configuration',
+            'Tinyproxy rules and configuration, OS packages, service account and fencing setup',
+            'Operator-managed files and external backups or logs',
+        ])
+    return plan
 
 
 def verify_live_manager(install_dir):
@@ -1183,14 +1330,17 @@ def verify_live_manager(install_dir):
         raise ValueError('systemd is using a different unit file or working directory for ProxyPermit.')
 
 
-def uninstall(install_dir, *, detached=False):
+def uninstall(install_dir, *, detached=False, purge=False):
     require_linux_root('Uninstall')
     with maintenance_lock():
         if detached:
             require_retired_cluster()
         else:
             cluster.require_independent_control('uninstalling this node')
-        plan = build_uninstall_plan('/', install_dir)
+        plan = build_uninstall_plan('/', install_dir, purge=True) if purge else build_uninstall_plan('/', install_dir)
+        if purge and plan['mode'] == 'ha':
+            require_ha_purge_ready()
+        purge_paths = validate_purge_paths(plan['purgePaths']) if purge else []
         unit = plan['service']
         verify_live_manager(install_dir)
         previous: dict[str, Any] = service_state(unit)
@@ -1203,6 +1353,12 @@ def uninstall(install_dir, *, detached=False):
                      'proxypermit-management-tls-recover.service', 'proxypermit-management-tls-web.service'):
             if str(Path('/etc/systemd/system') / name) in plan['paths']:
                 previous.setdefault('auxiliary', {})[name] = service_state(name)
+        if purge:
+            for kind in ('audit', 'journal'):
+                for suffix in ('timer', 'service'):
+                    name = f'proxypermit-{kind}-retention.{suffix}'
+                    if str(Path('/etc/systemd/system') / name) in plan['paths']:
+                        previous.setdefault('auxiliary', {})[name] = service_state(name)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
         transaction = Transaction(Path(install_dir) / 'backups' / stamp)
         for path in plan['paths']:
@@ -1222,6 +1378,47 @@ def uninstall(install_dir, *, detached=False):
             restore_auxiliary_services({unit: previous, **previous.get('auxiliary', {})})
             raise
         print('ProxyPermit manager removed.')
+        if purge:
+            purge_data(purge_paths, plan)
+
+
+def require_ha_purge_ready():
+    units = ('keepalived.service', 'proxypermit-ha-policy.timer', 'proxypermit-ha-tls.service', 'whitelist-sync-v2.timer')
+    jobs = ('proxypermit-ha-policy.service', 'whitelist-sync-v2.service')
+    if (HA_FIREWALL_STATE.exists() or HA_FIREWALL_STATE.is_symlink()
+            or any(any(service_state(unit).values()) for unit in units)
+            or any(service_state(unit)['active'] for unit in jobs)):
+        raise ValueError('Retire this HA node and stop its synchronization before purging local data.')
+
+
+def validate_purge_paths(values):
+    paths = [Path(value) for value in values]
+    mount_points = {Path(re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), row.split(' ')[4]))
+                    for row in Path('/proc/self/mountinfo').read_text(encoding='utf-8').splitlines()}
+    for path in paths:
+        if path.resolve() != path or any(path == mount or path in mount.parents for mount in mount_points):
+            raise ValueError(f'Review symbolic links and mounted data before purging {path}.')
+    return paths
+
+
+def purge_data(paths, plan):
+    try:
+        # Restart only active external services that used the removed namespace.
+        for service in ('tinyproxy', 'keepalived'):
+            dropin = f'/etc/systemd/system/{service}.service.d/20-proxypermit-logging.conf'
+            if dropin in plan['paths'] and service_state(service + '.service')['active']:
+                run('systemctl', 'restart', service + '.service')
+        for namespace in ('proxypermit', 'proxypermit-traffic'):
+            run('systemctl', 'stop', f'systemd-journald@{namespace}.service', f'systemd-journald@{namespace}.socket')
+        for path in paths:
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        remaining = ', '.join(str(path) for path in paths if path.exists())
+        raise ValueError(f'The manager was removed, but data cleanup stopped: {exc}. Review these paths: {remaining}') from exc
+    print('ProxyPermit local data and recovery backups were removed.')
 
 
 def detached_cluster():
@@ -1244,25 +1441,35 @@ def detached_cluster():
     return checkpoint, profile
 
 
-def require_retired_cluster():
-    checkpoint, _ = detached_cluster()
+def require_retirement_receipt(checkpoint):
     try:
         retired = cluster_setup.protected(HA_RETIRED_STATE, private=True)
     except FileNotFoundError as exc:
         raise ValueError('Complete detached HA retirement before uninstalling this node.') from exc
+    if retired != {'version': 1, 'planHash': checkpoint['planHash']}:
+        raise ValueError('Complete detached HA retirement before uninstalling this node.')
+
+
+def require_retired_cluster(detachment=None):
+    checkpoint, _ = detached_cluster() if detachment is None else detachment
+    require_retirement_receipt(checkpoint)
     unit = run('systemctl', 'show', 'tinyproxy.service', '--property=ActiveState,UnitFileState',
                capture_output=True, text=True).stdout.splitlines()
-    if (retired != {'version': 1, 'planHash': checkpoint['planHash']}
-            or HA_FIREWALL_STATE.exists() or HA_FIREWALL_STATE.is_symlink() or 'ActiveState=inactive' not in unit
+    if (HA_FIREWALL_STATE.exists() or HA_FIREWALL_STATE.is_symlink() or 'ActiveState=inactive' not in unit
             or not {'UnitFileState=disabled', 'UnitFileState=masked', 'UnitFileState=static'}.intersection(unit)):
         raise ValueError('Complete detached HA retirement before uninstalling this node.')
 
 
-def build_ha_retirement_plan(install_dir, *, detached=False):
+def build_ha_retirement_plan(install_dir, *, detached=False) -> dict[str, Any]:
     detachment = detached_cluster() if detached else None
     if detachment is None:
         cluster.require_independent_control('retiring this node')
     installed, _, _, _ = installed_deployment('/', install_dir)
+    if (detachment is not None and installed.get('mode') == 'ha'
+            and not HA_FIREWALL_STATE.exists() and not HA_FIREWALL_STATE.is_symlink()):
+        require_retired_cluster(detachment)
+        return dict(action='retire-detached-ha-node', alreadyRetired=True,
+                    planHash=detachment[0]['planHash'], services=[], ownedFirewallRules=[])
     if installed.get('mode') != 'ha' or HA_FIREWALL_STATE.is_symlink() or not HA_FIREWALL_STATE.is_file():
         raise ValueError('Retirement requires a managed HA node with a recorded firewall configuration.')
     require_trusted_path(HA_FIREWALL_STATE.parent, directory=True)
@@ -1284,6 +1491,8 @@ def build_ha_retirement_plan(install_dir, *, detached=False):
             'services': services, 'ownedFirewallRules': rules}
     if detachment is not None:
         checkpoint, profile = detachment
+        if HA_RETIRED_STATE.exists() or HA_RETIRED_STATE.is_symlink():
+            require_retirement_receipt(checkpoint)
         native_rules = checkpoint.get('ownedRules')
         if (profile['vip'] != topology['vip'] or profile['interface'] != topology['interface']
                 or not isinstance(native_rules, list) or any(not isinstance(rule, str) for rule in native_rules)):
@@ -1313,6 +1522,9 @@ def retire_ha_node(install_dir, *, detached=False):
     require_linux_root('HA retirement')
     with maintenance_lock():
         plan = build_ha_retirement_plan(install_dir, detached=detached)
+        if plan.get('alreadyRetired'):
+            print('HA retirement was already completed on this node.')
+            return
         verify_live_manager(install_dir)
         values = (manager_values(Path('/etc/proxypermit/.env'), Path('/etc/systemd/system/proxypermit.service'))
                   if detached else None)
@@ -1329,11 +1541,10 @@ def retire_ha_node(install_dir, *, detached=False):
         snapshot: dict[str, Any] = dict(**service_state('proxypermit.service'), auxiliary=previous, ufw=True)
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
         transaction = Transaction(base / 'backups' / stamp)
-        peer_state = (Path('/var/lib/proxypermit/ha-peer.json'), Path('/var/lib/proxypermit/ha-enrollment.json'))
-        for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE, *peer_state):
+        for path in (*UFW_RULE_FILES, HA_FIREWALL_STATE, *HA_PEER_STATE):
             transaction.track(path)
         if detached:
-            transaction.track_new(HA_RETIRED_STATE)
+            transaction.track(HA_RETIRED_STATE)
         atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
         print(f'Recovery backup: {stamp}', flush=True)
         try:
@@ -1344,13 +1555,21 @@ def retire_ha_node(install_dir, *, detached=False):
             verify_remote_proxy(plan['vip'], plan['peer'])
             if values is not None and not probe_manager(values):
                 raise ValueError('The local management service could not be verified after retirement.')
-            HA_FIREWALL_STATE.unlink()
-            for path in peer_state:
+            for path in HA_PEER_STATE:
                 path.unlink(missing_ok=True)
+            if HA_PEER_STATE[0].parent.is_dir():
+                sync_directory(HA_PEER_STATE[0].parent)
             snapshot['ufwRuleHashes'] = ufw_rule_fingerprints()
             atomic_write(transaction.directory / 'service-state.json', json.dumps(snapshot))
             if detached:
+                for path in UFW_RULE_FILES:
+                    with path.open('r+b') as rules:
+                        os.fsync(rules.fileno())
+                sync_directory(UFW_RULE_FILES[0].parent)
                 atomic_write(HA_RETIRED_STATE, json.dumps(dict(version=1, planHash=plan['planHash'])), 0o600)
+            # The rule record remains available for a safe retry until all cleanup is durable.
+            HA_FIREWALL_STATE.unlink()
+            sync_directory(HA_FIREWALL_STATE.parent)
         except (Exception, KeyboardInterrupt):
             transaction.restore()
             reload_ufw()
@@ -1375,6 +1594,10 @@ def rollback_install(base, stamp, execute=False):
         tls_values = rollback_values(entries)
         if state.get('ufw') and state.get('ufwRuleHashes') != ufw_rule_fingerprints():
             raise ValueError('UFW rules changed since installation. Review the firewall backup before restoring.')
+        enabled_ufw = state.get('enabledUfwConfigHash')
+        if enabled_ufw and (not UFW_CONFIG.is_file() or UFW_CONFIG.is_symlink()
+                            or enabled_ufw != hashlib.sha256(UFW_CONFIG.read_bytes()).hexdigest()):
+            raise ValueError('UFW activation changed since installation. Review the firewall backup before restoring.')
         subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
         auxiliary = state.get('auxiliary', {})
         for unit in auxiliary:
@@ -1383,6 +1606,8 @@ def rollback_install(base, stamp, execute=False):
                 run('systemctl', 'stop', unit)
         transaction = object.__new__(Transaction)
         transaction.directory, transaction.entries = directory, entries
+        if enabled_ufw:
+            run('ufw', '--force', 'disable')
         transaction.restore()
         if tls_values:
             tls_write(tls_environment, rewrite_environment(tls_environment.read_text(encoding='utf-8'), tls_values),
@@ -1394,11 +1619,7 @@ def rollback_install(base, stamp, execute=False):
         if state['active']:
             run('systemctl', 'start', 'proxypermit.service')
             values = manager_values(Path('/etc/proxypermit/.env'), Path('/etc/systemd/system/proxypermit.service'))
-            for _ in range(20):
-                if probe_manager(values):
-                    break
-                time.sleep(0.5)
-            else:
+            if not wait_manager(lambda: probe_manager(values)):
                 raise RuntimeError('Recovery finished, but the web service is unreachable at the restored address.')
         subprocess.run(['systemctl', 'enable' if state['enabled'] else 'disable', 'proxypermit.service'], check=False)
         print('Restored the previous configuration and release link. Installed packages were retained.')
@@ -1430,79 +1651,300 @@ def cluster_rollback_release(install_dir, stamp):
 
 
 def wizard_ha(ui, args):
-    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A · preferred', 'Node B · standby'))]
-    fields = (
-        ('Network interface on this host', None),
-        ('Static IPv4 address of node A', None),
-        ('Static IPv4 address of node B', None),
-        ('Virtual IPv4 address with subnet prefix, for example 192.0.2.10/24', None),
-        ('Allowed client network with subnet prefix, for example 192.0.2.0/24', None),
-        ('Available VRRP ID on this network (1–255)', '51'),
-    )
-    defaults = [default for _, default in fields]
-    while True:
-        defaults = [ui.ask(label, default) for (label, _), default in zip(fields, defaults)]
-        try:
-            interface, a, b, vip, clients, vrid = defaults
-            ha = ha_topology(node, interface, a, b, vip, clients, int(vrid))
-        except ValueError as exc:
-            print(f'  {exc} Check the values. Press Enter to keep your previous input.')
-            continue
-        args.ha_node, args.ha_interface = node, interface
-        args.ha_node_a, args.ha_node_b, args.ha_vip = a, b, vip
-        args.ha_client_cidr, args.ha_vrid = clients, int(vrid)
-        return ha
+    node = ('a', 'b')[ui.choose('Which node are you installing?', ('Node A · preferred', 'Node B · standby'),
+                                default=int(args.ha_node == 'b'))]
+    try:
+        inventory = [row for row in discover_network() if not row['dynamic']]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        inventory = []
+    suggestion = None
+    if not args.ha_interface and inventory:
+        options = [f"{row['interface']} · {row['address']}/{row['prefix']}" for row in inventory]
+        choice = ui.choose('Use a detected local IPv4 address?', (*options, 'Enter network settings manually'))
+        if choice < len(inventory):
+            suggestion = inventory[choice]
+
+    def interface_name(value):
+        if not re.fullmatch(r'[A-Za-z0-9_.][A-Za-z0-9_.-]{0,14}', value):
+            raise ValueError('Enter a Linux interface name such as ens18 or eth0.')
+        return value
+
+    interface = ui.ask('Network interface', args.ha_interface or (suggestion and suggestion['interface']), interface_name)
+    previous = {'a': args.ha_node_a, 'b': args.ha_node_b}
+    peer = 'b' if node == 'a' else 'a'
+
+    def usable_address(value):
+        address = ipaddress.IPv4Address(value)
+        if address.is_loopback or address.is_multicast or address.is_unspecified or address.is_link_local:
+            raise ValueError('Enter a usable static IPv4 address.')
+        return str(address)
+
+    local_ip = ui.ask(f'IPv4 address of this host (node {node.upper()})',
+                      previous.get(node) or (suggestion and suggestion['address']), usable_address,
+                      help_text='Use a static address on the interface selected above.')
+
+    def peer_address(value):
+        address = usable_address(value)
+        if address == local_ip:
+            raise ValueError('The other node must have a different IPv4 address.')
+        return address
+
+    peer_ip = ui.ask(f'IPv4 address of the other host (node {peer.upper()})', previous.get(peer), peer_address)
+    addresses = {node: local_ip, peer: peer_ip}
+
+    def virtual_address(value):
+        if '/' not in value:
+            raise ValueError('Include the subnet prefix, for example 192.0.2.10/24.')
+        vip = ipaddress.IPv4Interface(value)
+        ha_topology(node, interface, addresses['a'], addresses['b'], str(vip), str(vip.network), 51)
+        if (suggestion and interface == suggestion['interface'] and local_ip == suggestion['address']
+                and vip.network != ipaddress.IPv4Network(suggestion['network'])):
+            raise ValueError(f"The virtual IP must use the selected interface's subnet: {suggestion['network']}.")
+        return str(vip)
+
+    vip = ui.ask('Virtual IPv4 address and prefix', args.ha_vip, virtual_address,
+                 help_text='Use a free address on the same subnet as both nodes. Reserve it outside DHCP.')
+
+    def client_network(value):
+        if '/' not in value:
+            raise ValueError('Include the prefix, for example 192.0.2.0/24 or 192.0.2.15/32.')
+        allowed = ipaddress.IPv4Network(value)
+        if not allowed.prefixlen:
+            raise ValueError('Choose a specific client network.')
+        return str(allowed)
+
+    clients = ui.ask('Allowed IPv4 client network', args.ha_client_cidr, client_network,
+                     help_text='Enter the network that may use the proxy on the virtual IP.')
+
+    def router_id(value):
+        if not value.isascii() or not value.isdecimal() or len(value) > 3 or not 1 <= int(value) <= 255:
+            raise ValueError('Enter a VRRP ID between 1 and 255.')
+        return int(value)
+
+    vrid = ui.ask('VRRP ID', str(args.ha_vrid or 51), router_id,
+                  help_text='Use the same ID on both nodes and an ID unused by other clusters on this network.')
+    args.ha_node, args.ha_interface = node, interface
+    args.ha_node_a, args.ha_node_b, args.ha_vip = addresses['a'], addresses['b'], vip
+    args.ha_client_cidr, args.ha_vrid = clients, vrid
+    return ha_topology(node, interface, addresses['a'], addresses['b'], vip, clients, vrid)
+
+
+def wizard_management(ui, args):
+    from scripts.deploy.access_safety import network, port
+    ssh = os.getenv('SSH_CONNECTION', '').split()
+    previous_port = args.manager_port
+    args.admin_user = ui.ask('Administrator username', args.admin_user, admin_username)
+    previous_scheme = args.manager_tls in ('local-ca', 'custom')
+    wizard_transport(ui, args)
+    https = args.manager_tls in ('local-ca', 'custom')
+    preferred = default_manager_port(args.manager_tls) if previous_scheme != https else previous_port
+    suggested_port = next((candidate for candidate in range(preferred, min(preferred + 10, 65536))
+                           if (not https or candidate != 8443) and console_port_available(candidate)), None)
+    def check_port(value):
+        number = available_console_port(value)
+        if https and number == 8443:
+            raise ValueError('Port 8443 is reserved for HA synchronization. Try port 8444.')
+        return number
+
+    args.manager_port = ui.ask('Local console port', str(suggested_port) if suggested_port else None, check_port,
+                               help_text='The web console listens on 127.0.0.1. Use a tunnel or reverse proxy for remote access.')
+    trusted = (args.management_cidr or [ssh[0] if len(ssh) == 4 else None])[0]
+    args.management_cidr = [ui.ask('Trusted management IP or CIDR', trusted, network,
+                                  help_text='Use the administrator IP as seen by this host, or a dedicated management subnet.')]
+    ssh_port = (args.management_ssh_port or [ssh[3] if len(ssh) == 4 else 22])[0]
+    args.management_ssh_port = [ui.ask('Host SSH port', str(ssh_port), port,
+                                      help_text='Enter the port SSH actually listens on, even when using a tunnel.')]
+    web = (args.management_web_port or [previous_port])[0]
+    if web == previous_port:
+        web = args.manager_port
+    args.management_web_port = [ui.ask('Host port for web access', str(web), port,
+                                      help_text='For a reverse proxy, enter its host-side port. For a tunnel, keep the local console port.')]
+
+
+def default_manager_port(mode):
+    return 8444 if mode in ('local-ca', 'custom') else 8080
+
+
+def certificate_path(value):
+    if not value.startswith('/') or '/' == value or any(ord(ch) < 32 for ch in value):
+        raise ValueError('Enter an absolute path on the Linux host, starting with /.')
+    return value
+
+
+def wizard_transport(ui, args):
+    https = ui.choose('Management console protocol', ('HTTP · for an SSH tunnel or reverse proxy',
+                      'HTTPS · direct TLS on the local listener'), default=int(args.manager_tls != 'http'))
+    if not https:
+        args.manager_tls = 'http'
+        args.manager_cert = args.manager_key = None
+        args.manager_name = []
+        return
+    mode = ui.choose('HTTPS certificate', ('Local CA · self-signed trust root with automatic renewal',
+                     'Own certificate · PEM chain and private key'), default=int(args.manager_tls == 'custom'))
+    args.manager_tls = ('local-ca', 'custom')[mode]
+    if mode == 0:
+        from scripts.deploy.management_tls import installation_names
+
+        def validate_hosts(value):
+            hosts = value.split()
+            installation_names(hosts)
+            return hosts
+
+        args.manager_name = ui.ask('Additional DNS names or IP addresses (space-separated)',
+                                   ' '.join(args.manager_name) or 'localhost', validate_hosts,
+                                   help_text='Localhost and loopback IPs are always included. Add the names clients actually use.')
+        args.manager_cert = args.manager_key = None
+    else:
+        args.manager_name = []
+        args.manager_cert = ui.ask('Certificate chain file (PEM)', args.manager_cert, certificate_path,
+                                   help_text='Use an absolute path to a root-owned file. Put the server certificate first.')
+        args.manager_key = ui.ask('Private key file (PEM)', args.manager_key, certificate_path,
+                                  help_text='Use an unencrypted, root-owned file with permissions 0600.')
+
+
+def plan_management(plan, args):
+    mode = getattr(args, 'manager_tls', None)
+    if plan['action'] != 'install':
+        if mode or args.manager_cert or args.manager_key or args.manager_name:
+            raise ValueError('Use the management HTTPS controls for an existing installation. Upgrades preserve its listener.')
+        return
+    if mode == 'custom':
+        if not args.manager_cert or not args.manager_key:
+            raise ValueError('Custom HTTPS requires --manager-cert and --manager-key.')
+        certificate_path(args.manager_cert)
+        certificate_path(args.manager_key)
+    elif args.manager_cert or args.manager_key:
+        raise ValueError('Certificate and key paths require --manager-tls custom.')
+    if args.manager_name and mode != 'local-ca':
+        raise ValueError('Additional certificate names require --manager-tls local-ca.')
+    direct_tls = mode in ('local-ca', 'custom')
+    if direct_tls and args.manager_port == 8443:
+        raise ValueError('Port 8443 is reserved for HA synchronization. Use a different management port, such as 8444.')
+    plan['management'] = {'scheme': 'https' if direct_tls else 'http', 'bind': args.manager_bind,
+                          'port': args.manager_port, 'certificate': mode if direct_tls else None}
+    if mode == 'local-ca':
+        from scripts.deploy.management_tls import installation_names
+        plan['management']['certificateNames'] = installation_names(args.manager_name)
+        plan['steps'].append('Create a local CA and set up automatic management certificate renewal.')
+        plan['notes'].append('Verify the printed CA fingerprint and trust that CA on each client. The leaf renews automatically.')
+    elif mode == 'custom':
+        plan['steps'].append('Validate and install a protected copy of the supplied certificate and key.')
+        plan['notes'].append('Use a URL covered by your certificate and manage its renewal separately.')
+
+
+def validate_ufw_activation(plan, args):
+    if not getattr(args, 'enable_ufw', False):
+        return
+    if plan['action'] != 'install' or not args.management_cidr:
+        raise ValueError('--enable-ufw requires a fresh installation and an explicit trusted management IP or CIDR.')
+    ssh = os.getenv('SSH_CONNECTION', '').split()
+    if len(ssh) == 4:
+        source = ipaddress.ip_address(ssh[0])
+        if (not any(source in ipaddress.ip_network(cidr) for cidr in args.management_cidr)
+                or (args.management_ssh_port and int(ssh[3]) not in args.management_ssh_port)):
+            raise ValueError('The trusted management network and SSH port must include your current SSH connection to enable UFW.')
+
+
+def wizard_sudo(*arguments):
+    if not shutil.which('sudo'):
+        raise ValueError('sudo is unavailable. Sign in as root and run the wizard.')
+    return subprocess.run(['sudo', '--', 'bash', str(SOURCE / 'install.sh'), *arguments], check=False).returncode
 
 
 def run_wizard(args):
     ui = InstallTerminal()
     ui.heading('ProxyPermit / Installation')
-    print('  Configure Tinyproxy in three steps. Press Ctrl+C to cancel.')
-    print('  Applying the plan requires Linux and root privileges.')
-    detected = build_plan('/', args.install_dir)
-    ui.heading('01  Choose the deployment topology')
-    if detected['action'] == 'upgrade':
-        args.mode = detected['mode']
-        print(f'  Existing installation found ({args.mode}). The wizard will prepare an upgrade plan.')
+    print('  Press Enter to accept a default. Press Ctrl+C to cancel.')
+    try:
+        detected = build_plan('/', args.install_dir)
+    except PermissionError:
+        if sys.platform != 'linux' or os.geteuid() == 0:  # pylint: disable=no-member
+            raise
+        print('  Administrator access is needed to read the existing installation.')
+        return wizard_sudo()
+    fresh = detected['action'] == 'install'
+    ha = None
+    if fresh:
+        args.mode = ('standalone', 'ha')[ui.choose('Deployment topology', (
+            'Standalone node · one server', 'Two-node HA · shared proxy address through Keepalived'))]
+        if args.mode == 'ha':
+            ha = wizard_ha(ui, args)
     else:
-        modes = ('Standalone node · one server', 'Two-node HA · shared proxy address through Keepalived')
-        args.mode = ('standalone', 'ha')[ui.choose('How do you want to deploy ProxyPermit?', modes)]
-    ha = wizard_ha(ui, args) if args.mode == 'ha' and detected['action'] == 'install' else None
-    ui.heading('02  Configure the management console')
+        args.mode = detected['mode']
+        print(f'  Existing {args.mode} installation found. This wizard prepares an upgrade.')
+
     servers = ('gunicorn', 'granian')
-    args.server = servers[ui.choose('Which web server do you want to use?', ('Gunicorn', 'Granian'),
-                                    default=servers.index(detected['server']))]
-    if detected['action'] == 'install':
-        args.admin_user = ui.ask('Administrator username', args.admin_user, admin_username)
-        args.manager_port = ui.ask('Local management port', str(args.manager_port), manager_port)
-        from scripts.deploy.access_safety import network, port
-        peer = os.getenv('SSH_CONNECTION', '').split()
-        args.management_cidr = [ui.ask('Trusted management IP or CIDR (anti-lockout)', peer[0] if len(peer) == 4 else None, network)]
-        args.management_ssh_port = [ui.ask('Host SSH-management port', peer[3] if len(peer) == 4 else '22', port)]
-        args.management_web_port = [ui.ask('Host web-management port (including reverse proxy or relay)', str(args.manager_port), port)]
-    plan = build_plan('/', args.install_dir, args.mode, args.server, ha)
-    ui.review(plan, args)
-    action = ui.choose('What would you like to do?', ('Exit without installing', 'Apply plan'))
-    if action == 0:
-        print('  Installation cancelled before applying the plan.')
-        return 0
+    server_options = ('Gunicorn · default', 'Granian · Rust-based web server')
+    args.server = servers[ui.choose('Web server', server_options, default=servers.index(detected['server']))]
+    if fresh:
+        wizard_management(ui, args)
+        wizard_firewall(ui, args)
+    options = ['Exit without applying', 'Apply plan', 'Change web server']
+    if fresh:
+        options.extend(('Edit management and firewall settings', 'Edit HA network settings' if ha else 'Change to two-node HA'))
+    args.reviewed_action = detected['action']
+    while True:
+        plan = build_plan('/', args.install_dir, args.mode, args.server, ha)
+        if plan['action'] != args.reviewed_action:
+            raise ValueError('The installation changed. Run the wizard again and review the new plan.')
+        plan_management(plan, args)
+        ui.review(plan, args)
+        action = ui.choose('What would you like to do?', options)
+        if action == 0:
+            print('  Cancelled before applying the plan.')
+            return 0
+        if action == 1:
+            break
+        if action == 2:
+            args.server = servers[ui.choose('Web server', server_options, default=servers.index(args.server))]
+        elif action == 3:
+            wizard_management(ui, args)
+            wizard_firewall(ui, args)
+        else:
+            args.mode = ('standalone', 'ha')[ui.choose('Deployment topology', ('Standalone node', 'Two-node HA'),
+                                                      default=int(args.mode == 'ha'))]
+            ha = wizard_ha(ui, args) if args.mode == 'ha' else None
+            options[4] = 'Edit HA network settings' if ha else 'Change to two-node HA'
+
     if sys.platform != 'linux':
         raise ValueError('Applying the plan requires Linux. Run the wizard on Debian or Ubuntu.')
-    if os.geteuid() != 0:  # pylint: disable=no-member
-        command = ['sudo', 'bash', 'install.sh', '--mode', args.mode, '--server', args.server, '--apply']
-        if plan['action'] == 'install':
-            command.extend(['--admin-user', args.admin_user, '--manager-port', str(args.manager_port)])
-        for name in ('management_cidr', 'management_ssh_port', 'management_web_port'):
-            for value in getattr(args, name, None) or []:
-                command.extend(['--' + name.replace('_', '-'), str(value)])
-        if ha:
-            for name in ('node', 'interface', 'node_a', 'node_b', 'vip', 'client_cidr', 'vrid'):
-                command.extend(['--ha-' + name.replace('_', '-'), str(getattr(args, 'ha_' + name))])
-        print('  Apply the confirmed plan from the repository root with root privileges.')
-        print('  ' + shlex.join(command))
+    validate_ufw_activation(plan, args)
+    if os.geteuid() == 0:  # pylint: disable=no-member
+        apply(plan, args)
         return 0
-    apply(plan, args)
-    return 0
+    command = ['--mode', args.mode, '--server', args.server, '--install-dir', args.install_dir,
+               '--reviewed-action', args.reviewed_action, '--apply']
+    if fresh:
+        command.extend([f'--admin-user={args.admin_user}', '--manager-port', str(args.manager_port), '--manager-tls', args.manager_tls])
+        if args.manager_tls == 'custom':
+            command.extend(['--manager-cert', args.manager_cert, '--manager-key', args.manager_key])
+        for name in args.manager_name:
+            command.append(f'--manager-name={name}')
+    for name in ('management_cidr', 'management_ssh_port', 'management_web_port'):
+        for value in getattr(args, name, None) or []:
+            command.extend(['--' + name.replace('_', '-'), str(value)])
+    if args.enable_ufw:
+        command.append('--enable-ufw')
+    if ha:
+        for name in ('node', 'interface', 'node_a', 'node_b', 'vip', 'client_cidr', 'vrid'):
+            command.extend(['--ha-' + name.replace('_', '-'), str(getattr(args, 'ha_' + name))])
+    print('  Requesting administrator access to apply the reviewed plan.', flush=True)
+    return wizard_sudo(*command)
+
+
+def wizard_firewall(ui, args):
+    print('  Keep a console or recovery session available. Review existing firewall rules and any other services on this host.')
+    while True:
+        args.enable_ufw = ui.choose('UFW firewall', (
+            'Keep current status · add ProxyPermit rules', 'Enable UFW after adding ProxyPermit rules'),
+            default=int(args.enable_ufw)) == 1
+        try:
+            validate_ufw_activation({'action': 'install'}, args)
+            return
+        except ValueError as exc:
+            print(f'  {exc}')
+            print('  You can edit the management settings from the review screen.')
+            args.enable_ufw = False
 
 
 def admin_username(value):
@@ -1515,6 +1957,22 @@ def manager_port(value):
     if not value.isascii() or not value.isdecimal() or len(value) > 5 or not 1024 <= int(value) <= 65535:
         raise ValueError('Choose a management port between 1024 and 65535.')
     return int(value)
+
+
+def console_port_available(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        try:
+            listener.bind(('127.0.0.1', port))
+        except OSError:
+            return False
+    return True
+
+
+def available_console_port(value):
+    port = manager_port(value)
+    if not console_port_available(port):
+        raise ValueError(f'Port {port} is in use or unavailable on 127.0.0.1. Choose another console port.')
+    return port
 
 
 def main(argv=None):
@@ -1534,13 +1992,21 @@ def main(argv=None):
     parser.add_argument('--detached-ha', action='store_true', help='Clean up a native HA node already detached and persistently masked by the OS administrator.')
     parser.add_argument('--root', default='/', help='Plan only: inspect an alternative system root.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
+    parser.add_argument('--enable-ufw', action='store_true',
+                        help='Enable UFW on a fresh installation after adding scoped rules. Requires --management-cidr.')
+    parser.add_argument('--purge', action='store_true', help='With --uninstall: remove local ProxyPermit data and recovery backups.')
+    parser.add_argument('--reviewed-action', choices=('install', 'upgrade'), help=argparse.SUPPRESS)
     parser.add_argument('--management-cidr', action='append', help='Trusted management network for root-pinned web, SSH and proxy anti-lockout rules; repeat for multiple networks.')
     parser.add_argument('--management-ssh-port', action='append', type=int, help='Actual host SSH port to protect; defaults to the installing SSH connection or 22.')
     parser.add_argument('--management-web-port', action='append', type=int, help='Actual host web-management port to protect; specify reverse-proxy or relay ports explicitly.')
     parser.add_argument('--admin-user', default='admin')
     parser.add_argument('--admin-password-file')
     parser.add_argument('--manager-bind', default='127.0.0.1', choices=['127.0.0.1'])
-    parser.add_argument('--manager-port', type=int, default=8080)
+    parser.add_argument('--manager-port', type=int)
+    parser.add_argument('--manager-tls', choices=('http', 'local-ca', 'custom'), help='Web console transport for a fresh install. Defaults to HTTP.')
+    parser.add_argument('--manager-name', action='append', default=[], help='Additional DNS name or IP for the local CA certificate; repeat as needed.')
+    parser.add_argument('--manager-cert', help='Absolute path to your root-owned PEM certificate chain.')
+    parser.add_argument('--manager-key', help='Absolute path to your unencrypted root-only PEM private key.')
     cluster = parser.add_argument_group('New IPv4 HA cluster')
     cluster.add_argument('--ha-node', choices=['a', 'b'], help='Local node. Node A has the highest VRRP priority.')
     cluster.add_argument('--ha-interface', help='Local network interface for the virtual IP.')
@@ -1552,6 +2018,15 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(argv)
     try:
+        if args.manager_port is None:
+            args.manager_port = default_manager_port(args.manager_tls)
+        if ((args.manager_tls or args.manager_name or args.manager_cert or args.manager_key)
+                and (args.upgrade or args.rollback or args.uninstall or args.retire_ha or args.configure_ha)):
+            raise ValueError('Management TLS installation options require a fresh installation.')
+        if args.purge and not args.uninstall:
+            raise ValueError('--purge requires --uninstall.')
+        if args.enable_ufw and (args.upgrade or args.rollback or args.uninstall or args.retire_ha or args.configure_ha):
+            raise ValueError('--enable-ufw is only available for a fresh installation.')
         if args.cluster_maintenance and not (args.upgrade or args.rollback):
             raise ValueError('--cluster-maintenance requires --upgrade or --rollback.')
         if args.detached_ha and (not (args.uninstall or args.retire_ha) or args.root != '/'):
@@ -1594,9 +2069,11 @@ def main(argv=None):
             else:
                 if args.detached_ha:
                     require_retired_cluster()
-                print(json.dumps(build_uninstall_plan(args.root, args.install_dir), indent=2))
+                print(json.dumps(build_uninstall_plan(args.root, args.install_dir, purge=args.purge), indent=2))
                 if args.apply:
-                    uninstall(args.install_dir, detached=args.detached_ha)
+                    if args.purge and SOURCE.is_relative_to(Path(args.install_dir)):
+                        raise ValueError('Run purge from source outside the installation directory.')
+                    uninstall(args.install_dir, detached=args.detached_ha, purge=args.purge)
             return 0
         ha = None
         if any(value is not None for value in ha_args):
@@ -1623,7 +2100,15 @@ def main(argv=None):
         if args.upgrade:
             installed_deployment(args.root, args.install_dir)
         plan = build_plan(args.root, args.install_dir, args.mode, args.server, ha)
-        plan['accessSafety'] = {'managementNetworks': args.management_cidr or 'Existing profile or installing SSH peer', 'sshPorts': args.management_ssh_port, 'webPorts': args.management_web_port, 'note': 'Additive, root-pinned anti-lockout rules; existing firewall activation state is preserved.'}
+        if args.reviewed_action and plan['action'] != args.reviewed_action:
+            raise ValueError('The installation changed. Run the wizard again and review the new plan.')
+        plan_management(plan, args)
+        validate_ufw_activation(plan, args)
+        plan['accessSafety'] = {'managementNetworks': args.management_cidr or 'Existing profile or installing SSH peer',
+                                'sshPorts': args.management_ssh_port, 'webPorts': args.management_web_port,
+                                'firewall': 'enable-after-rules' if args.enable_ufw else 'preserve-activation'}
+        if args.enable_ufw:
+            plan['steps'].append('Enable UFW after installing and checking the scoped management and HA rules.')
         if args.upgrade and plan['action'] != 'upgrade':
             raise ValueError('Existing ProxyPermit configuration is required for an upgrade.')
         if args.cluster_maintenance:

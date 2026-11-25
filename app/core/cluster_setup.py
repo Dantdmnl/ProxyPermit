@@ -21,7 +21,7 @@ JOB_TIMEOUT = 660
 MAX_AGE = 90
 AGENTS = {'proxmox': 'fence_proxypermit_pve', 'libvirt': 'fence_xvm',
           'vmware': 'fence_vmware_rest', 'ipmi': 'fence_ipmilan'}
-CHECKS = ('managedHa', 'time', 'packages', 'plan', 'agent', 'authentication', 'powerTest')
+CHECKS = ('managedHa', 'time', 'packages', 'plan', 'enrollment', 'agent', 'authentication', 'powerTest')
 
 
 def protected(path, private=False):
@@ -128,11 +128,12 @@ def read_readiness(now=None, *, include_plan=False):
         now = time.time() if now is None else now
         if (not isinstance(value, dict) or type(value.get('version')) is not int or value['version'] != 1
                 or type(value.get('checked')) is not int or not -5 <= now - value['checked'] <= MAX_AGE
-                or not isinstance(value.get('checks'), dict) or set(value['checks']) != set(CHECKS)
+                or not isinstance(value.get('checks'), dict)
+                or set(value['checks']) not in (set(CHECKS), set(CHECKS) - {'enrollment'})
                 or any(state not in ('pass', 'blocked', 'pending', 'unknown') for state in value['checks'].values())):
             return unknown
         result = dict(state='preparation', checked=value['checked'], validFor=max(0, int(value['checked'] + MAX_AGE - now)),
-                      checks={key: value['checks'][key] for key in CHECKS})
+                      checks={key: value['checks'].get(key, 'unknown') for key in CHECKS})
         if plan_revision(value.get('planRevision')):
             result['planRevision'] = value['planRevision']
         for field in ('packagesPrepared', 'planLocked'):

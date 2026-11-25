@@ -67,15 +67,24 @@ class ClusterBoundaryTests(unittest.TestCase):
     def test_only_fresh_consistent_root_evidence_is_accepted(self):
         self.profile.write_text('{}')
         good = dict(version=1, checked=1000, state='protected', owners=1, migrationPhase='active',
+                    operation='a' * 32, planHash='b' * 64, transportProof='private',
                     quorate=True, witnessConnected=True, fencingConfigured=True, fencingReady=True, policySafe=True)
         self.status.write_text(json.dumps(good))
         self.status.chmod(0o640)
         self.assertEqual(cluster.read_status(now=1001)['state'], 'protected')
         self.assertNotIn('migrationPhase', cluster.read_status(now=1001))
-        self.assertEqual(cluster.read_status(now=1001, include_migration=True)['migrationPhase'], 'active')
+        self.assertNotIn('operation', cluster.read_status(now=1001))
+        migration = cluster.read_status(now=1001, include_migration=True)
+        self.assertEqual(migration['migrationPhase'], 'active')
+        self.assertEqual(migration['operation'], 'a' * 32)
+        self.assertEqual(migration['planHash'], 'b' * 64)
+        self.assertNotIn('transportProof', migration)
+        self.assertNotIn('operation', cluster.read_status(now=1019.5, include_migration=True))
         self.assertEqual(cluster.read_status(now=1021)['state'], 'unknown')
         self.assertNotIn('migrationPhase', cluster.read_status(now=1021, include_migration=True))
         self.assertEqual(cluster.read_status(now=990)['state'], 'unknown')
+        self.status.write_text(json.dumps({**good, 'operation': 'x' * 32}))
+        self.assertNotIn('planHash', cluster.read_status(now=1001, include_migration=True))
         for changed in ({'owners': 2}, {'quorate': False}, {'checked': True}, {'policySafe': 'yes'}):
             self.status.write_text(json.dumps({**good, **changed}))
             self.assertEqual(cluster.read_status(now=1001)['state'], 'unknown')

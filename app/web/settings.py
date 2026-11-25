@@ -79,7 +79,7 @@ def secure_access():
         return False
 
 
-def register_settings(app, requires_auth, authenticated, paths, reauthenticate, audit):
+def register_settings(app, requires_auth, authenticated, paths, reauthenticate, audit, service_status):
     settings = Blueprint('settings', __name__)
 
     @settings.after_request
@@ -96,12 +96,31 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         supplied = request.headers.get('X-CSRF-Token', '')
         return bool(token and supplied.isascii() and secrets.compare_digest(token, supplied))
 
+    @settings.get('/api/settings/diagnostics')
+    @requires_auth
+    def diagnostics():
+        if not session.get('user') or not app.extensions['has_permission']('admin'):
+            return jsonify(error='A system administrator session is required.'), 403
+        evidence = cluster.read_status()
+        # Export only normalized status fields. Do not serialize raw runtime files or logs.
+        fields = ('state', 'checked', 'validFor', 'owners', 'quorate', 'witnessConnected',
+                  'fencingConfigured', 'fencingReady', 'policySafe', 'localFencingCredential')
+        service = service_status()
+        running = service.get('running') if not service.get('error') else None
+        response = jsonify(schema=1, capturedAt=int(time.time()),
+                           mode='ha' if ha_enabled() else 'standalone',
+                           tinyproxyRunning=running if type(running) is bool else None,
+                           protection={key: evidence[key] for key in fields if key in evidence})
+        response.headers['Content-Disposition'] = 'attachment; filename="proxypermit-diagnostics.json"'
+        return response
+
     @settings.get('/api/settings/cluster-readiness')
     @requires_auth
     def cluster_readiness():
         if cluster.reserved():
             status = cluster.read_status(include_migration=True)
-            return jsonify(state='migration', phase=status.get('migrationPhase'), validFor=status.get('validFor', 0))
+            reference = cluster.migration_reference(status.get('operation'), status.get('planHash'))
+            return jsonify(state='migration', phase=status.get('migrationPhase'), validFor=status.get('validFor', 0), **reference)
         web = cluster_web_available()
         readiness = cluster_setup.read_readiness(include_plan=web)
         if web:

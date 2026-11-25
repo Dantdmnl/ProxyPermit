@@ -10,6 +10,29 @@ from app.web import manager as main
 
 
 class RemotePreviewSecurityTests(unittest.TestCase):
+    def test_detailed_health_requires_authentication_before_running_service_checks(self):
+        with patch.object(main.subprocess, 'run') as command:
+            response = main.app.test_client().get('/health')
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        command.assert_not_called()
+
+    def test_peer_cors_is_limited_to_legacy_session_transfer(self):
+        origin = 'https://peer.example.test'
+        headers = {'Origin': origin, 'Access-Control-Request-Method': 'POST',
+                   'Access-Control-Request-Headers': 'content-type'}
+        with patch.dict(main.os.environ, MANAGER_ALLOWED_ORIGINS=origin), patch.object(main, 'AUTH_ACCOUNTS_FILE', ''):
+            config = self.client.get('/api/config', headers=headers)
+            self.assertEqual(config.status_code, 200)
+            self.assertNotIn('Access-Control-Allow-Origin', config.headers)
+            preflight = self.client.options('/api/auth/consume', headers=headers)
+            self.assertEqual(preflight.headers['Access-Control-Allow-Origin'], origin)
+            self.assertEqual(preflight.headers['Access-Control-Allow-Methods'], 'POST, OPTIONS')
+            self.assertIn('Origin', preflight.vary)
+        with patch.dict(main.os.environ, MANAGER_ALLOWED_ORIGINS=origin), patch.object(main, 'AUTH_ACCOUNTS_FILE', 'accounts.json'):
+            preflight = self.client.options('/api/auth/consume', headers=headers)
+            self.assertNotIn('Access-Control-Allow-Origin', preflight.headers)
+
     def test_health_checks_listener_without_creating_a_proxy_client(self):
         with patch.dict(main.os.environ, TINYPROXY_PORT='3128'), \
                 patch.object(main.sys, 'platform', 'linux'), \

@@ -26,6 +26,7 @@ FOLDER = Path('/etc/proxypermit/management-tls')
 ENVIRONMENT = Path('/etc/proxypermit/.env')
 MARKER = '# Managed by ProxyPermit management TLS\n'
 UNIT = 'proxypermit.service'
+SERVICE_UNIT = Path('/etc/systemd/system') / UNIT
 RENEW = 'proxypermit-management-tls-renew'
 RECOVER = 'proxypermit-management-tls-recover.service'
 DAYS, RENEW_BEFORE = 90, 30
@@ -107,9 +108,12 @@ def check_pair(cert, key):
     context.load_cert_chain(cert, key)
 
 
-def generate(sans, gid):
+def generate(sans, gid, transaction=None):
     ca, ca_key = FOLDER / 'ca.pem', FOLDER / 'ca-key.pem'
     if not ca.exists() and not ca.is_symlink() and not ca_key.exists() and not ca_key.is_symlink():
+        if transaction:
+            for path in (ca, ca_key):
+                transaction.track_new(path)
         run('openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
             '-nodes', '-days', '3650', '-sha256', '-subj', '/CN=ProxyPermit node management CA',
             '-addext', 'basicConstraints=critical,CA:TRUE,pathlen:0',
@@ -127,6 +131,10 @@ def generate(sans, gid):
         raise ConfigError('The node management CA needs an explicit trust migration before leaf renewal.')
     identifier = secrets.token_hex(16)
     target = FOLDER / identifier
+    if transaction:
+        transaction.track_new(target)
+        for name in ('extensions.cnf', 'key.pem', 'request.pem', 'cert.pem', 'info.json'):
+            transaction.track_new(target / name)
     directory(target, gid)
     extension = target / 'extensions.cnf'
     write(extension, 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n'
@@ -150,6 +158,73 @@ def generate(sans, gid):
                   caFingerprint=certificate(ca)['fingerprint'], caExpires=certificate(ca)['expires'])
     write(target / 'info.json', json.dumps(result), 0o644)
     return result
+
+
+def custom_certificate(certificate_path, key_path, target, gid):
+    """Copy administrator-provided PEM files into the protected installation."""
+    cert, key = target / 'cert.pem', target / 'key.pem'
+    write(cert, protected(certificate_path, 128 * 1024), 0o644, gid)
+    source = target / 'source-key.pem'
+    write(source, protected(key_path, 32 * 1024, private=True))
+    try:
+        try:
+            normalized = run('openssl', 'pkey', '-in', str(source), '-passin', 'pass:').stdout
+        except subprocess.CalledProcessError:
+            raise ConfigError('Use a readable, unencrypted PEM private key.') from None
+    finally:
+        source.unlink()
+    write(key, normalized, 0o640, gid)
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(cert, key, password=lambda: '')
+        match = re.match(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', cert.read_text().lstrip(), re.S)
+        if not match:
+            raise ConfigError('Start the PEM chain with the server certificate.')
+        dates = run('openssl', 'x509', '-in', str(cert), '-noout', '-startdate', '-enddate').stdout.splitlines()
+        start, end = [ssl.cert_time_to_seconds(item.split('=', 1)[1]) for item in dates]
+        if not start <= time.time() < end:
+            raise ConfigError('The server certificate has expired or is not yet valid.')
+    except (ssl.SSLError, subprocess.CalledProcessError):
+        raise ConfigError('Use a valid PEM certificate chain and its matching private key.') from None
+    return hashlib.sha256(ssl.PEM_cert_to_DER_cert(match[0])).hexdigest()
+
+
+def prepare_installation(args, transaction, current, gid):
+    transaction.track_new(FOLDER)
+    directory(FOLDER, gid)
+    if args.manager_tls == 'local-ca':
+        profile = generate(installation_names(args.manager_name), gid, transaction)
+        target = FOLDER / profile['generation']
+        transaction.track_new(FOLDER / 'profile.json')
+        write(FOLDER / 'profile.json', json.dumps(profile))
+        from scripts.deploy.logging_policy import write_asset
+        for path, content in assets(current).items():
+            transaction.track_new(path)
+            write_asset(path, content)
+        fingerprint = profile['fingerprint']
+    else:
+        profile = None
+        target = FOLDER / 'custom'
+        transaction.track_new(target)
+        directory(target, gid)
+        for name in ('cert.pem', 'key.pem', 'source-key.pem'):
+            transaction.track_new(target / name)
+        fingerprint = custom_certificate(args.manager_cert, args.manager_key, target, gid)
+    updates = dict(MANAGER_SCHEME='https', GUNICORN_USE_TLS='true', SESSION_COOKIE_SECURE='true',
+                   MANAGER_CERT=str(target / 'cert.pem'), MANAGER_KEY=str(target / 'key.pem'))
+    if profile:
+        updates['ENABLE_HSTS'] = 'false'
+    return updates, profile, fingerprint
+
+
+def installation_names(hosts=()):
+    dns, ips = [], []
+    for host in hosts:
+        try:
+            ips.append(str(ipaddress.ip_address(host)))
+        except ValueError:
+            dns.append(host)
+    return names(dns, ips)
 
 
 def load_profile():
@@ -225,10 +300,14 @@ def rollback_values(entries):
     profile = load_profile() if FOLDER.exists() or FOLDER.is_symlink() else None
     if not profile:
         return None
+    if any(Path(item['path']) == FOLDER / 'profile.json' and not item['existed'] for item in entries):
+        if not any(Path(item['path']) == FOLDER / profile['generation'] and not item['existed'] for item in entries):
+            raise ConfigError('The certificate has been renewed since installation. Review TLS recovery before undoing it.')
+        return None
     current = next((item for item in entries if Path(item['path']).name == 'current' and 'symlink' in item), None)
     if not current or not (Path(current['symlink']) / 'scripts/deploy/management_tls.py').is_file():
         raise ConfigError('This backup predates managed HTTPS. Review TLS recovery before restoring it.')
-    values = deploy.manager_values(ENVIRONMENT, Path('/etc/systemd/system/proxypermit.service'))
+    values = deploy.manager_values(ENVIRONMENT, SERVICE_UNIT)
     expected = FOLDER / profile['generation']
     if values.get('MANAGER_CERT') != str(expected / 'cert.pem') or values.get('MANAGER_KEY') != str(expected / 'key.pem'):
         raise ConfigError('The current management TLS binding needs OS review before rollback.')
@@ -268,7 +347,7 @@ def activate(sans, base, gid, candidate=None, requester=None):
     if (FOLDER / 'operation.json').exists():
         raise ConfigError('Recover the pending management TLS operation before continuing.')
     before = protected(ENVIRONMENT)
-    values = deploy.manager_values(ENVIRONMENT, Path('/etc/systemd/system/proxypermit.service'))
+    values = deploy.manager_values(ENVIRONMENT, SERVICE_UNIT)
     endpoint(values)
     previous = load_profile()
     if previous:
@@ -359,7 +438,7 @@ def main(argv=None):
         for parent in (ENVIRONMENT.parent, *ENVIRONMENT.parent.parents, base.resolve(), *base.resolve().parents):
             deploy.require_trusted_path(parent, directory=True)
         protected(ENVIRONMENT)
-        values = deploy.manager_values(ENVIRONMENT, Path('/etc/systemd/system/proxypermit.service'))
+        values = deploy.manager_values(ENVIRONMENT, SERVICE_UNIT)
         endpoint(values)
         _, gid, _ = deploy.service_ownership()
         if args.action == 'enable':

@@ -2,6 +2,293 @@
 
 [English](../en/verification.md) · [Documentatie](README.md)
 
+## Acceptatieproeven voor beschermde HA in v1.4.0
+
+Gebruik een testopstelling die je kunt herstellen, met directe toegang tot
+beide proxynodes, onafhankelijke toegang tot de witness en een manier om
+uitgeschakelde hosts weer op te starten. Noteer per proef de versie, het
+platform, de begin- en eindtijd in UTC, de tijd tot clientverkeer herstelt,
+het resultaat van fencing en welke node het VIP had volgens beide hosts.
+
+| Scenario | Wanneer slaagt de proef? | Tot nu toe getest |
+| --- | --- | --- |
+| Uitval van de actieve host of voeding | De andere host houdt quorum, schakelt zo nodig precies de juiste host uit en bedient het VIP. Test vanaf een client zowel een toegestane als een geblokkeerde bestemming. | Abrupte uitval van een VM op Proxmox is getest. Uitval van een onafhankelijke fysieke host of voeding staat nog open. |
+| Netwerkscheiding tussen nodes en witness | Hooguit één node voert het VIP. Heeft geen van beide quorum, dan voert geen van beide het VIP. Valt ook het fencingpad weg terwijl fencing nodig is, controleer dan of de andere node wacht. | Netwerkscheiding en verlies van quorum zijn op Proxmox getest. Op libvirt is een bevroren VIP-eigenaar met een onbereikbare fencer getest. |
+| Stand-bynode keert terug na lange afwezigheid | Houd directe beheertoegang en controleer tijd, witnesscertificaat en fencingauthenticatie voordat de node mag overnemen. Vergelijk het actieve beleid en controleer of B de nieuwste revisie toepast. Test ook een afwezigheid waarbij de geldigheid van de inloggegevens verloopt. | Terugkeer, het inhalen van beleid en het weigeren van verlopen fencingtokens en witnesscertificaten zijn afzonderlijk getest. Herstel en overname na een afwezigheid waarin die gegevens zijn verlopen staan nog open. |
+| Uit gebruik nemen, verwijderen en herstellen | Controleer of de andere node het VIP blijft bedienen en directe SSH-toegang behouden blijft. Vergelijk de firewallregels. Onderbreek de actie, hervat die en controleer of verwijderen pas kan na afronding. | Lokaal loskoppelen, uit bedrijf nemen en de console verwijderen zijn getest op Proxmox. Geïsoleerde regressietests dekken onderbreken en hervatten. Een lid uit de clusterconfiguratie verwijderen en vervangen staat nog open. |
+
+Herhaal de relevante proeven per platform en per gedeeld uitvalpunt. Op één
+hypervisor kun je uitval van een VM en netwerkscheiding testen. Voor uitval
+van een hele host is onafhankelijke infrastructuur nodig.
+
+## 25 november 2026
+
+### Onderbroken beleidspublicatie gevolgd door een herstart van Tinyproxy
+
+Op de Ubuntu QEMU-VM is het publicatieproces in twee afzonderlijke proeven
+afgebroken met `SIGKILL`. Na afbreken tussen het vervangen van de configuratie
+en de filter stonden de nieuwe configuratie en de oude filter samen op schijf.
+Na afbreken direct na het vervangen van beide bestanden gaf het draaiende
+Tinyproxy-proces nog HTTP 200 voor de eerder toegestane bestemming. Na een
+herstart las Tinyproxy de onbevestigde filter van schijf en werd dat HTTP 403.
+Expliciet terugzetten vanuit de herstelkopieën herstelde in beide gevallen
+het oorspronkelijke beleid. Deze eerste proef liet zien dat automatisch
+herstel vóór de start van Tinyproxy ontbrak.
+
+### Herstel vóór de start van Tinyproxy
+
+De zelfstandige QEMU-node is met de normale installer bijgewerkt. Het
+publicatieproces is afgebroken vóór het vervangen van de filter, erna en
+nadat het een herstart van Tinyproxy had uitgevoerd. Bij de volgende
+systemd-start kwamen de oorspronkelijke configuratie en filter in alle
+drie de gevallen terug voordat Tinyproxy startte. Beide bestanden kwamen
+overeen met de beginsituatie. De toegestane bestemming gaf weer HTTP 200
+en de geblokkeerde bestemming HTTP 403.
+
+De disposable QEMU-VM is ook hard uitgezet nadat beide onbevestigde
+bestanden waren geschreven. Na het opstarten kwamen beide bestanden overeen
+met de checksums die vooraf op de host waren vastgelegd. Tinyproxy gaf weer
+HTTP 200 en 403 voor dezelfde bestemmingen. Het logboek liet zien dat het
+herstel vóór de start van Tinyproxy draaide.
+
+### Status van het beschermde Proxmox-lab
+
+Node A had geen quorum en voerde het VIP niet. De witness was verbonden
+en leverde een stem, maar Corosync meldde `WaitForAll` en blokkeerde
+clusteractiviteit. De nieuwste geregistreerde VIP-monitortime-out viel
+samen met IPC-time-outs in Pacemaker. VM 8107 weigerde nog SSH, zodat
+inschrijving en VIP-overname op die vervanger niet konden worden getest.
+Het clusterbeleid en de fencinginstellingen bleven behouden.
+
+### Vol bestandssysteem tijdens beleidspublicatie
+
+Een afzonderlijk Tinyproxy-proces op de Ubuntu QEMU-VM gebruikte
+beleidsbestanden op een tmpfs van 160 KiB. Na het vervangen van de
+configuratie is het bestandssysteem gevuld. Het schrijven van de filter
+mislukte met `ENOSPC`. ProxyPermit zette beide oorspronkelijke bestanden terug
+uit de vooraf klaargezette kopieën. Hetzelfde Tinyproxy-proces bleef draaien
+en gaf HTTP 200 voor de toegestane en HTTP 403 voor de geblokkeerde bestemming.
+De API-regressietest bevestigde ook dat het filterconcept beschikbaar bleef
+en na het vrijmaken van ruimte alsnog kon worden gepubliceerd.
+
+### Herstel na een verlopen beheercertificaat
+
+De zelfstandige QEMU-kandidaat serveerde tijdelijk een verlopen
+servercertificaat dat was uitgegeven door de bestaande node-CA. Een client
+die die CA vertrouwde, weigerde het verlopen certificaat. De normale
+vernieuwingsopdracht zag dat vernieuwing nodig was, gaf een nieuw
+servercertificaat uit en herstelde de HTTPS-bereikbaarheidscontrole.
+Dezelfde client accepteerde het nieuwe certificaat met de bestaande CA.
+
+### Herstart met actieve UFW en HTTPS-beheer
+
+Op dezelfde kandidaat is gecontroleerd of de opgeslagen firewallregel het
+werkelijke SSH-bronadres toeliet. Daarna is UFW ingeschakeld met een
+standaardblokkade voor inkomend verkeer. Na een normale herstart werkte een
+nieuwe SSH-sessie terwijl UFW actief was. De beheerinterface antwoordde via
+HTTPS met dezelfde CA, de vernieuwingstimer was actief en Tinyproxy gaf nog
+steeds HTTP 200 voor de toegestane en HTTP 403 voor de geblokkeerde bestemming.
+
+## 24 november 2026 om 17:39–17:53 UTC
+
+### Releasearchief op een zelfstandige Ubuntu 24.04.5-node
+
+De proef draaide op twee schone QEMU-VM’s. De checksum van het gepubliceerde
+v1.3.0-archief klopte. Van het lokaal gebouwde kandidaatarchief voor
+`1.4.0-dev.2` klopten zowel de checksum als de hashes van de afzonderlijke
+bestanden. SHA-256 van het kandidaatarchief:
+
+```text
+e18430bba5ca7d5455ad3be8eff441519944aacabab057c0c23357a1db709cf1
+```
+
+- Op beide schone installaties werkte aanmelden. Tinyproxy gaf HTTP 200 voor
+  de toegestane bestemming en HTTP 403 voor de geblokkeerde bestemming.
+- Na de upgrade vanaf v1.3.0, rollback naar v1.3.0 en een tweede upgrade
+  werkten aanmelden en beide proxyverzoeken. De checksum van de filterregels
+  bleef gelijk.
+- Na het verwijderen van de kandidaat stopte de beheerconsole. Tinyproxy en
+  een nieuwe SSH-sessie bleven beschikbaar. De filterregels en geregistreerde
+  UFW-beheerregels kwamen overeen met die van vóór de upgrade.
+- Op de andere VM is de beheerconsole op dezelfde poort overgezet naar HTTPS.
+  Aanmelden werkte met de lokale CA en een beveiligde sessiecookie. Geforceerde
+  vernieuwing verving het servercertificaat en behield dezelfde CA.
+
+De kandidaatinstaller draaide alle 394 Python-tests als root, zonder
+overgeslagen tests. Herhaal deze controles met het definitieve stabiele archief.
+
+## 24 november 2026 om 17:08–17:16 UTC
+
+### Vervanger uitschakelen en het VIP herstellen op Proxmox
+
+De oude, losgekoppelde B is regulier afgesloten. De schone vervanger startte
+op het adres van B en was via SSH bereikbaar met de gecontroleerde
+hostsleutel. Hij draaide zonder clusterdiensten of VIP. Het testtoken
+schakelde de VM uit via de Proxmox-API. Het aparte labaccount startte hem
+weer en Proxmox meldde dat de VM draaide. De VM antwoordde met het
+verwachte MAC-adres, maar de SSH-poort weigerde verbindingen en de
+netwerkcontrole via de guestagent mislukte. Het herstellen van toegang
+tot de VM staat nog open.
+
+A behield quorum met de witness. Tijdens de proef gaf de VIP-monitor een
+fout zonder nadere reden en stopte Pacemaker het VIP. De lokale proxytest
+slaagde en fencing bevestigde dat de oude peer uit stond. Nadat alleen de
+fout van A's vijfsecondenmonitor was gewist, herstelde Pacemaker het VIP.
+Een proxyverzoek vanaf de witness gaf daarna de verwachte HTTP 403. De
+oorzaak van de monitorfout staat nog open. De aangepaste agent rapporteerde
+op A een gesimuleerde fout in het formaat van Pacemaker. De actieve
+Pacemaker-configuratie en de geïnstalleerde agent zijn behouden.
+Clusterinschrijving en VIP-overname op de vervanger zijn nog niet getest.
+
+## 24 november 2026 om 17:04–17:06 UTC
+
+### Voorcontrole voor vervanging van node B op Proxmox
+
+A en de witness hadden quorum met twee van de drie stemmen. Het VIP stond
+nog op A. Er is een schone vervangende VM aangemaakt. Die bleef uit omdat
+hij dezelfde netwerkinstellingen heeft als B. De losgekoppelde oude VM is
+bewaard voor herstel. Toen in een lokaal proefplan alleen het VM-ID van B
+werd aangepast, veranderde de gegenereerde Corosync-clusternaam. Die naam
+wordt ook gebruikt voor inschrijving bij de witness. De procedure voor
+eerste installatie kan daarom niet worden hergebruikt voor deze wijziging
+op een actief beschermd cluster. Elk nieuw fencingtoken kon via de
+Proxmox-API de status van de andere VM opvragen. De API weigerde
+statusaanvragen voor de eigen VM, de oude B en de witness. Het
+clusterlidmaatschap, de inschrijving bij de witness en de actieve fencing
+zijn ongemoeid gelaten. Uitschakelen via fencing, vervanging en overname
+moeten nog worden getest.
+
+## 24 november 2026 om 16:46–16:51 UTC
+
+### VIP herstellen en een losgekoppelde node verwijderen op Proxmox
+
+Beide nodes waren online met drie stemmen, terwijl bewaarde monitorfouten
+het VIP gestopt hielden. De Tinyproxy-controle en de fencingstatus voor de
+andere VM slaagden op beide nodes. Nadat alleen de fout van de VIP-monitor met
+een interval van vijf seconden op A was gewist, herstelde Pacemaker het VIP
+op A. Een proxyverzoek vanaf de witness kreeg de verwachte blokkade. De
+oorzaak van de oorspronkelijke time-outs staat nog open.
+
+Rond de VIP-time-out op B meldde Pacemaker dat zijn scheduler, controller,
+executor en andere lokale processen niet op IPC reageerden. Op A miste de
+scheduler een IPC-controle vóór de VIP-time-out en deed de controller dat
+rond de fencingtime-out op 24 november. De time-outs vielen dus samen met
+vertraging in meerdere clusterprocessen. De logs geven geen oorzaak voor
+die vertraging.
+
+B is in standby gezet en de lokale clusterdiensten zijn gestopt en permanent
+gemaskeerd. De installer weigerde verwijdering totdat de lokale uitbedrijfname
+was voltooid. Die ruimde zeven geregistreerde HA-regels op en behield de
+beheerconsole en de vaste SSH- en beheerregels. Herhalen gaf geen wijzigingen.
+De uninstaller liet daarna het beleid, de dienstmaskers en de OS-fencingagent
+staan. Bij elke controle hield A quorum met de witness en bediende het VIP.
+Na verwijdering werkte een nieuwe SSH-verbinding met B. Het clusterlidmaatschap
+is voor herstel behouden.
+
+## 24 november 2026 om 16:28–16:35 UTC
+
+### Upgrade en rollback op een Keepalived-paar met HTTPS
+
+Op twee Ubuntu 24.04-VM’s in VMware is eerst B bijgewerkt, teruggezet vanuit
+de back-up van de installer en opnieuw bijgewerkt. Daarna volgde A. A draaide
+met Granian en de lokale CA. B draaide met Gunicorn en een eigen PEM-certificaat.
+Bij de eerste upgrade las een zelftest de systemd-unit van de actieve host.
+De installer hield de vorige release in bedrijf. Na het isoleren van die
+test slaagden alle 388 installatietests op de VM’s.
+
+Beide consoles antwoordden na de upgrade via HTTPS. Het certificaat of de
+vertrouwde CA en de accountbestanden, filterregels en firewallregels bleven
+behouden. B bevestigde de volledige beleidsrevisie van A. A voerde het VIP
+voor en na de proef. Deze proef betrof gewone HA met Keepalived.
+
+## 23 november 2026 om 12:38–16:44 UTC
+
+### VIP van B naar A na een monitortime-out
+
+| Tijd (UTC) | Gebeurtenis in Pacemaker |
+| --- | --- |
+| 12:38:35 | De VIP-monitor op B overschreed zijn time-out van tien seconden. Pacemaker zette de foutteller op `1`, sloot B uit en plande herstel op A. |
+| 12:38:42 | Na het stoppen van de resource op B bevestigde Pacemaker dat het VIP op A draaide. |
+| 12:53:44–12:53:46 | De monitor op A liep ook tegen zijn time-out aan. B was nog uitgesloten, waarna Pacemaker het VIP op A stopte. |
+| 16:44 | Beide hosts waren online. Pacemaker meldde nog steeds dat het VIP gestopt was en beide fouttellers bleven staan. |
+
+In het lab had A een voorkeurswaarde van `100`, kreeg de huidige eigenaar
+een behoudscore van `1000` en gold een migratiedrempel van `1`. De wissel
+naar A was herstel na de monitorfout op B. De oorzaak waardoor het
+monitorproces zijn time-out overschreed, staat nog open.
+
+## 23 november 2026 om 12:15–12:18 UTC
+
+### Herstelcommando’s en een stilgevallen Proxmox-VIP
+
+De nieuwe opdracht `cluster_maintenance --status` werkte op beide toegewezen
+Proxmox-nodes en meldde dat er geen reservering actief was. De controles voor
+uit gebruik nemen en de-installatie weigerden de nog aangesloten stand-bynode.
+Het lab draaide een oudere ontwikkelversie en het proxy-VIP was al gestopt.
+
+Pacemaker toonde eerdere fouten van de VIP-monitor op beide nodes. Beide
+lokale Tinyproxy-controles slaagden, quorum en fencing waren bevestigd en er
+was geen onderhoudsreservering. Alleen de fouttellers van de VIP-resource
+zijn gewist. Pacemaker bracht het VIP terug. Om 12:17:58 UTC bevestigden beide
+nodes dat alleen B het VIP voerde en dat de proxypoort bereikbaar was. De
+oorzaak van de eerdere monitorfouten is nog open. In deze proef zijn beide
+nodes aangesloten gebleven en is er niets gede-installeerd.
+
+## 23 november 2026 om 11:56–12:04 UTC
+
+### Verlopen Proxmox-fencingtoken
+
+De echte fencingagent op de stand-bynode bevestigde met het bestaande token
+dat de andere VM draaide. Met een verlopen kopie in een private mount-namespace
+weigerde dezelfde uitleesactie. Het actieve profiel bleef byte voor byte gelijk
+en de andere node bleef het VIP bedienen. Geautomatiseerde tests controleren
+ook dat de beheerinterface een verlopen lokaal token meldt wanneer de gedeelde
+fencer nog gereed lijkt. Met actuele gegevens van Corosync en Pacemaker
+meldde de nieuwe statuscontrole `protected` bij het echte profiel,
+`degraded` bij de verlopen kopie en weer `protected` bij het echte profiel.
+Bij alle drie de controles had het VIP één eigenaar.
+
+Op dezelfde stand-bynode accepteerde OpenSSL de publieke witness-clientketen
+op de huidige tijd. Met een verificatietijd na afloop van het clientcertificaat
+werd de keten geweigerd. De proxy op het VIP bleef bereikbaar. Beide proeven
+testen het verlopen van gegevens zonder het actieve token, certificaat of de
+klok te wijzigen. De hersteltijd na een echte offlineperiode is hier niet gemeten.
+
+## 23 november 2026 om 11:28–11:35 UTC
+
+### Fencing en terugkeer op KVM/libvirt
+
+In het tijdelijke OS-beheerde libvirt-lab voerde A aanvankelijk het VIP. Nadat
+A om 11:29:17 UTC was gepauzeerd, bevestigde de host dat fencing de VM had
+uitgeschakeld voordat B het VIP overnam. De TCP-proxypoort was 19,1 seconden
+na de pauze weer bereikbaar. A kwam terug zonder het VIP over te nemen.
+Beide nodes zagen één VIP-eigenaar en konden de proxypoort bereiken.
+
+Na terugkeer meldde qdevice op A nog twee verwachte stemmen, terwijl votequorum
+er drie toonde en TLS met de witness actief was. Met de aangepaste statuscontrole
+bevestigden beide live nodes hun bescherming op basis van de actuele stemtelling.
+Regressietests dekken ook ontbrekend quorum en ontbrekende TLS-clientauthenticatie.
+
+Om 11:34:36 UTC is de labfencer gestopt en is de nieuwe VIP-eigenaar B
+gepauzeerd. Tijdens 24 seconden controle nam A het VIP niet over. Na herstel
+van de fencer was B uitgeschakeld en was de proxypoort binnen zeven seconden
+via A bereikbaar. Na terugkeer van B meldden beide nodes één eigenaar en een
+bereikbare proxy. De witness en de VM’s stonden tijdens deze tests op dezelfde
+hypervisor.
+
+## 23 november 2026 om 11:12–11:17 UTC
+
+### Een ontbrekende Proxmox-node terugbrengen
+
+In het bestaande beschermde lab met `v1.4.0-dev.1` draaide B en was de witness
+bereikbaar terwijl A uit stond. B meldde geen quorum en geen VIP-eigenaar.
+Na het starten van A om 11:12:21 UTC waren quorum en beide Pacemaker-resources
+om 11:16:37 weer beschikbaar. Om 11:17 voerde alleen A het VIP. Beide nodes
+meldden beschikbare fencing, konden de proxy-TCP-poort op het VIP bereiken en
+hadden dezelfde hash van het filterbestand. De meetmomenten geven een
+bovengrens voor de hersteltijd. De duur van de eerdere uitval en terugkeer
+na het verlopen van certificaten of tokens vielen buiten deze proef.
+
 ## 22 november 2026
 
 ### Live controle van de HA-voorbereiding

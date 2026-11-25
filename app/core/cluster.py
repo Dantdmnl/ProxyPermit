@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import time
 
@@ -13,6 +14,14 @@ SETUP_CHECKPOINT = Path('/etc/proxypermit/cluster-bootstrap.json')
 STATUS = Path('/run/proxypermit-cluster/status.json')
 MAX_STATUS_AGE = 20
 MIGRATION_PHASES = ('reserving', 'reserved', 'transport', 'running', 'configured', 'activating', 'active')
+
+
+def migration_reference(operation, plan_hash):
+    """Return only the two bounded identifiers used to compare checkpoints."""
+    if (isinstance(operation, str) and re.fullmatch(r'[0-9a-f]{32}', operation)
+            and isinstance(plan_hash, str) and re.fullmatch(r'[0-9a-f]{64}', plan_hash)):
+        return dict(operation=operation, planHash=plan_hash)
+    return {}
 
 
 def reserved(profile=None):
@@ -65,14 +74,21 @@ def read_status(now=None, *, include_migration=False):
         if any(type(value.get(key)) is not bool for key in fields):
             return unknown
         owners = value.get('owners')
+        credential = value.get('localFencingCredential')
+        if credential is not None and (credential not in ('current', 'expired', 'unknown')
+                                       or (value['fencingReady'] and credential != 'current')):
+            return unknown
         if type(owners) is not int or not 0 <= owners <= 2:
             return unknown
         if state == 'protected' and (owners != 1 or not all(value[key] for key in fields)):
             return unknown
         valid_for = min(MAX_STATUS_AGE, max(0, int(checked + MAX_STATUS_AGE - now)))
         result = dict(state=state, checked=checked, validFor=valid_for, owners=owners, **{key: value[key] for key in fields})
-        if include_migration and value.get('migrationPhase') in MIGRATION_PHASES:
+        if credential is not None:
+            result['localFencingCredential'] = credential
+        if include_migration and valid_for and value.get('migrationPhase') in MIGRATION_PHASES:
             result['migrationPhase'] = value['migrationPhase']
+            result.update(migration_reference(value.get('operation'), value.get('planHash')))
         return result
     except (OSError, ValueError, RecursionError):
         return unknown

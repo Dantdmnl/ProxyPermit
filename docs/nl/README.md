@@ -13,8 +13,10 @@ Je kunt ook logs bekijken en twee servers gebruiken die elkaar bij uitval overne
 | Ik heb een adres voor de beheerinterface en een account | [Eerste stappen](eerste-stappen.md) |
 | Ik wil een website toevoegen, regels importeren of instellingen wijzigen | [De interface gebruiken](werkinstructie.md) |
 | Ik wil ProxyPermit installeren, bijwerken of verwijderen | [Installeren](installatie.md) |
+| Ik wil weten welke pakketten nodig zijn en waarop ProxyPermit is getest | [Vereisten en geteste platformen](vereisten.md) |
 | Ik wil twee servers die elkaar kunnen overnemen | [Hoge beschikbaarheid](hoge-beschikbaarheid.md) |
 | Iets werkt niet | [Problemen oplossen](problemen-oplossen.md) |
+| Ik moet een host of onderbroken clusterbewerking via SSH herstellen | [Herstelcommando’s](noodprocedures.md) |
 | Ik begrijp een technische term niet | [Begrippen uitgelegd](begrippen.md) |
 
 ## Voor de systeembeheerder

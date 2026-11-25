@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import tarfile
@@ -162,6 +163,19 @@ class ReleaseTests(unittest.TestCase):
             manifest = json.load(bundle.extractfile('proxypermit-1.0.0/release-manifest.json'))
             for name, digest in manifest['sha256'].items():
                 self.assertEqual(hashlib.sha256(bundle.extractfile('proxypermit-1.0.0/' + name).read()).hexdigest(), digest)
+
+    def test_archive_bytes_do_not_depend_on_checkout_timestamps(self):
+        source = self.root / 'app' / 'packaging-fixture.py'
+        source.write_bytes(b'example = True\n')
+        archive = release.archive(self.root, self.root / 'first')
+        os.utime(source, (1234567890, 1234567890))
+        os.utime(self.root / 'VERSION', (1234567890, 1234567890))
+        rebuilt = release.archive(self.root, self.root / 'second')
+        self.assertEqual(archive.read_bytes(), rebuilt.read_bytes())
+        with tarfile.open(archive) as bundle:
+            entry = bundle.getmember('proxypermit-1.0.0/app/packaging-fixture.py')
+            self.assertEqual((entry.mtime, entry.uid, entry.gid, entry.uname, entry.gname),
+                             (0, 0, 0, '', ''))
 
 
 if __name__ == '__main__':

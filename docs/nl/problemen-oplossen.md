@@ -5,6 +5,7 @@
 Begin bij het verschijnsel. Herhaal een wijziging niet meteen wanneer het antwoord
 wegvalt: de server kan de wijziging al hebben opgeslagen. Herstel de verbinding en
 controleer eerst het daadwerkelijke resultaat.
+Voor herstel van de host of het cluster via SSH gebruik je de [herstelcommando’s](noodprocedures.md).
 
 ## De beheerinterface opent niet
 
@@ -52,6 +53,30 @@ Heeft iemand anders het bestand gewijzigd? Laad de nieuwste versie en controleer
 je wijziging opnieuw. Overschrijf een nieuwere versie niet alleen om een
 conflictmelding weg te krijgen.
 
+### Tinyproxy start niet na een onderbroken publicatie
+
+Bij een beheerde installatie probeert ProxyPermit het laatst bevestigde
+beleid terug te zetten voordat Tinyproxy start. Bij een normale publicatie
+mag Tinyproxy herstarten zodra beide beleidsbestanden zijn geschreven.
+Raakt de publicatie onderbroken, dan gebruikt het herstel de opgeslagen
+kopieën van de configuratie en de filterregels.
+
+Voer deze opdrachten uit via directe SSH naar de getroffen node.
+
+```bash
+sudo systemctl status tinyproxy.service --no-pager
+sudo journalctl --namespace=proxypermit-traffic -u tinyproxy.service -b --no-pager
+sudo df -h /etc/tinyproxy
+sudo df -i /etc/tinyproxy
+```
+
+Meldt het herstel een fout? Bewaar dan de bestanden in
+`/etc/tinyproxy/.proxypermit-config-backups`. Controleer de vrije
+schijfruimte, inodes en bestandsrechten. Volg op een beschermd cluster eerst
+de [noodprocedures](noodprocedures.md) voordat je een dienst herstart. Test
+na herstel een toegestane en een geblokkeerde bestemming voordat je opnieuw
+publiceert.
+
 ## Ik kan op B geen regels aanpassen
 
 Dat is normaal bij een gekoppelde back-upnode. Pas gedeeld beleid op A aan, ook wanneer
@@ -69,6 +94,14 @@ verkeer via dat adres. Een verouderde of onbekende status bewijst niet dat een
 node gezond is. Laat de hostbeheerder Keepalived en netwerk-/firewallinstellingen
 controleren met de [beheerdershandleiding](beheer.md).
 
+Open op een beschermd cluster een rechtstreekse beheersessie naar elke
+bereikbare node. Controleer het cluster met `sudo corosync-quorumtool -s` en
+`sudo crm_mon --one-shot --failcounts`. Meldt Corosync `WaitForAll` met
+`Activity blocked` terwijl de witness verbonden is? Volg de
+[noodprocedures](noodprocedures.md) om het clusterlidmaatschap te herstellen.
+Draait Tinyproxy terwijl het VIP gestopt is? Noteer het tijdstip en de
+foutreden van de VIP-monitor voor het onderzoek.
+
 ## Oudere logs ontbreken
 
 Kies een kortere periode en controleer de gekozen bron. Standaard wordt audit-/beheerlogging
@@ -78,6 +111,12 @@ hebben afzonderlijk beleid. Lees een melding over onvolledige resultaten voordat
 je aanneemt dat er geen passende gebeurtenissen zijn. Zie [Logging](logging.md).
 
 ## Wat vermeld je in een hulpvraag?
+
+Open als systeembeheerder **Instellingen → Diagnose** en download het
+JSON-rapport. Het bevat een momentopname van de lokale proxyservice en de
+laatste bevestigde clusterstatus. Het rapport bevat geen logs, proxyregels,
+accountgegevens of sleutels. Onderzoek je een overname? Download dan een
+rapport via het rechtstreekse beheeradres van elke node.
 
 Vermeld de geïnstalleerde versie, node, het tijdstip met tijdzone, de pagina/actie,
 de exacte fout en of echt proxyverkeer nog werkt. Beschrijf wat je verwachtte en

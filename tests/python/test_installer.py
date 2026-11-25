@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).resolve().parents[2] / 'scripts/deploy/install.py')
 installer = importlib.util.module_from_spec(spec)
@@ -28,6 +28,12 @@ class InstallerTests(unittest.TestCase):
         tls_folder = patch.object(management_tls, 'FOLDER', Path(tls_state.name) / 'management-tls')
         tls_folder.start()
         self.addCleanup(tls_folder.stop)
+
+    def test_manager_readiness_waits_for_slow_workers_and_has_a_deadline(self):
+        with patch.object(installer.time, 'sleep'), patch.object(installer.time, 'monotonic', side_effect=(0, 16)):
+            self.assertTrue(installer.wait_manager(Mock(side_effect=(False, True))))
+        with patch.object(installer.time, 'sleep'), patch.object(installer.time, 'monotonic', side_effect=(0, 60)):
+            self.assertFalse(installer.wait_manager(Mock(return_value=False)))
 
     @unittest.skipIf(os.name == 'nt', 'Directory descriptors require POSIX')
     def test_native_draft_tree_is_validated_without_privileged_recursive_migration(self):
@@ -179,6 +185,65 @@ class InstallerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'Complete detached HA retirement'):
                 installer.require_retired_cluster()
 
+    def test_detached_retirement_resumes_after_receipt_and_repeats_as_noop(self):
+        class PowerLoss(BaseException):
+            pass
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            firewall = root / 'ha-firewall.json'
+            receipt = root / 'ha-retired.json'
+            config = root / 'keepalived.conf'
+            topology = installer.ha_topology('b', 'ens18', '192.0.2.11', '192.0.2.12',
+                                            '192.0.2.10/24', '192.0.2.0/24', 51)
+            firewall.write_text(json.dumps(dict(topology=topology, rules=[])))
+            config.write_text(installer.keepalived_text(topology), newline='')
+            ufw = (root / 'user.rules', root / 'user6.rules')
+            peer_state = (root / 'ha-peer.json', root / 'ha-enrollment.json')
+            for path in (*ufw, *peer_state):
+                path.write_text('original')
+            checkpoint = {'planHash': 'a' * 64, 'ownedRules': []}
+            profile = {key: topology[key] for key in ('vip', 'interface')}
+            detach = (checkpoint, profile)
+            properties = subprocess.CompletedProcess([], 0, stdout='ActiveState=inactive\nUnitFileState=disabled\n')
+            original_unlink = Path.unlink
+
+            def interrupted_unlink(path, *args, **kwargs):
+                if path == firewall:
+                    raise PowerLoss()
+                return original_unlink(path, *args, **kwargs)
+
+            def read_receipt(path, *, private):
+                self.assertTrue(private)
+                return json.loads(path.read_text())
+
+            with (patch.multiple(installer, HA_FIREWALL_STATE=firewall, HA_RETIRED_STATE=receipt,
+                                 HA_PEER_STATE=peer_state, KEEPALIVED_CONFIG=config, UFW_RULE_FILES=ufw,
+                                 require_linux_root=lambda _: None, maintenance_lock=nullcontext,
+                                 detached_cluster=lambda: detach, installed_deployment=lambda *_: ({'mode': 'ha'}, None, None, None),
+                                 require_trusted_path=lambda *_, **_kw: None, verify_live_manager=lambda _: None,
+                                 service_state=lambda _: {}, manager_values=lambda *_: {}, probe_manager=lambda _: True,
+                                 verify_remote_proxy=lambda *_: None, sync_directory=lambda _: None),
+                  patch.object(installer.cluster_setup, 'protected', side_effect=read_receipt),
+                  patch.object(installer, 'remove_owned_ha_firewall') as remove_rules,
+                  patch.object(installer, 'run', return_value=properties) as command):
+                with patch.object(Path, 'unlink', interrupted_unlink), self.assertRaises(PowerLoss):
+                    installer.retire_ha_node(str(root), detached=True)
+                self.assertTrue(firewall.is_file())
+                self.assertTrue(receipt.is_file())
+                with self.assertRaisesRegex(ValueError, 'Complete detached HA retirement'):
+                    installer.require_retired_cluster()
+                installer.retire_ha_node(str(root), detached=True)
+                self.assertFalse(firewall.exists())
+                self.assertFalse(any(path.exists() for path in peer_state))
+                self.assertEqual([path.read_text() for path in ufw], ['original', 'original'])
+                self.assertTrue(installer.build_ha_retirement_plan(str(root), detached=True)['alreadyRetired'])
+                command.reset_mock()
+                installer.retire_ha_node(str(root), detached=True)
+                command.assert_called_once_with('systemctl', 'show', 'tinyproxy.service',
+                                                '--property=ActiveState,UnitFileState', capture_output=True, text=True)
+                self.assertEqual(remove_rules.call_count, 2)
+
     def test_cluster_reservation_blocks_independent_service_mutations(self):
         from app.core import cluster
         with patch.object(cluster, 'reserved', return_value=True), \
@@ -247,6 +312,24 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(script.stat().st_mode & 0o777, 0o755)
             self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
 
+    @unittest.skipIf(os.name == 'nt', 'POSIX directory permissions.')
+    def test_private_umask_keeps_new_release_ancestors_traversable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install = root / 'proxypermit'
+            release_parent = install / 'releases'
+            original = os.umask(0o077)
+            try:
+                with patch.object(installer, 'require_trusted_path'):
+                    installer.prepare_release_parent(release_parent)
+                backup = installer.Transaction(install / 'backups' / 'fixture').directory
+            finally:
+                os.umask(original)
+            self.assertEqual(install.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(release_parent.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(backup.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+
     @unittest.skipIf(os.name == 'nt', 'POSIX symlinks.')
     def test_release_permission_normalization_does_not_follow_external_symlinks(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -298,6 +381,7 @@ class InstallerTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == 'nt', 'The installer manages Linux symlinks and systemd.')
     def test_uninstall_is_scoped_and_can_restore_on_failure(self):
+        from scripts.deploy import proxmox_fence
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             base = root / 'opt/proxypermit'
@@ -315,10 +399,22 @@ class InstallerTests(unittest.TestCase):
             sudoers = root / 'etc/sudoers.d/proxypermit'
             sudoers.parent.mkdir()
             sudoers.write_text('# Administrator-managed rule\n')
+            retained = {
+                root / 'etc/ssh/sshd_config.d/99-management.conf': 'Port 22\n',
+                root / 'etc/ufw/user.rules': '# ProxyPermit access safety IN - SSH\n',
+                root / proxmox_fence.TARGET.as_posix().lstrip('/'): proxmox_fence.content(),
+            }
+            for path, content in retained.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding='utf-8')
 
             plan = installer.build_uninstall_plan(root, '/opt/proxypermit')
             self.assertEqual(plan['paths'], list(map(str, (unit, current, marker))))
             self.assertTrue(current.is_symlink())
+            purge = installer.build_uninstall_plan(root, '/opt/proxypermit', purge=True)
+            self.assertIn(str(base / 'backups'), purge['purgePaths'])
+            self.assertIn(str(root / 'var/log/proxypermit'), purge['purgePaths'])
+            self.assertNotIn(str(root / 'etc/proxypermit'), purge['purgePaths'])
             previous = {'active': True, 'enabled': False}
             fragment = subprocess.CompletedProcess([], 0, stdout=(
                 'FragmentPath=/etc/systemd/system/proxypermit.service\n'
@@ -341,14 +437,18 @@ class InstallerTests(unittest.TestCase):
                 self.assertTrue(current.is_symlink())
                 self.assertTrue(unit.is_file())
                 self.assertTrue(marker.is_file())
-                with patch.object(installer, 'run', side_effect=[fragment, None, None]) as command:
-                    installer.uninstall(str(base))
+                with patch.object(installer, 'run', side_effect=[fragment, None, None]) as command, \
+                        patch.object(installer, 'require_retired_cluster') as detached:
+                    installer.uninstall(str(base), detached=True)
+                    detached.assert_called_once_with()
                     command.assert_any_call('systemctl', 'disable', '--now', 'proxypermit.service')
                 self.assertFalse(current.is_symlink())
                 self.assertFalse(unit.exists())
                 self.assertFalse(marker.exists())
                 self.assertEqual(config.read_text(), 'Port 3128\n')
                 self.assertTrue(sudoers.is_file())
+                for path, content in retained.items():
+                    self.assertEqual(path.read_text(encoding='utf-8'), content)
                 self.assertEqual(len(list((base / 'backups').glob('*/manifest.json'))), 2)
             backup = max(path.parent.name for path in (base / 'backups').glob('*/manifest.json'))
             with (
@@ -363,6 +463,52 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(os.readlink(current), release)
             self.assertTrue(unit.is_file())
             self.assertTrue(marker.is_file())
+
+    @unittest.skipIf(os.name == 'nt', 'The purge checks Linux mount points.')
+    def test_purge_removes_scoped_data_and_leaves_shared_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            pinned = root / 'access-safety.json'
+            pinned.write_text('pinned')
+            releases = root / 'releases'
+            releases.mkdir()
+            (releases / 'state').write_text('private')
+            (releases / 'link').symlink_to(pinned)
+            with self.assertRaisesRegex(ValueError, 'symbolic links'):
+                installer.validate_purge_paths([str(releases / 'link')])
+            paths = installer.validate_purge_paths([str(releases)])
+            with patch.object(installer, 'run') as run:
+                installer.purge_data(paths, {'paths': []})
+            self.assertFalse(releases.exists())
+            self.assertEqual(pinned.read_text(), 'pinned')
+            run.assert_any_call('systemctl', 'stop', 'systemd-journald@proxypermit.service',
+                                'systemd-journald@proxypermit.socket')
+
+    def test_ha_wizard_prefills_local_address_and_retries_invalid_fields(self):
+        from types import SimpleNamespace
+        from scripts.deploy.install_terminal import InstallTerminal
+        args = SimpleNamespace(ha_node=None, ha_interface=None, ha_node_a=None, ha_node_b=None,
+                               ha_vip=None, ha_client_cidr=None, ha_vrid=None)
+        row = dict(interface='ens18', address='192.0.2.12', prefix=24, network='192.0.2.0/24', dynamic=False)
+        terminal = InstallTerminal()
+        with patch.object(terminal, 'choose', side_effect=[1, 0]), \
+                patch.object(installer, 'discover_network', return_value=[row]), \
+                patch('builtins.input', side_effect=['', '', '192.0.2.12', '192.0.2.11', '192.0.2.10',
+                                                     '192.0.2.10/24', '0.0.0.0/0', '192.0.2.0/24', '256', '']):
+            ha = installer.wizard_ha(terminal, args)
+        self.assertEqual((ha['node'], ha['interface'], ha['local'], ha['peer'], ha['vrid']),
+                         ('b', 'ens18', '192.0.2.12', '192.0.2.11', 51))
+
+    def test_ha_purge_accepts_inactive_static_jobs_but_rejects_live_sync(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(installer, 'HA_FIREWALL_STATE', Path(directory) / 'ha-firewall.json'), \
+                patch.object(installer, 'service_state') as service:
+            static_jobs = {'proxypermit-ha-policy.service', 'whitelist-sync-v2.service'}
+            service.side_effect = lambda unit: {'active': False, 'enabled': unit in static_jobs}
+            installer.require_ha_purge_ready()
+            service.side_effect = lambda unit: {'active': unit in static_jobs, 'enabled': unit in static_jobs}
+            with self.assertRaisesRegex(ValueError, 'Retire this HA node'):
+                installer.require_ha_purge_ready()
 
     def test_upgrade_and_uninstall_refuse_an_unmanaged_path(self):
         with tempfile.TemporaryDirectory() as directory:

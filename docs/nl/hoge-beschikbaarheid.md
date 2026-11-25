@@ -181,25 +181,35 @@ Via de webinterface kun je het plan opslaan en de vaste clusterpakketten op
 elke node voorbereiden. De OS-beheerder regelt de witness, fencing en
 activering.
 
-1. Open het directe beheeradres van A. Controleer onder **Hosts, netwerk en
-   toegangsrechten** de benodigde hosts, netwerkverbindingen en rechten.
+1. Open het directe beheeradres van A en kies **Proxmox VE**. Open zo nodig
+   **Vereiste netwerkverbindingen** voor de poorten. Voor andere platforms
+   verwijst de interface naar de mogelijkheden voor beheer vanuit het OS.
 2. Vul de Proxmox-VM-ID’s en de IPv4-adressen van de witness en de Proxmox-API
    in. De node-adressen en de lokale OS-hostnaam komen uit de installatie.
    Vul de OS-hostnaam van de andere node in en klik op **Proxmox-plan
    controleren**.
 3. Bekijk **Firewallregels bij activering** als die worden getoond en kies
-   **Plan op deze node opslaan**. Download het plan. Open op B **Plan van
-   de andere node controleren**, importeer het bestand en vergelijk de
+   **Plan op deze node opslaan**. Download het plan. Kies op B **Proxmox VE**
+   en **Importeer het plan van node A**. Vergelijk de
    vingerafdrukken. Sla het plan ook op B op. Gebruik hetzelfde bestand op
    de witness.
 4. Wacht tot de opgeslagen vingerafdruk zichtbaar is en kies dan op elke
    node **Clusterpakketten voorbereiden**. Wacht op de bevestiging. Tijdens
    de installatie blijven de nieuwe clusterdiensten inactief en blijft de
-   bestaande HA-opstelling in bedrijf.
+   bestaande HA-opstelling in bedrijf. **Volgende stap op deze node** geeft
+   aan wanneer je via SSH verdergaat met de witness en de fencingtest.
 
 Bevestig elke wijziging met je wachtwoord en, als 2FA aanstaat, je
 authenticatorcode. Met **Opgeslagen plan laden** kun je het plan opnieuw
 bekijken. Zodra de pakketvoorbereiding begint, staat het plan op die node vast.
+
+Open in de ontwikkelversie **Witness inschrijven en overstappen op beschermde
+HA**. Daar staat per host welke netwerktoegang nodig is en welke controle je
+uitvoert. **Lokale witnessinschrijving en Corosync-sleutel vastgelegd** toont
+dat de lokale voorbereiding bij het beoordeelde plan hoort. Vóór de migratie
+controleert de OS-opdracht het actuele certificaat en vergelijkt deze de
+sleutel met de controle op de andere node.
+
 Als de voorbereiding stopt, controleer dan het afgeschermde
 servicelog. Je kunt met hetzelfde plan verdergaan.
 
@@ -393,9 +403,11 @@ Vervang `--phase status` door de gecontroleerde fase (`transport`, `start`,
 die stap uit te voeren. Voeg `--operation "$operation" --experimental` toe
 met het migratie-ID dat je op beide nodes hebt gecontroleerd.
 
-In **Instellingen → Beschermde HA migreren en herstellen** zie je op een
-gereserveerde node de laatst bevestigde lokale fase en de volgende controle.
-Controleer de host rechtstreeks als die informatie is verlopen. Op een
+Open **Instellingen → Beschermde HA migreren en herstellen** via het eigen
+adres van elke node. Je ziet de lokale fase, het operatie-ID en de vingerafdruk
+van het plan uit de laatste OS-controle. Vergelijk beide waarden. De fasen
+mogen tijdelijk verschillen. Ontbreekt een waarde, wijkt die af of is de
+informatie verlopen? Controleer dan eerst beide hosts via SSH. Op een
 zelfstandige node begeleidt **HA instellen** je bij het aanmaken op A, het
 koppelen van B en het controleren van de synchronisatie.
 
@@ -405,17 +417,35 @@ koppelen van B en het controleren van de synchronisatie.
 | --- | --- |
 | Proxmox VE met QEMU | De ingebouwde procedure maakt de clusterconfiguratie en beperkte UFW-regels. Gebruik TLS met certificaatcontrole en aparte rechten waarmee elke node alleen de andere VM kan uitschakelen. In het Proxmox-lab zijn migratie, abrupt uitschakelen, fencing bij een netwerkscheiding en releaserollback getest. |
 | VMware vSphere | De OS-beheerder configureert `fence_vmware_rest` met gecontroleerde HTTPS en VM-namen die binnen het bereik uniek zijn. Geef het serviceaccount alleen stroombeheer over de toegewezen VM’s. ProxyPermit beoordeelt de clusterconfiguratie. Live fencing op VMware moet nog worden getest. |
-| KVM/libvirt | De OS-beheerder configureert de hostdienst voor `fence_xvm` en de authenticatie. Beperk toegang tot een apart beheernetwerk en koppel elke node aan de juiste VM. ProxyPermit beoordeelt de clusterconfiguratie. Ingebouwde inrichting en een live proef ontbreken nog. |
-| Fysieke servers | Gebruik per server één rechtstreeks bereikbare BMC met `fence_ipmilan`, IPMIv2 LAN+, ciphersuite 17 en de methode `onoff`. Isoleer het BMC-netwerk en test uitschakelen en herstel op de echte server. ProxyPermit beoordeelt de clusterconfiguratie. Hiervoor is nog geen hardwareproef uitgevoerd. |
+| KVM/libvirt | De OS-beheerder configureert `fence_virtd` op de host en `fence_xvm` in het cluster. Beperk toegang tot een apart beheernetwerk en koppel elke node aan de juiste VM-UUID. ProxyPermit herkent de fencingagent op een getest OS-beheerd cluster. De ingebouwde inrichting is voor Proxmox. |
+| Fysieke servers | Gebruik per server één rechtstreeks bereikbare BMC met `fence_ipmilan`, IPMIv2 LAN+, ciphersuite 17 en de methode `onoff`. Isoleer het BMC-netwerk. Deelt de BMC de voeding met de server, zorg dan voor een fencingpad met een onafhankelijke voeding en test uitval van de voeding. ProxyPermit beoordeelt de clusterconfiguratie. Hiervoor is nog geen hardwareproef uitgevoerd. |
 
 Richt bij OS-beheerde adapters Corosync, een witness met wederzijdse TLS,
 Pacemaker en de ProxyPermit VIP-resource afzonderlijk in. Test of de andere
 node precies het bedoelde doel kan uitschakelen en uit kan houden. Controleer
 ook of je het via onafhankelijke toegang kunt herstellen. Een beschikbare
-agent in de clusterconfiguratie bewijst dit nog niet.
+agent in de clusterconfiguratie bewijst dit nog niet. Zie ook de
+[netwerk- en voedingseisen voor fencing van Pacemaker](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/fencing.html#fence-devices).
+De uitkomsten van de live KVM/libvirt-proef staan in het [verificatierapport](verification.md).
 
 Zie de upstream [metadata voor VMware REST](https://github.com/ClusterLabs/fence-agents/blob/main/tests/data/metadata/fence_vmware_rest.xml)
 en de [IPMI-fencingagent](https://github.com/ClusterLabs/fence-agents/blob/main/agents/ipmilan/fence_ipmilan.py).
+
+### Waarom het VIP terug kan komen op A
+
+Bij beschermde HA kiest Pacemaker bij een nieuwe plaatsing bij voorkeur A.
+Als B het VIP na overname gezond bedient, kan B het ook blijven voeren
+wanneer A terug is. In het ingebouwde profiel heeft A een plaatsingsscore
+van `100` en krijgt de huidige eigenaar een behoudscore van `1000`.
+
+Komt het VIP terug op A? Vergelijk het moment van de wissel met de monitor- en
+stopmeldingen op B. In de [Proxmox-proef](verification.md#vip-van-b-naar-a-na-een-monitortime-out)
+stopte Pacemaker de resource op B na een monitortime-out en herstelde die op A.
+Door de ingestelde migratiedrempel van `1` kwam B na die fout niet meer in
+aanmerking voor het VIP. Toen een latere monitorfout ook A uitsloot, voerde
+geen van beide nodes het VIP. Controleer de fouttellers op beide nodes,
+ook als beide hosts online zijn. Zie [Plaatsing in Pacemaker](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/constraints.html)
+en [afhandeling van fouten](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/operations.html).
 
 ### Een gestopt of haperend VIP onderzoeken
 
@@ -424,8 +454,15 @@ nodes online zijn, waar het VIP staat en wat er rond de eerste fout is gelogd.
 
 ```bash
 sudo crm_mon --one-shot --failcounts
+sudo corosync-quorumtool -s
 sudo journalctl --namespace=proxypermit -u pacemaker.service -u keepalived.service --since "30 minutes ago"
 ```
+
+Bij een volledige clusterherstart geldt in het ingebouwde Proxmox-profiel
+`wait_for_all: 1`. Voordat er voor het eerst quorum is, moeten beide proxynodes
+elkaar zien, ook als één node de witness al bereikt. Herstel de ontbrekende
+node of volg de herstelprocedure van het OS-cluster. Laat het VIP tijdens het
+herstel onder clusterbeheer. Zie [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
 
 De VIP-agent meldt of Keepalived een onverwachte status had, het adres ontbrak
 of de lokale Tinyproxy-controle mislukte. Bij een time-out kan Pacemaker de
@@ -433,9 +470,34 @@ agent al hebben gestopt voordat die een resultaat kon melden. Los de oorzaak
 op en controleer quorum en fencing voordat je Pacemaker het VIP laat
 herstellen. Keepalived blijft onder beheer van Pacemaker.
 
+Sluiten oude monitorfouten beide nodes uit, leg die fouten dan eerst vast.
+Controleer quorum, de verbinding met de witness, fencing en de lokale proxy.
+Laat Pacemaker daarna alleen de mislukte monitor op één geschikte node opnieuw
+proberen. Vervang `proxy-node-a` door de clusternaam van die node.
+
+```bash
+sudo crm_resource --cleanup --resource proxypermit-vip --node proxy-node-a --operation monitor --interval 5s
+```
+
+Controleer op beide nodes of precies één node het VIP voert. Test daarna de
+proxy vanaf een client. Deze procedure is getest in het
+[Proxmox-lab](verification.md#vip-herstellen-en-een-losgekoppelde-node-verwijderen-op-proxmox).
+
 Een clusterupgrade per node werkt de geïnstalleerde VIP-agent bij als die
 overeenkomt met de vorige ProxyPermit-release. De OS-beheerder controleert
 en actualiseert een aangepaste agent zelf.
+
+### Herstellen na het verlopen van een lokaal Proxmox-fencingtoken
+
+Meldt Instellingen dat het lokale fencingtoken is verlopen? Gebruik het eigen
+beheeradres van die node en laat de node het VIP pas weer overnemen nadat de
+bescherming is hersteld. Laat de OS-beheerder het token op het goedgekeurde
+Proxmox-eindpunt vernieuwen, met rechten voor alleen de andere VM. Houd het
+lokale profiel uitsluitend toegankelijk voor root, behoud de vertrouwde CA en
+controleer aan welke VM het token gekoppeld is. Controleer de geauthenticeerde
+agentstatus en vergelijk op beide nodes quorum, fencing en VIP-eigendom. Is er
+een migratie in voorbereiding, herhaal dan met het nieuwe token de controles
+voor uitschakelen en herstellen.
 
 ### Fencing-toegang voor een Proxmox-lab (experimenteel)
 

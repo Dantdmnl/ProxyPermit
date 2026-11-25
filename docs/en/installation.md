@@ -9,6 +9,7 @@ Before you start, have a supported Debian/Ubuntu host, root or sudo access and
 an independent way back into the server. Obtain the source for the version you
 intend to install and run the commands from the directory containing `install.sh`.
 The examples use documentation addresses; replace them with your network values.
+See [requirements and tested platforms](requirements.md) before choosing a host.
 
 ## Choose a path
 
@@ -25,10 +26,12 @@ The examples use documentation addresses; replace them with your network values.
 Use Debian or Ubuntu with systemd and Python 3.10 or later. Run the installer
 from the repository root.
 
-For a guided installation, start the wizard.
+Start the wizard in a Linux console or SSH terminal. When you run it as a
+regular user, it requests sudo access after you confirm the plan and reuses
+the settings you entered.
 
 ```bash
-sudo bash install.sh
+bash install.sh
 ```
 
 To review the default single-node plan separately, run `--plan` and inspect
@@ -44,6 +47,10 @@ builds a release in a dedicated Python virtual environment, and runs tests.
 Standalone uses a dedicated service account and a narrow sudoers rule for
 restarting Tinyproxy. Keepalived and the sync timer are omitted in this mode.
 
+Press Enter to accept a displayed default. The wizard checks the local console
+port and offers a nearby port if needed. You can edit settings in the review
+screen. Gunicorn is the default. Both Gunicorn and Granian support direct HTTPS.
+
 ### Protect management access
 
 The wizard asks for the trusted management IP/network and the real host-side
@@ -55,8 +62,17 @@ a remote administrator's network.
 For automation or an existing installation, use the explicit
 `--management-cidr`, `--management-ssh-port` and `--management-web-port` options.
 See the [anti-lockout profile](administration.md#anti-lockout-profile) for an
-example, recovery behavior and restrictions. The installer preserves UFW's
-activation state and existing pinned exceptions.
+example, recovery behavior and restrictions.
+
+On a fresh install, choose **Enable UFW after adding ProxyPermit rules** to
+activate UFW once the management and proxy rules are in place. Its default
+inbound policy must be deny or reject. When the wizard detects your SSH
+connection, the trusted network and SSH port must cover it. Keep an independent
+console available and review existing firewall rules and other inbound services.
+
+For automation, add `--enable-ufw` and an explicit `--management-cidr`.
+Specify the host SSH and web ports when they differ from the defaults. The
+default firewall choice and upgrades preserve the activation state.
 
 ### Open the console
 
@@ -79,7 +95,37 @@ active release.
 
 ### HTTPS and HSTS
 
-Over HTTPS, ProxyPermit sends HSTS for the current host by default. Enable
+Authentication is enabled by default. Use `/connection` for a public liveness
+probe. The detailed `/health` response requires a signed-in account. Extra
+browser origins configured with `MANAGER_ALLOWED_ORIGINS` apply only to legacy
+session transfer.
+
+For a fresh interactive installation, the wizard suggests **HTTPS** with a
+local CA on `127.0.0.1:8444`. If you choose **HTTP**, it suggests port 8080.
+You can change the port or switch
+protocols from **Edit management and firewall settings** before applying the
+plan. Keep the listener on loopback and use a tunnel or a reverse proxy for
+remote access. Port 8443 is reserved for HA synchronization.
+Non-interactive installs use HTTP unless you set `--manager-tls`.
+
+With HTTPS, choose one of these certificate sources.
+
+- **Local CA** creates a self-signed trust root and a server certificate that
+  renews automatically. Add any DNS names or IP addresses clients will use.
+  Verify the SHA-256 fingerprint printed by the installer and trust
+  `/etc/proxypermit/management-tls/ca.pem` on each client.
+- **Own certificate** imports an absolute path to a root-owned PEM chain with
+  the server certificate first. The matching, unencrypted PEM key must be root
+  only (`0600`). Connect using a name on the certificate and manage renewal of
+  the installed copies separately.
+
+For automation, preview with `bash install.sh --manager-tls local-ca --plan`
+or use `--manager-tls custom` with `--manager-cert` and `--manager-key`.
+Upgrades preserve the current listener. See [Management HTTPS](management-https.md)
+to enable HTTPS on an existing installation.
+
+Over HTTPS, ProxyPermit sends HSTS for the current host by default. The local
+CA option starts with HSTS off while you establish client trust. Enable
 `HSTS_INCLUDE_SUBDOMAINS=true` only if every subdomain supports HTTPS. Behind
 a reverse proxy, accept the HTTPS indicator only from a trusted proxy and
 restrict access to the application listener to that proxy. The supplied
@@ -149,17 +195,20 @@ start with **ProxyPermit HA IN** or **ProxyPermit HA OUT**.
 | IN | VRRP from the peer address to the local node address |
 | OUT | VRRP from the local node address to the peer address |
 
-The installer preserves the existing UFW activation state and default policies.
-If UFW is inactive, the rules are saved for when you enable it. The recovery
-backup includes the original UFW rule files. Automatic recovery stops if those
-files have changed since installation.
+The installer preserves UFW's default policies. With the default wizard
+choice, an inactive firewall keeps the new rules for later use. The recovery
+backup records the original rules and any UFW activation by the installer.
+Automatic rollback checks for later changes to those files.
 
 Use two clean Debian or Ubuntu hosts with systemd, static IPv4 addresses on the
 same network, and an unused virtual IP address. Allow unicast VRRP (IP protocol
 112) between the hosts and TCP 3128 from the client network. Choose a VRRP ID
 that is unused on that network.
 
-In the wizard, select **Two-node HA**. Review and confirm the summary.
+In the wizard, select **Two-node HA**. Select a detected static IPv4 address to
+prefill the local interface and address, or enter both manually. Specify the
+peer address, the reserved virtual IP and the client network. The wizard
+checks the values as you enter them. Review and confirm the summary.
 The menu supports arrow keys in compatible terminals and numbered input in
 basic terminals. The confirmation defaults to stopping.
 
@@ -330,6 +379,21 @@ account, and system packages stay on the host. For an existing HA deployment
 with synchronization, schedule maintenance first because synchronization can
 depend on this node's management API.
 
+To permanently remove local ProxyPermit data as well, preview then apply a
+purge from a separate source checkout.
+
+```bash
+sudo bash install.sh --uninstall --purge --plan
+sudo bash install.sh --uninstall --purge --apply
+```
+
+Purge removes local accounts, manager settings, certificates, dedicated logs,
+releases and recovery backups. Export anything you need before applying it.
+Tinyproxy can briefly restart to return to host logging. SSH settings, pinned
+management access, UFW configuration, Tinyproxy configuration and system
+packages are retained. Retire an HA node first. For protected HA, use
+`--detached-ha` after completing OS detachment and retirement.
+
 ## Save and activate configuration
 
 A saved draft is separate from the files Tinyproxy reads. Publishing creates
@@ -356,5 +420,5 @@ For local use, install `requirements/granian.txt` and run
 `python -m app.runtime.server --backend granian`. Add `--check` to print the
 command. `APP_BIND` and `APP_WORKERS` set the binding and worker count.
 Upgrades keep the existing `APP_SERVER` unless you explicitly choose another.
-Gunicorn supports direct TLS in this deployment. Use a TLS reverse proxy with
-Granian. See [architecture and HA](architecture.md).
+Both backends support direct TLS and can run behind a TLS reverse proxy. See
+[architecture and HA](architecture.md).

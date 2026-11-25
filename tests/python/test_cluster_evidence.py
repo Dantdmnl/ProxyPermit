@@ -1,8 +1,10 @@
 """Status is derived from quorum, TLS witness and resource evidence, never secrets."""
 import json
 import unittest
+from unittest.mock import patch
 
 from app.core.cluster_evidence import summarize, xml, fencing_coverage
+from scripts.deploy import cluster_status
 from xml.etree import ElementTree as ET
 
 CIB = '''<cib><configuration><nodes><node id="1" uname="node-a"/><node id="2" uname="node-b"/></nodes><crm_config><cluster_property_set>
@@ -24,11 +26,14 @@ MONITOR = '''<crm_mon><summary><current_dc present="true" with_quorum="true"/></
 <node name="node-a"/></resource></resources></crm_mon>'''
 DEVICE = 'Expected votes:\t3\nState:\tConnected\nTLS active:\tYes (client certificate sent)\n'
 CRYPTO = 'totem.crypto_cipher (str) = aes256\ntotem.crypto_hash (str) = sha256\n'
+QUORUM = 'Quorate:          Yes\nExpected votes:   3\nQuorum:           2  \nFlags:            Quorate WaitForAll Qdevice \n'
 
 
 class ClusterEvidenceTests(unittest.TestCase):
-    def evidence(self, cib=CIB, monitor=MONITOR, device=DEVICE, crypto=CRYPTO, local=True, node='node-a'):
-        return summarize(cib, monitor, device, crypto, local, node)
+    def evidence(self, cib=CIB, monitor=MONITOR, device=DEVICE, crypto=CRYPTO, local=True,
+                 node='node-a', quorum=QUORUM, native_credential='unknown'):
+        return summarize(cib, monitor, device, crypto, local, node, quorum_text=quorum,
+                         native_credential=native_credential)
 
     def test_healthy_local_and_peer_ownership(self):
         self.assertEqual(self.evidence()['state'], 'protected')
@@ -51,6 +56,38 @@ class ClusterEvidenceTests(unittest.TestCase):
         monitor = MONITOR.replace('resource_agent="stonith:fence_xvm" active="true" failed="false"',
                                   'resource_agent="stonith:fence_xvm" active="false" failed="true"')
         self.assertEqual(self.evidence(monitor=monitor)['state'], 'degraded')
+
+    def test_stale_qdevice_vote_count_is_checked_against_live_votequorum(self):
+        rejoined = DEVICE.replace('votes:\t3', 'votes:\t2')
+        self.assertEqual(self.evidence(device=rejoined)['state'], 'protected')
+        for unsafe in ('', QUORUM.replace('votes:   3', 'votes:   2'), QUORUM.replace(' Qdevice', ''),
+                       QUORUM.replace('Quorate:          Yes', 'Quorate:          No')):
+            self.assertEqual(self.evidence(device=rejoined, quorum=unsafe)['state'], 'degraded')
+        self.assertEqual(self.evidence(device=rejoined.replace('client certificate sent', 'no client certificate'))['state'], 'degraded')
+
+    def test_shared_fencer_cannot_hide_expired_local_peer_credential(self):
+        cib = CIB.replace('fence_xvm', 'fence_proxypermit_pve').replace('node-a:vm-a;node-b:vm-b', 'node-a:101;node-b:102')
+        cib = cib.replace('<instance_attributes>', '<instance_attributes><nvpair name="ipaddr" value="pve.example"/>'
+            '<nvpair name="ssl" value="true"/>', 1)
+        monitor = MONITOR.replace('fence_xvm', 'fence_proxypermit_pve')
+        self.assertEqual(self.evidence(cib=cib, monitor=monitor, native_credential='current')['state'], 'protected')
+        for status in ('expired', 'unknown'):
+            result = self.evidence(cib=cib, monitor=monitor, native_credential=status)
+            self.assertEqual(result['state'], 'degraded')
+            self.assertEqual(result['owners'], 1)
+            self.assertFalse(result['fencingReady'])
+            self.assertEqual(result['localFencingCredential'], status)
+        self.assertNotIn('localFencingCredential', self.evidence(native_credential='expired'))
+
+    def test_local_expiry_reads_private_root_metadata_and_exports_only_state(self):
+        with patch.object(cluster_status.cluster_setup, 'protected') as read:
+            for version, expires, result in ((1, 101, 'current'), (1, 100, 'expired'),
+                                             (1, True, 'unknown'), (True, 101, 'unknown')):
+                read.return_value = dict(version=version, expires=expires, token='never exported')
+                self.assertEqual(cluster_status.native_credential_status(now=100), result)
+            read.side_effect = PermissionError
+            self.assertEqual(cluster_status.native_credential_status(now=100), 'unknown')
+            read.assert_called_with(cluster_status.FENCING_PROFILE, private=True)
 
     def test_owner_count_alone_cannot_confirm_remote_protection(self):
         for owner in ('', '<node name="unknown-node"/>'):
@@ -105,7 +142,8 @@ class ClusterEvidenceTests(unittest.TestCase):
         monitor = MONITOR.replace('fence_xvm', 'fence_pve')
         self.assertEqual(self.evidence(cib=cib, monitor=monitor)['state'], 'protected')
         self.assertEqual(self.evidence(cib=cib.replace('fence_pve', 'fence_proxypermit_pve'),
-                                      monitor=monitor.replace('fence_pve', 'fence_proxypermit_pve'))['state'], 'protected')
+                                       monitor=monitor.replace('fence_pve', 'fence_proxypermit_pve'),
+                                       native_credential='current')['state'], 'protected')
         for invalid in (cib.replace('name="ssl" value="true"', 'name="ssl" value="false"'),
                         cib.replace('name="ssl"', 'name="ssl_insecure"'),
                         cib.replace('node-b:102', 'node-b:named-guest'),

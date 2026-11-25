@@ -173,22 +173,31 @@ The installed web helper saves the plan and prepares the fixed packages on
 each node. The OS administrator handles witness enrollment, fencing and
 activation.
 
-1. Open the direct management address of A. Under **Hosts, network and
-   permissions**, check the required host roles, network paths and permissions.
+1. Open the direct management address of A and choose **Proxmox VE**. See
+   **Required network connections** for ports. For other platforms the console
+   explains the available OS-managed options.
 2. Enter the Proxmox VM IDs and the IPv4 addresses of the witness and Proxmox
    API. The node addresses and local OS hostname come from the installation.
    Enter the OS hostname of the other node and select **Validate Proxmox plan**.
 3. Review **Firewall rules at activation** if shown, then select **Save plan
-   on this node**. Download the plan. On B, open **Check a
-   plan from the other node**, import that file and compare the fingerprints.
+   on this node**. Download the plan. On B, choose **Proxmox VE** and use
+   **Import the plan from node A**. Compare the fingerprints.
    Save it on B too. Use the same downloaded file on the witness.
 4. After the saved fingerprint appears, select **Prepare cluster packages**
    on each node. Wait for local completion. The installation keeps the
-   new cluster services inactive while ordinary HA continues.
+   new cluster services inactive while ordinary HA continues. **Next on this
+   node** shows when to continue over SSH with witness setup and fencing tests.
 
 Confirm each change with your password and, when enabled, your authenticator
 code. **Load saved plan** reopens the local plan for review. Once dependency
 preparation begins, the plan is locked on that node.
+
+In the development build, open **Witness enrollment and protected migration**
+to see which host to use, the required network paths, and the next checks.
+**Local witness enrollment and Corosync key recorded** confirms the matching
+local preparation records. Before migration, the OS command verifies the
+current certificate and compares the key with the peer’s evidence.
+
 If a job fails, review the private systemd log. A failed preparation can
 resume with the same plan.
 
@@ -346,10 +355,12 @@ to report `yes` before resuming. The reservation command checks this again.
 ### Inspect an interrupted protected HA activation
 
 On a reserved managed node, **Settings → Protected HA migration and recovery**
-shows the latest local OS phase and the next check. If the check expires, look
-at the host directly. On a fresh installation, the HA settings guide you
-through creating A, joining B and checking synchronization before protected
-cluster preparation.
+shows the local phase, operation ID and plan fingerprint from the latest OS
+report. Open Settings using each node’s direct address and compare the two
+identifiers. The phases may differ. If an identifier differs, is missing or
+has expired, stop and check both hosts over SSH. On a fresh installation, the
+HA settings guide you through creating A, joining B and checking synchronization
+before protected cluster preparation.
 
 Run this on A and B from the installed application directory:
 
@@ -384,8 +395,8 @@ using the ID confirmed on both nodes.
 | --- | --- |
 | Proxmox VE with QEMU | The native flow builds the CIB and scoped UFW rules. Use verified API TLS and restricted peer-only power credentials. Migration, abrupt shutdown, partition fencing and release rollback were exercised in the Proxmox lab. |
 | VMware vSphere | An OS administrator can supply `fence_vmware_rest` with verified HTTPS and VM names that are unique in scope. Give the service identity power control only over the assigned VMs. ProxyPermit evaluates the resulting CIB. Live VMware fencing has yet to be verified. |
-| KVM/libvirt | The OS administrator supplies the `fence_xvm` host service and its authenticated fencing path. Limit access to a dedicated management network and map each node to its exact VM. The application evaluates the resulting CIB. There is no native provisioning or live lab verification for this adapter yet. |
-| Physical servers | Configure one directly addressable BMC per server with `fence_ipmilan`, IPMIv2 LAN+, cipher suite 17, and `onoff` power handling. Isolate the BMC network and confirm power loss and recovery on the actual chassis. The application evaluates the resulting CIB. Hardware has yet to be verified in the lab. |
+| KVM/libvirt | The OS administrator configures `fence_virtd` on the host and `fence_xvm` in the cluster. Restrict access to a dedicated management network and map each node to its exact VM UUID. ProxyPermit recognizes this provider in a live OS-managed cluster. The built-in setup remains specific to Proxmox. |
+| Physical servers | Configure one directly addressable BMC per server with `fence_ipmilan`, IPMIv2 LAN+, cipher suite 17, and `onoff` power handling. Isolate the BMC network. If a BMC shares the server’s power supply, provide an independently powered fencing path and test loss of the supply. The application evaluates the resulting CIB. Hardware has yet to be verified in the lab. |
 
 For the OS-managed adapters, provision Corosync, a client-authenticated TLS
 witness, Pacemaker and the ProxyPermit VIP resource independently. Test that
@@ -395,6 +406,24 @@ does not prove those properties.
 
 See the upstream [VMware REST fencing metadata](https://github.com/ClusterLabs/fence-agents/blob/main/tests/data/metadata/fence_vmware_rest.xml)
 and [IPMI fencing agent](https://github.com/ClusterLabs/fence-agents/blob/main/agents/ipmilan/fence_ipmilan.py).
+Pacemaker documents the [network and power requirements for fencing](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/fencing.html#fence-devices).
+See the [verification report](verification.md) for the live KVM/libvirt results.
+
+### Why the VIP can move back to A
+
+In protected HA, A is the preferred node when Pacemaker has to place the VIP.
+After failover, a healthy B can continue serving it when A recovers. The
+native profile assigns A a location score of `100` and gives the current
+owner a resource stickiness score of `1000`.
+
+If the VIP moves back to A, compare the move with the monitor and stop events
+on B. In the [Proxmox lab trial](verification.md#vip-moved-from-b-to-a-after-a-monitor-timeout),
+Pacemaker stopped the resource on B after a monitor timeout and recovered it
+on A. The configured migration threshold of `1` made B ineligible for the VIP
+after that failure. When a later monitor failure made A ineligible, neither
+node served the VIP. Inspect both nodes’ failure counts even when both hosts
+are online. See [Pacemaker resource placement](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/constraints.html)
+and [failure handling](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/operations.html).
 
 ### Check a stopped or failing VIP
 
@@ -403,8 +432,15 @@ the resource owner and the journal around the first failure.
 
 ```bash
 sudo crm_mon --one-shot --failcounts
+sudo corosync-quorumtool -s
 sudo journalctl --namespace=proxypermit -u pacemaker.service -u keepalived.service --since "30 minutes ago"
 ```
+
+After a full cluster restart, the native Proxmox profile uses
+`wait_for_all: 1`. Both proxy nodes must see each other before quorum can form
+for the first time, even if one node can reach the witness. Restore the
+missing node or follow the OS cluster recovery procedure. Keep the VIP under
+cluster control throughout recovery. See [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
 
 The VIP agent reports whether the Keepalived unit state was unexpected, the
 address was missing, or the local Tinyproxy probe failed. If Pacemaker reports
@@ -412,9 +448,32 @@ a monitor timeout, the agent might have been stopped before it could report a
 result. Fix the underlying issue and verify quorum and fencing before asking
 Pacemaker to recover the VIP. Keepalived remains under Pacemaker control.
 
+If old monitor failures leave no eligible owner, record the failures first.
+After checking quorum, witness connectivity, fencing and local proxy health,
+ask Pacemaker to retry only the failed monitor on one eligible host. Replace
+`proxy-node-a` with that host's cluster name.
+
+```bash
+sudo crm_resource --cleanup --resource proxypermit-vip --node proxy-node-a --operation monitor --interval 5s
+```
+
+Check both nodes for a single VIP owner, then test the proxy from a client.
+This procedure was verified in the [Proxmox lab](verification.md#vip-recovery-and-detached-node-removal-on-proxmox).
+
 A rolling cluster upgrade updates the installed VIP agent when it matches the
 previous ProxyPermit release. An agent customized by the OS administrator
 requires its own review and update.
+
+### Recover after local Proxmox fencing credentials expire
+
+If Settings reports an expired local fencing credential, use that node’s own
+management address and keep it out of the VIP role while restoring protection.
+Have the OS administrator renew the peer-only credential on the approved
+Proxmox endpoint. Keep the local profile root-only, retain the verified CA
+and verify the exact peer mapping. Check the agent's authenticated status
+before making the node eligible again. Compare quorum, fencing readiness and
+VIP ownership on both nodes. For evidence used by a pending migration, repeat
+the fencing power-off and recovery checks with the renewed credential.
 
 ### Proxmox lab fencing credentials (experimental)
 

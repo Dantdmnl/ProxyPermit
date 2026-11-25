@@ -4,6 +4,46 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.4.0-dev.3] - 2026-11-25
+
+### Pre-release status
+
+Use this preview on a disposable or recoverable installation. Stable
+deployments should stay on v1.3.0. Protected Corosync/Pacemaker HA remains
+experimental. Permanent member replacement, recovery after extended
+absence and intermittent VIP monitor failures still require verification.
+
+### Verified
+
+- Tested clean installation, upgrade from the published v1.3.0 archive, rollback and uninstall on Ubuntu QEMU guests.
+- Retested interrupted publication before the filter write, after both writes and after a service restart. A hard VM power cut with unconfirmed policy also restored both original files before Tinyproxy started.
+- Verified management HTTPS renewal after leaf expiry and recovery after reboot with UFW enabled.
+- Tested Keepalived HTTPS upgrade and rollback on VMware and local retirement and uninstall of an already detached protected Proxmox node.
+
+### Changed
+
+- Recover an interrupted configuration and filter publication before managed Tinyproxy starts again.
+- Allow slow management workers up to one minute to answer the installer readiness check during installation, upgrade and rollback.
+- Reserve space for proxy policy rollback before activation. Restore the previous files without rewriting them if the disk fills, and leave Tinyproxy running if publication fails before activation.
+- Make release archives reproducible with the same source and build toolchain. Verify the complete file manifest in CI before exercising the installer.
+- Show proxy service health separately from VIP ownership in HA settings, and offer system administrators a diagnostic snapshot containing only status fields.
+- Suggest direct HTTPS with a local CA in the interactive wizard for new installations.
+- Report protected VIP health failures in Pacemaker's exit-reason field, including which local operation timed out, without logging command output.
+- Default to requiring sign-in, protect detailed health diagnostics, and limit cross-origin browser access to legacy session transfer.
+- Isolate the management HTTPS installation tests from the active systemd configuration so they can run on existing HTTPS nodes.
+- Guide split-brain preparation by platform and show the next local step. Move network requirements and technical checks into expandable sections.
+- Keep new install directories traversable by the service account when the administrator uses a private umask. Recovery backups remain private.
+- Choose HTTP or direct HTTPS in the installer for either web server. HTTPS supports a local CA with automatic renewal or an administrator-provided PEM certificate and key.
+- Keep reviewed installer settings through sudo, offer usable defaults, and validate management and HA fields as they are entered. Allow fresh installations to opt in to scoped UFW activation.
+- Add an explicit uninstall purge for local manager data, dedicated logs, releases and recovery backups after checking that HA has been retired.
+- Document runtime dependencies, tested platforms and command-line recovery in English and Dutch. Add a read-only command to compare a protected maintenance checkpoint with the live reservation.
+- Report an expired local Proxmox fencing credential even when Pacemaker still reports the shared fencing resource as active.
+- Preserve separately installed OS fencing agents, SSH settings and management firewall rules when uninstalling the console.
+- Guide witness enrollment, fencing permissions and the migration handoff in Settings. Show whether the local OS recorded the witness enrollment and Corosync key for the reviewed plan.
+- Use the live Corosync vote tally with Pacemaker status and mutual TLS evidence, so a stale qdevice vote count after a node rejoins cannot incorrectly mark healthy protection as degraded.
+- Show the local migration operation ID and plan fingerprint in Settings while the OS report is fresh, and guide the administrator through creating A or joining B.
+- Preserve the scoped firewall rule record until detached protected HA retirement is durable, and safely recognize a repeated retirement request.
+
 ## [1.4.0-dev.2] - 2026-11-22
 
 ### Pre-release status

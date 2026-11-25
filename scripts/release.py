@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Version, packaging and CI-gated GitHub release tools. Never moves Git refs."""
 import argparse
+import gzip
 import hashlib
 import io
 import json
@@ -116,8 +117,9 @@ def archive(root=ROOT, output=None):
     for directory in roots:
         files.extend((root / directory).rglob('*'))
     records = {}
-    with tarfile.open(target, 'w:gz') as bundle:
-        for path in sorted(files):
+    with target.open('wb') as output_file, gzip.GzipFile(filename='', mode='wb', fileobj=output_file, mtime=0) as compressed, \
+            tarfile.open(fileobj=compressed, mode='w') as bundle:
+        for path in sorted(files, key=lambda candidate: candidate.relative_to(root).as_posix()):
             relative = path.relative_to(root)
             if not path.is_file() or path.is_symlink() or '__pycache__' in relative.parts or path.suffix in ('.pyc', '.log', '.key', '.pem', '.crt', '.p12', '.pfx'):
                 continue
@@ -137,8 +139,12 @@ def archive(root=ROOT, output=None):
                 continue
             if 'generated' in path.name:
                 continue
-            records[relative.as_posix()] = hashlib.sha256(path.read_bytes()).hexdigest()
-            bundle.add(path, arcname=f'{name}/{relative.as_posix()}', recursive=False)
+            data = path.read_bytes()
+            records[relative.as_posix()] = hashlib.sha256(data).hexdigest()
+            info = tarfile.TarInfo(f'{name}/{relative.as_posix()}')
+            info.size = len(data)
+            info.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
+            bundle.addfile(info, io.BytesIO(data))
         content = (json.dumps({'version': version, 'sha256': records}, indent=2) + '\n').encode()
         info = tarfile.TarInfo(name + '/release-manifest.json')
         info.size, info.mode = len(content), 0o644
@@ -279,6 +285,8 @@ def main(argv=None):
     publishing.add_argument('--dry-run', action='store_true')
     package = commands.add_parser('archive')
     package.add_argument('--output')
+    verify = commands.add_parser('verify-archive', help='Check a local archive against the current version and changelog.')
+    verify.add_argument('--directory', type=Path, default=ROOT / 'dist')
     args = parser.parse_args(argv)
     try:
         if args.command == 'show':
@@ -294,6 +302,9 @@ def main(argv=None):
             print(json.dumps({'version': args.version, 'files': prepare(args.version, dry_run=args.dry_run), 'dryRun': args.dry_run}))
         elif args.command == 'publish':
             publish(args.tag, args.run_id, args.repo, args.dry_run)
+        elif args.command == 'verify-archive':
+            bundle, _ = verify_release_artifact(args.directory, current_version(), (ROOT / 'CHANGELOG.md').read_bytes())
+            print(f'Archive and manifest verified: {bundle}')
         else:
             print(archive(output=args.output))
         return 0

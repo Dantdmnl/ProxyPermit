@@ -172,6 +172,23 @@ def restored(root, saved):
     return not pairs if saved.get('before') is None else len(pairs) == 1 and pairs[0].get('value') == saved['before']
 
 
+def status():
+    """Compare the root checkpoint with the live reservation without changing either."""
+    saved = load()
+    root = query()
+    current = cluster_lease.marker(root)
+    if saved is None:
+        return dict(state='no-reservation' if current is None else 'reservation-without-local-checkpoint')
+    phase = saved['phase']
+    if saved['node'] != local_name():
+        return dict(state='checkpoint-for-another-node', phase=phase)
+    if current == dict(node=saved['node'], token=saved['token']):
+        return dict(state='local-reservation', phase=phase, peerServingProtectedVIP=drained(saved['node']))
+    if phase == 'releasing' and restored(root, saved):
+        return dict(state='release-observed', phase=phase)
+    return dict(state='reservation-mismatch', phase=phase)
+
+
 def complete(saved):
     require_root()
     if saved.get('node') != local_name():
@@ -236,12 +253,17 @@ def require_root():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--recover', action='store_true', required=True,
-                        help='Release an interrupted maintenance reservation only after local health and peer protection are verified.')
+    actions = parser.add_mutually_exclusive_group(required=True)
+    actions.add_argument('--status', action='store_true', help='Compare the local checkpoint with the live reservation without changing either.')
+    actions.add_argument('--recover', action='store_true',
+                         help='Release an interrupted maintenance reservation only after local health and peer protection are verified.')
     parser.add_argument('--install-dir', default='/opt/proxypermit')
     args = parser.parse_args(argv)
     try:
         require_root()
+        if args.status:
+            print(json.dumps(status(), indent=2))
+            return 0
         from scripts.deploy import install
         with install.maintenance_lock():
             saved = load()
@@ -256,7 +278,10 @@ def main(argv=None):
             complete(saved)
             print('Cluster maintenance completed; the original standby setting was restored.')
         return 0
-    except (OSError, ValueError, RuntimeError):
+    except (OSError, ValueError, RuntimeError, ET.ParseError, RecursionError):
+        if args.status:
+            print('Cluster maintenance status is unavailable. Check the private checkpoint and OS cluster status.', file=sys.stderr)
+            return 1
         print('Cluster maintenance recovery was refused. Review local health, the private checkpoint and OS cluster status.', file=sys.stderr)
         return 1
 

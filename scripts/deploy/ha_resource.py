@@ -24,6 +24,11 @@ def command(*args, timeout=2):
     return subprocess.run(args, capture_output=True, text=True, check=False, timeout=timeout)
 
 
+def report_failure(reason):
+    prefix = os.environ.get('OCF_EXIT_REASON_PREFIX') or 'ocf-exit-reason:'
+    print(prefix + reason, file=sys.stderr)
+
+
 def profile():
     descriptor = os.open(PROFILE, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
     with os.fdopen(descriptor, encoding='utf-8') as source:
@@ -74,7 +79,7 @@ def monitor(value, *, report=False):
             return SUCCESS
         reason = 'The local Tinyproxy health check failed.'
     if report:
-        print(reason, file=sys.stderr)
+        report_failure(reason)
     return ERROR
 
 
@@ -136,8 +141,13 @@ def main(argv=None):
         return INVALID
     try:
         return resource(args[0], profile())
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        print('Protected Keepalived operation could not be verified.', file=sys.stderr)
+    except subprocess.TimeoutExpired as error:
+        # Report only the executable and its operation, without command output or configuration.
+        command_name = ' '.join(error.cmd[:2]) if isinstance(error.cmd, (list, tuple)) else 'a local command'
+        report_failure(f'Protected VIP {args[0]} timed out in {command_name} (limit {error.timeout} seconds).')
+        return ERROR
+    except (OSError, ValueError):
+        report_failure('Protected Keepalived operation could not be verified.')
         return ERROR
 
 

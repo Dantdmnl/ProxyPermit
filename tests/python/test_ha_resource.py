@@ -1,11 +1,13 @@
 """A protected VIP is healthy only with service, address and HTTP evidence."""
+from contextlib import redirect_stderr
+from io import StringIO
 import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from subprocess import CompletedProcess
+from subprocess import CompletedProcess, TimeoutExpired
 
 from scripts.deploy import ha_resource as agent
 
@@ -82,6 +84,26 @@ class ProtectedResourceTests(unittest.TestCase):
         with patch.object(agent, 'command', return_value=CompletedProcess([], 1, '', '')):
             with self.assertRaises(ValueError):
                 agent.owns_vip(self.value)
+
+    def test_monitor_timeout_identifies_command_without_its_output(self):
+        error = TimeoutExpired(('runuser', '-u', 'proxypermit'), 2, output='private probe output')
+        logged = StringIO()
+        with patch.object(agent.os, 'name', 'posix'), patch.object(agent.os, 'geteuid', return_value=0, create=True), \
+                patch.object(agent, 'profile', return_value=self.value), \
+                patch.object(agent, 'resource', side_effect=error), \
+                patch.dict(os.environ, OCF_EXIT_REASON_PREFIX='test-ocf:'), redirect_stderr(logged):
+            self.assertEqual(agent.main(['monitor']), agent.ERROR)
+        self.assertTrue(logged.getvalue().startswith('test-ocf:'))
+        self.assertIn('monitor timed out in runuser -u (limit 2 seconds)', logged.getvalue())
+        self.assertNotIn('private probe output', logged.getvalue())
+
+    def test_monitor_reports_a_missing_vip_in_pacemaker_exit_reason_format(self):
+        logged = StringIO()
+        with patch.object(agent, 'command', side_effect=self.runner(vip=False)), \
+                patch.dict(os.environ, OCF_EXIT_REASON_PREFIX=''), redirect_stderr(logged):
+            self.assertEqual(agent.resource('monitor', self.value), agent.ERROR)
+        self.assertEqual(logged.getvalue(),
+                         'ocf-exit-reason:The virtual IP is missing from the protected interface.\n')
 
     @unittest.skipUnless(os.name == 'posix' and getattr(os, 'geteuid', lambda: -1)() == 0, 'Root-owned Linux profile check.')
     def test_profile_rejects_writable_files_and_symlinks(self):

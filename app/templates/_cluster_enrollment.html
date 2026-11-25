@@ -1,0 +1,29 @@
+<details class="cluster-plan-guide" id="cluster-enrollment-guide">
+    <summary>{{ _('Witness enrollment and protected migration') }}</summary>
+    <p>{{ _('The OS administrator runs the enrollment and migration steps over authenticated SSH.') }}</p>
+    <ol>
+        <li>
+            <strong>{{ _('Witness host') }}</strong>
+            <p>{{ _('Use a third host outside both nodes’ failure domain. Allow TCP 5403 from A and B to the witness. Keep a direct SSH session open and verify the same plan fingerprint before configuring QNetd with mutual TLS.') }}</p>
+            <pre><code>sudo python3 -m scripts.deploy.cluster_setup --plan /root/cluster-plan.json --role witness</code></pre>
+        </li>
+        <li>
+            <strong>{{ _('Enroll A and B') }}</strong>
+            <p>{{ _('On both nodes, use one operation ID. Verify the witness CA in the local certificate store, compare the client certificate fingerprints, and transfer the Corosync key from A to B over a private channel. Keep private keys and certificate bundles on the hosts.') }}</p>
+            <pre><code>sudo .venv/bin/python -m scripts.deploy.cluster_preflight workspace --operation "$operation"</code></pre>
+        </li>
+        <li>
+            <strong>{{ _('Verify fencing permissions') }}</strong>
+            <p>{{ _('Allow TCP 8006 to the Proxmox API from both nodes. Use separate tokens that each control only the peer VM and verify the API certificate. In a maintenance window, power off each peer in turn and prove you can restore it using independent access.') }}</p>
+        </li>
+        <li>
+            <strong>{{ _('Migrate in a maintenance window') }}</strong>
+            <p>{{ _('Check direct SSH and management access to A and B and allow UDP 5405 between them. Review both nodes’ preflight results, then reserve the standby before the VIP owner. If interrupted, use the migration and recovery panel and compare the operation ID on both nodes.') }}</p>
+        </li>
+    </ol>
+    {% if locale == 'nl' %}
+    <a href="https://dantdmnl.github.io/ProxyPermit/nl/hoge-beschikbaarheid/#de-witness-inschrijven-en-fencing-van-beide-nodes-testen">{{ _('Open the enrollment and recovery guide') }}</a>
+    {% else %}
+    <a href="https://dantdmnl.github.io/ProxyPermit/en/high-availability/#enroll-the-witness-and-verify-peer-fencing">{{ _('Open the enrollment and recovery guide') }}</a>
+    {% endif %}
+</details>

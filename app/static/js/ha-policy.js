@@ -35,18 +35,33 @@
             state = 'unknown';
         }
         const reasons = [];
-        if (state === 'degraded') {
+        const credentialExpired = evidence?.localFencingCredential === 'expired';
+        if (state === 'degraded' || state === 'stopped') {
             if (evidence.quorate === false) reasons.push('No cluster quorum');
             if (evidence.witnessConnected === false) reasons.push('Witness connection not confirmed');
             if (evidence.fencingConfigured === false) reasons.push('Fencing configuration incomplete');
-            else if (evidence.fencingReady === false) reasons.push('Fencing readiness not confirmed');
+            else if (evidence.fencingReady === false && !credentialExpired) reasons.push('Fencing readiness not confirmed');
             if (evidence.policySafe === false) reasons.push('Cluster policy could not be verified');
-            if (!reasons.length) reasons.push('Virtual IP ownership or resource health could not be verified');
+            if (evidence.owners === 0) reasons.push('No node currently holds the virtual IP');
+            if (state === 'degraded' && !reasons.length) reasons.push('Virtual IP ownership or resource health could not be verified');
+        }
+        if (state !== 'unknown' && state !== 'not-configured' && credentialExpired) {
+            reasons.push('Local Proxmox fencing credential expired');
         }
         protection.textContent = [protectionLabels[state], ...reasons].map(label => I18n.t(label)).join(' · ');
+        const checked = document.getElementById('ha-protection-checked');
+        const fresh = state !== 'unknown' && state !== 'not-configured' && Number.isInteger(evidence?.checked);
+        checked.closest('#ha-protection-checked-row').hidden = !fresh;
+        if (fresh) showTime(checked, evidence.checked);
         if (state !== 'unknown' && state !== 'not-configured') {
             protectionExpiry = setTimeout(showProtection, lifetime * 1000);
         }
+    }
+
+    function showTime(element, epoch) {
+        const time = new Date(epoch * 1000);
+        element.dateTime = time.toISOString();
+        element.textContent = new Intl.DateTimeFormat(I18n.tag, { dateStyle: 'short', timeStyle: 'medium' }).format(time);
     }
 
     async function request(action, data = {}) {
@@ -80,11 +95,7 @@
             const checked = document.getElementById('ha-policy-checked');
             const checkedAt = panel.dataset.role === 'b' ? current?.primaryChecked : current?.checked;
             checked.closest('#ha-policy-checked-row').hidden = !checkedAt;
-            if (checkedAt) {
-                const time = new Date(checkedAt * 1000);
-                checked.dateTime = time.toISOString();
-                checked.textContent = new Intl.DateTimeFormat(I18n.tag, { dateStyle: 'short', timeStyle: 'medium' }).format(time);
-            }
+            if (checkedAt) showTime(checked, checkedAt);
             if (disconnect) disconnect.hidden = !result.paired;
             const credential = result.credential?.state || 'idle';
             document.getElementById('ha-key-state-row').hidden = !result.paired;
@@ -112,20 +123,29 @@
         }
     }
     let vipSequence = 0, vipExpiry;
+    const vipStatus = document.getElementById('ha-policy-vip');
+    const proxyStatus = document.getElementById('ha-policy-proxy');
+    function clearNodeStatus() {
+        vipStatus.textContent = I18n.t('VIP-status niet bevestigd');
+        proxyStatus.textContent = I18n.t('Proxy status could not be confirmed');
+    }
     async function refreshVip() {
         const sequence = ++vipSequence;
-        const target = document.getElementById('ha-policy-vip');
         try {
             const response = await fetch('/api/status', { signal: AbortSignal.timeout(5000) });
             if (!response.ok) throw new Error();
             const node = await response.json();
             if (sequence !== vipSequence) return;
             clearTimeout(vipExpiry);
-            vipExpiry = setTimeout(() => { target.textContent = I18n.t('VIP-status niet bevestigd'); }, 12000);
-            target.textContent = I18n.t(node.vip_active ? 'Virtueel IP actief op deze node.' : 'Virtueel IP niet actief op deze node.');
+            vipExpiry = setTimeout(clearNodeStatus, 12000);
+            vipStatus.textContent = I18n.t(node.vip_active ? 'Virtueel IP actief op deze node.' : 'Virtueel IP niet actief op deze node.');
+            proxyStatus.textContent = I18n.t(node.tinyproxy_active === false ? 'Proxy service is stopped'
+                : node.tinyproxy_active !== true ? 'Proxy status could not be confirmed'
+                : node.tinyproxy_check_status === 'unresponsive' ? 'Proxy service is running but not responding'
+                : 'Proxy service is running');
         } catch {
             if (sequence !== vipSequence) return;
-            target.textContent = I18n.t('VIP-status niet bevestigd');
+            clearNodeStatus();
         }
     }
 
@@ -133,7 +153,8 @@
         if (event.detail.state !== 'online') {
             vipSequence++;
             statusSequence++;
-            document.getElementById('ha-policy-vip').textContent = I18n.t('VIP-status niet bevestigd');
+            clearTimeout(vipExpiry);
+            clearNodeStatus();
             showProtection();
         } else { refreshVip(); refresh(); }
     });

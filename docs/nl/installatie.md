@@ -9,6 +9,7 @@ Zorg voor een ondersteunde Debian-/Ubuntu-host, root- of sudotoegang en een
 onafhankelijke manier om de server weer te bereiken. Haal de broncode op van de
 versie die je wilt installeren. Voer opdrachten uit vanuit de map met `install.sh`.
 De voorbeelden gebruiken documentatieadressen; vervang ze door je eigen netwerkgegevens.
+Bekijk de [vereisten en geteste platformen](vereisten.md) voordat je een host kiest.
 
 ## Kies je route
 
@@ -25,10 +26,12 @@ De voorbeelden gebruiken documentatieadressen; vervang ze door je eigen netwerkg
 Gebruik Debian of Ubuntu met systemd en Python 3.10 of hoger. Voer de
 opdrachten uit vanuit de hoofdmap van de broncode.
 
-Voor een installatie met vragen open je de wizard.
+Open de wizard in een Linux-console of via SSH. Start je als gewone
+gebruiker, dan vraagt de wizard na je bevestiging om sudo-toegang. De
+instellingen die je al hebt ingevoerd worden overgenomen.
 
 ```bash
-sudo bash install.sh
+bash install.sh
 ```
 
 Wil je het standaardplan voor één node eerst apart bekijken? Controleer de
@@ -45,6 +48,11 @@ in een virtuele Python-omgeving en voert de tests uit. Een zelfstandige node
 gebruikt een eigen serviceaccount met een sudoers-regel voor het herstarten
 van Tinyproxy.
 
+Druk op Enter om een getoonde standaardwaarde te gebruiken. De wizard
+controleert de lokale consolepoort en stelt zo nodig een andere poort voor.
+In het overzicht kun je instellingen nog aanpassen. Gunicorn is de standaard.
+Gunicorn en Granian ondersteunen allebei rechtstreeks HTTPS.
+
 ### Beheertoegang beschermen
 
 De wizard vraagt naar het vertrouwde beheer-IP of netwerk en de echte SSH- en
@@ -56,8 +64,18 @@ Een lokale installer kan het netwerk van een externe beheerder niet veilig raden
 Gebruik bij automatisering of een bestaande installatie de expliciete opties
 `--management-cidr`, `--management-ssh-port` en `--management-web-port`.
 Bij het [anti-lockoutprofiel](beheer.md#anti-lockoutprofiel) staan een voorbeeld,
-herstelgedrag en beperkingen. De installer behoudt de activatiestatus van UFW
-en bestaande vaste uitzonderingen.
+herstelgedrag en beperkingen.
+
+Kies bij een nieuwe installatie **Enable UFW after adding ProxyPermit rules**
+om UFW te activeren zodra de regels voor beheer en proxy zijn toegevoegd.
+Het standaardbeleid moet inkomend verkeer blokkeren. Als de wizard je
+SSH-verbinding herkent, moeten het vertrouwde netwerk en de SSH-poort die
+verbinding toelaten. Zorg voor een onafhankelijke console en controleer
+bestaande firewallregels en andere diensten die inkomend verkeer nodig hebben.
+
+Gebruik bij automatisering `--enable-ufw` met een expliciete `--management-cidr`.
+Geef de SSH- en webpoorten op als ze afwijken van de standaard. De standaardkeuze
+en upgrades laten de activatiestatus van UFW staan zoals die is.
 
 ### Beheerconsole openen
 
@@ -81,7 +99,40 @@ commandoregelargument doorgegeven. Het standaard releasepad is
 
 ### HTTPS en HSTS
 
-Via HTTPS stuurt ProxyPermit standaard HSTS voor de huidige host. Zet
+Authenticatie staat standaard aan. Gebruik `/connection` om zonder sessie te
+controleren of ProxyPermit bereikbaar is. Voor de uitgebreide status via
+`/health` heb je een ingelogd account nodig. Extra browserorigins in
+`MANAGER_ALLOWED_ORIGINS` gelden alleen voor de oude sessieoverdracht.
+
+Bij een nieuwe interactieve installatie stelt de wizard **HTTPS** met een
+lokale CA voor op `127.0.0.1:8444`. Kies je **HTTP**, dan stelt hij poort 8080
+voor. Via **Edit management and firewall settings**
+kun je het protocol en de poort aanpassen voordat je het plan uitvoert. De
+console luistert op loopback. Gebruik voor toegang op afstand een tunnel of
+reverse proxy. Poort 8443 is gereserveerd voor HA-synchronisatie.
+Bij een installatie zonder wizard gebruikt de installer HTTP, tenzij je
+`--manager-tls` opgeeft.
+
+Bij HTTPS kun je kiezen uit twee opties.
+
+- **Local CA** maakt een zelfondertekende CA en een servercertificaat dat
+  automatisch wordt vernieuwd. Voeg de DNS-namen en IP-adressen toe die
+  gebruikers invoeren. Controleer de getoonde SHA-256-vingerafdruk en vertrouw
+  `/etc/proxypermit/management-tls/ca.pem` op elk apparaat dat de console opent.
+- **Own certificate** importeert een PEM-keten met het servercertificaat
+  vooraan. Geef absolute paden op naar bestanden van root. De bijbehorende
+  PEM-sleutel moet onversleuteld zijn en permissies `0600` hebben. Open de
+  console via een naam op het certificaat. Regel de vernieuwing van de
+  geïmporteerde bestanden zelf.
+
+Bij automatisering kun je het plan bekijken met
+`bash install.sh --manager-tls local-ca --plan`. Voor een eigen certificaat
+gebruik je `--manager-tls custom`, `--manager-cert` en `--manager-key`.
+Bij upgrades blijft de bestaande verbinding behouden. Zie [HTTPS voor beheer](beheer-https.md)
+om HTTPS in te schakelen op een bestaande installatie.
+
+Via HTTPS stuurt ProxyPermit standaard HSTS voor de huidige host. Met de
+lokale CA staat HSTS eerst uit, zodat je de CA op de apparaten kunt vertrouwen. Zet
 `HSTS_INCLUDE_SUBDOMAINS=true` alleen als alle subdomeinen HTTPS ondersteunen.
 Achter een reverse proxy moet de HTTPS-indicatie uit een vertrouwde proxy
 komen. Beperk de toegang tot de app-listener tot die proxy. De meegeleverde
@@ -153,18 +204,22 @@ omschrijvingen beginnen met **ProxyPermit HA IN** of **ProxyPermit HA OUT**.
 | IN | VRRP vanaf het peeradres naar het lokale node-adres |
 | OUT | VRRP vanaf het lokale node-adres naar het peeradres |
 
-De installer laat de bestaande activatiestatus en het standaardbeleid van UFW
-in stand. Staat UFW uit, dan worden de regels opgeslagen voor wanneer je UFW
-activeert. Het herstelplan bevat de oorspronkelijke UFW-regelbestanden en
-weigert automatisch herstel als die bestanden intussen zijn gewijzigd.
+Het installatieprogramma behoudt het standaardbeleid van UFW. Met de
+standaardkeuze bewaart een uitgeschakelde firewall de nieuwe regels voor
+later. De herstelback-up bevat de oorspronkelijke regels en legt vast of het
+installatieprogramma UFW heeft geactiveerd. Automatisch herstel controleert
+of die bestanden intussen zijn gewijzigd.
 
 Gebruik twee schone Debian- of Ubuntu-hosts met systemd, vaste IPv4-adressen op
 hetzelfde netwerk en een vrij virtueel IP-adres. De hosts moeten unicast VRRP
 (IP-protocol 112) onderling kunnen uitwisselen. Sta TCP 3128 toe vanaf het
 gekozen clientnetwerk en kies een VRRP-ID die op dat netwerk vrij is.
 
-Kies in `sudo bash install.sh` voor **Two-node HA**. De wizard vraagt de
-clustergegevens uit, toont een samenvatting en wacht op bevestiging. Gebruik
+Kies in `bash install.sh` voor **Two-node HA**. Kies een gedetecteerd
+vast IPv4-adres om de lokale interface en het adres vooraf in te vullen, of
+voer beide handmatig in. Vul ook het adres van de andere node, het
+gereserveerde virtuele IP en het clientnetwerk in. De wizard controleert je
+invoer meteen. Bekijk en bevestig daarna het overzicht. Gebruik
 de pijltjestoetsen of cijfers in een geschikte terminal. In eenvoudige
 terminals werkt de genummerde invoer. Stoppen is de standaard bij het
 bevestigingsscherm.
@@ -350,6 +405,22 @@ het serviceaccount en de systeempakketten blijven op de host. Plan bij bestaande
 HA-synchronisatie eerst een onderhoudsmoment. De synchronisatie kan afhankelijk
 zijn van de beheer-API op deze node.
 
+Wil je de lokale ProxyPermit-gegevens ook definitief wissen? Bekijk en voer
+de opschoning uit vanuit een aparte kopie van de broncode.
+
+```bash
+sudo bash install.sh --uninstall --purge --plan
+sudo bash install.sh --uninstall --purge --apply
+```
+
+Deze optie wist lokale accounts, beheerinstellingen, certificaten, eigen
+ProxyPermit-logs, releases en herstelback-ups. Exporteer vooraf wat je wilt
+bewaren. Tinyproxy kan kort herstarten om terug te schakelen naar de
+systeemlogging. SSH-instellingen, vaste regels voor beheertoegang,
+UFW-configuratie, Tinyproxy-configuratie en systeempakketten blijven behouden.
+Neem een HA-node eerst uit bedrijf. Gebruik bij een beveiligd HA-cluster ook
+`--detached-ha` na het loskoppelen en uit bedrijf nemen van de node.
+
 ## Opslaan en activeren
 
 Een opgeslagen concept staat apart van de bestanden die Tinyproxy leest.
@@ -379,8 +450,8 @@ Voor lokaal gebruik: installeer `requirements/granian.txt` en start
 `python -m app.runtime.server --backend granian`. Met `--check` toon je alleen de opdracht.
 `APP_BIND` en `APP_WORKERS` regelen luisteradres en workers. Upgrades behouden
 de eerdere `APP_SERVER` tenzij je expliciet een andere server kiest.
-Directe TLS via Gunicorn blijft beschikbaar; Granian gebruikt in deze integratie
-een TLS-reverse-proxy. Zie [architectuur en HA-keuzes](architecture.md).
+Beide servers ondersteunen directe TLS en kunnen achter een TLS-reverse-proxy
+draaien. Zie [architectuur en HA-keuzes](architecture.md).
 
 Een echte HTTP-test met tijdelijke configuratie kan met
 `python scripts/dev/check_server.py --backend granian` of `--backend gunicorn`.

@@ -15,7 +15,9 @@ class InstallTerminal:
     def heading(self, text):
         print(f'\n{self.accent(text)}')
 
-    def ask(self, label, default=None, validate=None):
+    def ask(self, label, default=None, validate=None, *, help_text=None):
+        if help_text:
+            print(f'    {help_text}')
         hint = f' [{default}]' if default is not None else ''
         while True:
             value = input(f'  {self.accent(">")} {label}{hint}: ').strip()
@@ -87,19 +89,25 @@ class InstallTerminal:
             termios.tcsetattr(fd, termios.TCSADRAIN, previous)
 
     def review(self, plan, args):
-        self.heading('03  Review your installation plan')
+        self.heading('Review your installation plan')
         print(f"  Action          {('Upgrade' if plan['action'] == 'upgrade' else 'Fresh installation')}")
         print(f"  Topology        {('Two-node HA' if plan['mode'] == 'ha' else 'Standalone node')}")
         print(f"  Web server      {plan['server']}")
         print(f"  Release path    {plan['installDir']}")
         if plan['action'] == 'install':
-            print(f'  Console         http://127.0.0.1:{args.manager_port}/')
+            console = plan['management']
+            print(f"  Console         {console['scheme']}://{console['bind']}:{console['port']}/")
+            if console['certificate'] == 'local-ca':
+                print('  Certificate     Local CA · automatic renewal')
+                print(f"  Names           {', '.join(console['certificateNames'])}")
+            elif console['certificate'] == 'custom':
+                print(f'  Certificate     Own certificate ({args.manager_cert})')
             print(f'  Administrator   {args.admin_user}')
         if getattr(args, 'management_cidr', None):
             print(f"  Protected IPs   {', '.join(args.management_cidr)}")
             print(f"  SSH ports       {', '.join(map(str, args.management_ssh_port or []))}")
             print(f"  Web ports       {', '.join(map(str, args.management_web_port or []))}")
-            print('  Existing pinned exceptions are retained; firewall activation is unchanged.')
+        print(f"  UFW             {('Enable after adding rules' if args.enable_ufw else 'Keep current status')}")
         if plan.get('ha'):
             ha = plan['ha']
             print(f"  Local node      {ha['node'].upper()} · {ha['local']} · {ha['interface']}")

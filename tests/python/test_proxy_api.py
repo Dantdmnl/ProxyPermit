@@ -1,3 +1,4 @@
+import errno
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app.web import manager as main
+from app.core.tinyproxy import atomic_write
 
 
 class ProxyApiTests(unittest.TestCase):
@@ -438,6 +440,45 @@ class ProxyApiTests(unittest.TestCase):
             self.assertEqual(result.status_code, 400)
             self.assertEqual(self.filter.read_text(), '*.example.com\n')
             self.assertEqual(self.config.read_text(), 'Port 3128\nAllow 127.0.0.1\n')
+
+    def test_full_disk_during_filter_publish_restores_both_files_without_restart(self):
+        headers, _ = self.token_and_revision()
+        before = (self.config.read_bytes(), self.filter.read_bytes())
+        native = dict(filterMode='blocklist', filterType='fnmatch', filterURLs=False, filterPath=str(self.filter))
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch('app.web.proxy.summary', return_value=native), \
+                patch('app.web.proxy.activation_supported', return_value=True), \
+                patch.object(main.whitelist_manager, 'restart_tinyproxy', return_value=(True, None)) as restart:
+            loaded = self.client.get('/api/proxy/filter').get_json()
+            response = self.client.put('/api/proxy/filter', headers=headers,
+                                       json={'content': '*tracker*\n', 'revision': loaded['revision']})
+            self.assertEqual(response.status_code, 200)
+            _, revision = self.token_and_revision()
+            payload = {'content': 'Port 4000\nAllow 127.0.0.1\n', 'revision': revision, 'activate': True}
+            disk_full = False
+
+            def write(path, content, *args, **kwargs):
+                nonlocal disk_full
+                if path == self.filter:
+                    self.assertIn('Port 4000', self.config.read_text())
+                    disk_full = True
+                if disk_full:
+                    raise OSError(errno.ENOSPC, 'test disk full')
+                return atomic_write(path, content, *args, **kwargs)
+
+            with patch('app.core.tinyproxy.atomic_write', side_effect=write):
+                result = self.client.put('/api/proxy/config', headers=headers, json=payload)
+            self.assertEqual(result.status_code, 400, result.get_json())
+            self.assertIn(result.get_json()['error'], (
+                'Disk space ran out during publication. The previous policy was restored and Tinyproxy was not restarted.',
+                'Tijdens het publiceren raakte de schijf vol. Het vorige beleid is teruggezet en Tinyproxy is niet herstart.',
+            ))
+            self.assertEqual((self.config.read_bytes(), self.filter.read_bytes()), before)
+            self.assertEqual(self.client.get('/api/proxy/filter').get_json()['content'], '*tracker*\n')
+            restart.assert_not_called()
+            result = self.client.put('/api/proxy/config', headers=headers, json=payload)
+            self.assertEqual(result.status_code, 200, result.get_json())
+            restart.assert_called_once()
 
 
 if __name__ == '__main__':

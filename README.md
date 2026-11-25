@@ -75,12 +75,13 @@ choosing a production setup.
 
 ## Development preview
 
-**[v1.4.0-dev.2](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2)**
-is a prerelease for disposable or recoverable test deployments. It adds local
-protected-HA preparation in Settings, migration checks, rolling application
-rollback and faster log browsing. Witness enrollment, fencing and activation
-require OS administration. Read the
-[release notes](CHANGELOG.md#140-dev2---2026-11-22) before testing.
+**[v1.4.0-dev.3](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3)**
+is a prerelease for disposable or recoverable test deployments. It adds
+policy recovery before Tinyproxy starts, a local HTTPS default in the interactive
+installer and a diagnostic report for system administrators. Protected
+Corosync/Pacemaker HA remains experimental. See the
+[release notes](CHANGELOG.md#140-dev3---2026-11-25) and
+[verification report](docs/en/verification.md).
 **v1.3.0 remains the stable release.**
 
 ## Get started
@@ -131,7 +132,9 @@ bundled with a release when you need instructions for that exact version.
 | Use the console / De interface gebruiken | [User guide](docs/en/user-guide.md) | [Werkinstructie](docs/nl/werkinstructie.md) |
 | Users and roles / Gebruikers en rollen | [Permissions](docs/en/roles.md) | [Rechten](docs/nl/rollen.md) |
 | Install, upgrade, or remove / Installeren, bijwerken of verwijderen | [Installation guide](docs/en/installation.md) | [Installatiehandleiding](docs/nl/installatie.md) |
+| Requirements and tested platforms / Vereisten en geteste platformen | [Requirements](docs/en/requirements.md) | [Vereisten](docs/nl/vereisten.md) |
 | Daily operations / Dagelijks beheer | [Administrator guide](docs/en/administration.md) | [Beheerdershandleiding](docs/nl/beheer.md) |
+| Command-line recovery / Herstel via de commandoregel | [Recovery commands](docs/en/recovery.md) | [Herstelcommando’s](docs/nl/noodprocedures.md) |
 | High availability / Hoge beschikbaarheid | [HA guide](docs/en/high-availability.md) | [HA-handleiding](docs/nl/hoge-beschikbaarheid.md) |
 | Logging, privacy and retention / Logging, privacy en bewaartermijnen | [Logging guide](docs/en/logging.md) | [Logginghandleiding](docs/nl/logging.md) |
 

@@ -193,15 +193,20 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 if activating and data.get('activationAction') == 'reload' and action != 'reload':
                     return jsonify(error='Activation requirements changed. Review the configuration again.'), 409
                 attempts = 0
+                service_attempted = False
 
                 def activate():
-                    nonlocal attempts
+                    nonlocal attempts, service_attempted
                     attempts += 1
                     if attempts > 1:
                         filters.restore_pending()
+                        if not service_attempted:
+                            return None, None
                     else:
                         filters.publish_draft()
-                    return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
+                    service_attempted = True
+                    with file_lock(config_store().activation_lock):
+                        return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
 
                 result = config_store().save(data['content'], data['revision'], activate if activating else None)
                 if activating:
@@ -242,15 +247,20 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
         atomic_write(store.backup_dir / backup_name, json.dumps(dict(config=config, filters=content)))
         action = service_activation_action(config, updated)
         attempts = 0
+        service_attempted = False
 
         def apply_and_recover():
-            nonlocal attempts
+            nonlocal attempts, service_attempted
             attempts += 1
             if attempts == 1:
                 filters.publish_content(rules, content)
             else:
                 filters.restore_pending()
-            return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
+                if not service_attempted:
+                    return None, None
+            service_attempted = True
+            with file_lock(store.activation_lock):
+                return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
 
         result = store.save(updated, config_revision(config), apply_and_recover)
         filters.finish_activation()

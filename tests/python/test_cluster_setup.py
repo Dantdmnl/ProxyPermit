@@ -74,11 +74,20 @@ class ClusterPreparationTests(unittest.TestCase):
         with patch.object(core, 'protected', side_effect=record), \
                 patch.object(setup, 'command', side_effect=['NTP=yes\nNTPSynchronized=yes', 'Status: ON'] * 2), \
                 patch.object(setup, 'metadata_parameters', return_value={'api_token'}), \
+                patch.object(cluster_native, 'transport_receipt', return_value={'certificateHash': 'c' * 64}), \
+                patch.object(cluster_native, 'private_bytes', return_value=b'x' * 1024) as key, \
                 patch.object(cluster_native, 'verify_power_receipt') as verify:
-            self.assertEqual(setup.inspect(values)['checks']['powerTest'], 'pass')
+            result = setup.inspect(values)
+            self.assertEqual(result['checks']['enrollment'], 'pass')
+            self.assertEqual(result['checks']['powerTest'], 'pass')
+            self.assertNotIn('certificateHash', json.dumps(result))
             verify.assert_called_once_with(setup.cluster_bootstrap.FOLDER / operation, expected)
+            key.assert_called_once_with(setup.cluster_bootstrap.FOLDER / operation / 'authkey', 1024)
             verify.side_effect = ValueError('old receipt')
-            self.assertEqual(setup.inspect(values)['checks']['powerTest'], 'pending')
+            key.return_value = b'short'
+            result = setup.inspect(values)
+            self.assertEqual(result['checks']['enrollment'], 'blocked')
+            self.assertEqual(result['checks']['powerTest'], 'pending')
 
     def test_upstream_agent_build_is_pinned_and_syntax_checked(self):
         source = proxmox_fence.content()

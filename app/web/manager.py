@@ -207,19 +207,18 @@ def _preferred_sync_hash(info: Dict[str, Any]) -> str:
 ###########################################################
 @app.after_request
 def add_cors_headers(response):
-    """Add CORS and security headers, granting cross-origin access to allowed peers."""
+    """Add security headers and allow cross-origin legacy session transfer."""
     if request.path.startswith('/api/') or request.path == '/health':
         response.headers['Cache-Control'] = 'no-store'
-    origin = request.headers.get('Origin')
-    allowed_origin = get_allowed_origin(origin)
-    if allowed_origin:
-        response.headers['Access-Control-Allow-Origin'] = allowed_origin
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
+    if request.path == '/api/auth/consume' and ENABLE_AUTH and not AUTH_ACCOUNTS_FILE:
         response.vary.add('Origin')
-
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Auth-Token'
-    response.headers['Access-Control-Max-Age'] = '3600'
+        allowed_origin = get_allowed_origin(request.headers.get('Origin'))
+        if allowed_origin:
+            response.headers['Access-Control-Allow-Origin'] = allowed_origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Auth-Token'
+            response.headers['Access-Control-Max-Age'] = '3600'
 
     # Security headers, including HSTS over HTTPS.
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
@@ -391,7 +390,7 @@ def get_app_config(public_only: bool = False):
     return full
 
 # Authentication settings.
-ENABLE_AUTH = os.getenv('ENABLE_AUTH', 'false').lower() == 'true'
+ENABLE_AUTH = os.getenv('ENABLE_AUTH', 'true').lower() != 'false'
 AUTH_USERNAME = os.getenv('AUTH_USERNAME', '')
 AUTH_ACCOUNTS_FILE = os.getenv('AUTH_ACCOUNTS_FILE', '')
 AUTH_PASSWORD_HASH = os.getenv('AUTH_PASSWORD_HASH', '')
@@ -1027,7 +1026,7 @@ def protect_browser_mutations():
             origin = f'{source.scheme}://{source.netloc}'
         except ValueError:
             return jsonify(error='The request origin is not allowed.'), 403
-    if request.endpoint == 'auth_consume' and get_allowed_origin(origin):
+    if request.endpoint == 'auth_consume' and ENABLE_AUTH and not AUTH_ACCOUNTS_FILE and get_allowed_origin(origin):
         return None
     if (origin and origin != request.host_url.rstrip('/')) or (
         not origin and request.headers.get('Sec-Fetch-Site') in ('cross-site', 'same-site')
@@ -1548,6 +1547,7 @@ def connection_check():
 
 
 @app.route('/health', methods=['GET'])
+@requires_auth
 def health_check():
     """Return health information for monitoring."""
     from datetime import datetime
@@ -3690,7 +3690,8 @@ app.before_request(enforce_browser_permissions)
 register_proxy_api(app, requires_auth, _is_authenticated_request, whitelist_manager, _audit_event)
 register_settings(app, requires_auth, _is_authenticated_request,
                   lambda: (Path(AUTH_ACCOUNTS_FILE) if ENABLE_AUTH and AUTH_ACCOUNTS_FILE else None,
-                           Path(SESSION_STATE_FILE)), settings_reauth, _audit_event)
+                           Path(SESSION_STATE_FILE)), settings_reauth, _audit_event,
+                  lambda: whitelist_manager.get_service_status())
 
 
 if __name__ == '__main__':

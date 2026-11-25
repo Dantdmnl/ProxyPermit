@@ -7,6 +7,7 @@ import ssl
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.core.tinyproxy import ConfigError
@@ -50,7 +51,10 @@ class ManagementTlsTests(unittest.TestCase):
         self.env = self.root / '.env'
         self.env.write_text('MANAGER_SCHEME=http\nGUNICORN_BIND=127.0.0.1:8080\nSECRET=isolated-secret\n')
         self.env.chmod(0o640)
-        for item in (patch.object(tls, 'FOLDER', self.folder), patch.object(tls, 'ENVIRONMENT', self.env)):
+        unit = self.root / 'proxypermit.service'
+        unit.write_text('[Service]\nEnvironment=GUNICORN_USE_TLS=false\n', encoding='utf-8')
+        for item in (patch.object(tls, 'FOLDER', self.folder), patch.object(tls, 'ENVIRONMENT', self.env),
+                     patch.object(tls, 'SERVICE_UNIT', unit)):
             item.start(); self.addCleanup(item.stop)
 
     def test_real_leaf_renewal_preserves_ca_and_rotates_key_and_fingerprint(self):
@@ -72,6 +76,48 @@ class ManagementTlsTests(unittest.TestCase):
         (self.folder / 'ca-key.pem').chmod(0o644)
         with self.assertRaises(ConfigError):
             tls.generate(sans, 0)
+
+    def test_install_local_ca_tracks_certificate_and_renewal_assets_for_rollback(self):
+        self.folder.rmdir()
+        unit = self.root / 'example.timer'
+        args = SimpleNamespace(manager_tls='local-ca', manager_name=['proxy.example.invalid'])
+        transaction = tls.deploy.Transaction(self.root / 'backup')
+        with patch.object(tls, 'assets', return_value={unit: '# Timer\n'}):
+            updates, profile, fingerprint = tls.prepare_installation(args, transaction, self.root / 'current', 0)
+        self.assertEqual(updates['SESSION_COOKIE_SECURE'], 'true')
+        self.assertEqual(tls.load_profile(), profile)
+        self.assertIn('DNS:proxy.example.invalid', profile['sans'])
+        self.assertEqual(profile['fingerprint'], fingerprint)
+        self.assertTrue(unit.exists())
+        self.assertIsNone(tls.rollback_values(transaction.entries))
+        transaction.restore()
+        self.assertFalse(unit.exists())
+        self.assertFalse(self.folder.exists())
+
+    def test_install_custom_pem_accepts_legacy_key_and_rejects_mismatched_key(self):
+        cert, key = self.root / 'fullchain.pem', self.root / 'private.pem'
+        tls.run('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
+                '-subj', '/CN=proxy.example.invalid', '-out', str(cert), '-keyout', str(key))
+        tls.run('openssl', 'rsa', '-in', str(key), '-traditional', '-out', str(key))
+        before = key.read_bytes()
+        self.folder.rmdir()
+        args = SimpleNamespace(manager_tls='custom', manager_cert=str(cert), manager_key=str(key))
+        transaction = tls.deploy.Transaction(self.root / 'backup')
+        updates, profile, fingerprint = tls.prepare_installation(args, transaction, self.root / 'current', 0)
+        self.assertIsNone(profile)
+        self.assertEqual(fingerprint, tls.certificate(cert)['fingerprint'])
+        self.assertEqual(key.read_bytes(), before)
+        installed = Path(updates['MANAGER_KEY'])
+        self.assertIn('BEGIN PRIVATE KEY', installed.read_text())
+        self.assertEqual(installed.stat().st_mode & 0o777, 0o640)
+        transaction.restore()
+        self.assertFalse(self.folder.exists())
+        tls.run('openssl', 'genpkey', '-algorithm', 'EC', '-pkeyopt', 'ec_paramgen_curve:P-256', '-out', str(key))
+        transaction = tls.deploy.Transaction(self.root / 'bad-backup')
+        with self.assertRaisesRegex(ConfigError, 'matching private key'):
+            tls.prepare_installation(args, transaction, self.root / 'current', 0)
+        transaction.restore()
+        self.assertFalse(self.folder.exists())
 
     def test_too_old_ca_is_not_replaced_silently(self):
         first = tls.generate(tls.names(), 0)

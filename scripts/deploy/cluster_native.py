@@ -146,7 +146,7 @@ def verify_power_receipt(folder, stamp):
         raise ValueError('An OS-verified off/recovery receipt for the current credential and agent is required.')
 
 
-def prepared_transport(plan, stamp, folder, *, required=False):
+def transport_receipt(plan, stamp, folder, *, required=False):
     try:
         ready = cluster_setup.protected(folder / 'qdevice-ready.json', private=True)
     except FileNotFoundError as exc:
@@ -164,8 +164,15 @@ def prepared_transport(plan, stamp, folder, *, required=False):
     hashes = {key: ready.get(key) for key in ('caHash', 'certificateHash')}
     if any(not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value) for value in hashes.values()):
         raise ValueError('Incomplete witness enrollment proof.')
+    return hashes
+
+
+def prepared_transport(plan, stamp, folder, *, required=False):
+    hashes = transport_receipt(plan, stamp, folder, required=required)
+    if hashes is None:
+        return None
     from scripts.deploy.cluster_preflight import certificate_material
-    if certificate_material(ready['cluster'], hashes['caHash']) != hashes['certificateHash']:
+    if certificate_material(cluster_topology.name(plan), hashes['caHash']) != hashes['certificateHash']:
         raise ValueError('The installed witness client certificate changed after preflight.')
     key = private_bytes(folder / 'authkey', 1024)
     if len(key) != 1024:

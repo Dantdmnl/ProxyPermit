@@ -84,91 +84,134 @@
         </header>
         {% if ha_policy_role in ('a', 'b') %}
         {% if permissions.admin and not cluster_reserved %}
-        <details id="cluster-preparation" class="ha-settings">
+        <details id="cluster-preparation" class="ha-settings" data-node="{{ cluster_local_role }}">
             <summary>{{ _('Prepare split-brain protection') }}</summary>
-            <p>{{ _('These local checks prepare quorum and fencing. They do not activate protection or prove the peer and witness are safe.') }}</p>
-            <details class="cluster-plan-guide">
-                <summary>{{ _('Hosts, network and permissions') }}</summary>
-                <ol>
-                    <li>{{ _('Start with a managed HA pair: set up A, join B with the pairing code, and confirm policy synchronization. Keep direct management and SSH access to both nodes during migration.') }}</li>
-                    <li>{{ _('Use static IPv4 addresses and synchronized time on both nodes and on a witness outside their failure domain.') }}</li>
-                    <li>{{ _('Verify the cluster network paths: UDP 5405 between A and B, TCP 5403 from each node to the witness, and TCP 8006 from each node to the Proxmox API.') }}</li>
-                    <li>{{ _('Use the same validated plan on A, B and the witness. Use peer-specific fencing tokens and a trusted Proxmox CA. Keep the tokens on the hosts.') }}</li>
-                </ol>
-            </details>
-            <p id="cluster-readiness-message" role="status">{{ _('Waiting for OS prerequisite checks.') }}</p>
-            <dl class="settings-facts cluster-prerequisites">
-                {% for key, label in [('managedHa', 'Managed two-node HA'), ('time', 'OS reports synchronized network time'), ('packages', 'Cluster packages installed'), ('plan', 'OS-approved cluster and witness plan'), ('agent', 'Supported fencing agent installed'), ('authentication', 'Fencing authentication and TLS verified'), ('powerTest', 'Real power-off and recovery test')] %}
-                <div><dt>{{ _(label) }}</dt><dd data-cluster-check="{{ key }}">{{ _('Not confirmed') }}</dd></div>
-                {% endfor %}
-            </dl>
-            <p class="hint">{{ _('Use this panel to prepare the local node. The witness, fencing credentials and activation are handled separately by the OS administrator.') if cluster_web_available else _('The OS administrator stages the plan and supplies fencing credentials. Ordinary HA and policy synchronization continue unchanged. Never use a hypervisor administrator account for fencing.') }}</p>
-            <form id="cluster-plan-form" class="ha-fields" data-csrf="{{ csrf }}">
-                <p class="cluster-plan-context">{{ _('Prepare a Proxmox plan for the installed HA pair. Enter the OS hostnames and Proxmox VM IDs. The witness must be on independent infrastructure.') }}</p>
-                {% for node, address in [('A', cluster_plan_addresses[0]), ('B', cluster_plan_addresses[1])] %}
-                <fieldset>
-                    <legend>{{ _('Node A') if node == 'A' else _('Node B') }} · {{ address }}</legend>
-                    <label>{{ _('OS hostname') }}<input name="node{{ node }}Name" maxlength="63" value="{{ cluster_local_name if cluster_local_role == node|lower else '' }}" required></label>
-                    <label>{{ _('Proxmox VM ID') }}<input name="node{{ node }}Target" inputmode="numeric" maxlength="9" pattern="[1-9][0-9]{2,8}" required></label>
-                </fieldset>
-                {% endfor %}
-                <label>{{ _('Witness IPv4 address') }}<input name="witness" maxlength="15" required></label>
-                <label>{{ _('Proxmox API IPv4 address') }}<input name="fenceAddress" maxlength="15" required></label>
-                <div class="ha-plan-actions"><button type="submit">{{ _('Validate Proxmox plan') }}</button></div>
-            </form>
-            <div class="cluster-plan-import">
-                <label for="cluster-plan-file">{{ _('Check a plan from the other node') }}</label>
-                <input type="file" id="cluster-plan-file" accept=".json,application/json" aria-describedby="cluster-plan-file-help">
-                <p id="cluster-plan-file-help" class="hint">{{ _('Open the downloaded cluster-plan.json on B to verify it matches this pair. The file is not installed on this node.') }}</p>
+            <p>{{ _('A third host helps decide which node may keep the virtual IP. Fencing turns off an unreachable peer before the other node takes over.') }}</p>
+            <div class="cluster-platform-picker">
+                <label for="cluster-platform">{{ _('Where do these nodes run?') }}</label>
+                <select id="cluster-platform">
+                    <option value="">{{ _('Choose a platform') }}</option>
+                    <option value="proxmox">Proxmox VE</option>
+                    <option value="workstation">VMware Workstation</option>
+                    <option value="external">{{ _('VMware vSphere, KVM or physical servers') }}</option>
+                </select>
             </div>
-            <p id="cluster-plan-feedback" role="status"></p>
-            <div id="cluster-plan-result" hidden>
-                <p>{{ _('Save the reviewed plan on this node. Download the same plan for the other node and the witness.') if cluster_web_available else _('Download the plan and give the same file to the OS administrator for both nodes and the witness. OS review and activation are separate steps.') }}</p>
-                <div>{{ _('Plan fingerprint') }} <code id="cluster-plan-fingerprint"></code></div>
-                <details id="cluster-plan-firewall" hidden>
-                    <summary>{{ _('Firewall rules at activation') }}</summary>
-                    <pre><code></code></pre>
-                </details>
-                <div class="settings-actions">
-                    {% if cluster_web_available %}<button type="button" id="cluster-plan-stage" disabled>{{ _('Save plan on this node') }}</button>{% endif %}
-                    <a id="cluster-plan-download" download="cluster-plan.json">{{ _('Download cluster plan') }}</a>
-                </div>
+            <div id="cluster-platform-external" class="settings-panel-note" hidden>
+                <p id="cluster-platform-help"></p>
+                <a href="{{ 'https://dantdmnl.github.io/ProxyPermit/nl/hoge-beschikbaarheid/#fencingplatformen' if locale == 'nl' else 'https://dantdmnl.github.io/ProxyPermit/en/high-availability/#fencing-platforms' }}">{{ _('See the supported fencing platforms') }}</a>
             </div>
-            {% if cluster_web_available %}
-            <section class="cluster-local-preparation" aria-labelledby="cluster-local-title">
-                <h3 id="cluster-local-title">{{ _('Local preparation') }}</h3>
-                <p id="cluster-local-saved" hidden>{{ _('Saved plan fingerprint') }} <code></code></p>
-                <p>{{ _('On each node, save the same plan before preparing the cluster packages. This step leaves the cluster services inactive.') }}</p>
-                <div class="settings-actions">
-                    <button type="button" id="cluster-plan-prepare" class="button-secondary" disabled>{{ _('Prepare cluster packages') }}</button>
-                    <button type="button" id="cluster-plan-load" class="button-secondary" hidden>{{ _('Load saved plan') }}</button>
+            <div id="cluster-proxmox-setup" hidden>
+                <div class="cluster-next">
+                    <strong>{{ _('Next on this node') }}</strong>
+                    <p id="cluster-readiness-message" role="status">{{ _('Waiting for OS prerequisite checks.') }}</p>
                 </div>
-                <p id="cluster-plan-job-status" role="status"></p>
-            </section>
-            <dialog id="cluster-plan-dialog" class="workspace-dialog credential-dialog" aria-labelledby="cluster-job-title">
-                <form id="cluster-plan-job-form" class="workspace-panel">
-                    <header class="workspace-dialog-header"><h3 id="cluster-job-title"></h3></header>
-                    <div class="workspace-dialog-body">
-                        <p id="cluster-job-summary"></p>
-                        <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
-                        {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="cluster-job-otp-hint" required></label>
-                        <p id="cluster-job-otp-hint" class="hint">{{ _('Use a new authenticator code for each confirmation.') }}</p>{% endif %}
-                        <p id="cluster-job-error" role="alert"></p>
+                <section class="cluster-step" aria-labelledby="cluster-plan-title">
+                    <h3 id="cluster-plan-title">{{ _('1. Create or import the cluster plan') }}</h3>
+                    <p>{{ _('On A, create the plan and download it. On B, import that same file.') if cluster_local_role == 'a' else _('Import the plan downloaded on A. This fills in the form and checks that it belongs to this pair.') }}</p>
+                    <div class="cluster-plan-import">
+                        <label for="cluster-plan-file">{{ _('Import the plan from node A') }}</label>
+                        <input type="file" id="cluster-plan-file" accept=".json,application/json">
                     </div>
-                    <footer class="workspace-dialog-footer">
-                        <button type="button" id="cluster-plan-job-cancel" class="button-secondary">{{ _('Annuleren') }}</button>
-                        <button type="submit" id="cluster-plan-job-confirm"></button>
-                    </footer>
-                </form>
-            </dialog>
-            {% endif %}
+                    <details id="cluster-plan-manual" {% if cluster_local_role == 'a' %}open{% endif %}>
+                        <summary>{{ _('Enter the plan manually') }}</summary>
+                        <form id="cluster-plan-form" class="ha-fields" data-csrf="{{ csrf }}">
+                            <p class="cluster-plan-context">{{ _('Use the hostnames shown by Linux and the numeric VM IDs shown in Proxmox.') }}</p>
+                            {% for node, address in [('A', cluster_plan_addresses[0]), ('B', cluster_plan_addresses[1])] %}
+                            <fieldset>
+                                <legend>{{ _('Node A') if node == 'A' else _('Node B') }} · {{ address }}</legend>
+                                <label>{{ _('OS hostname') }}<input name="node{{ node }}Name" maxlength="63" value="{{ cluster_local_name if cluster_local_role == node|lower else '' }}" required></label>
+                                <label>{{ _('Proxmox VM ID') }}<input name="node{{ node }}Target" inputmode="numeric" maxlength="9" pattern="[1-9][0-9]{2,8}" required></label>
+                            </fieldset>
+                            {% endfor %}
+                            <label>{{ _('Witness IPv4 address') }}<input name="witness" maxlength="15" required>
+                                <small class="hint">{{ _('Use a third host that can stay online if either proxy node loses its host or network.') }}</small></label>
+                            <label>{{ _('Proxmox API IPv4 address') }}<input name="fenceAddress" maxlength="15" required>
+                                <small class="hint">{{ _('Use the management address of Proxmox VE, where you open its web interface.') }}</small></label>
+                            <div class="ha-plan-actions"><button type="submit">{{ _('Validate Proxmox plan') }}</button></div>
+                        </form>
+                    </details>
+                    <p id="cluster-plan-feedback" role="status"></p>
+                    <div id="cluster-plan-result" hidden>
+                        <p>{{ _('Save the reviewed plan on this node. Download the same plan for the other node and the witness.') if cluster_web_available else _('Download the plan and give the same file to the OS administrator for both nodes and the witness. OS review and activation are separate steps.') }}</p>
+                        <div>{{ _('Plan fingerprint') }} <code id="cluster-plan-fingerprint"></code></div>
+                        <details id="cluster-plan-firewall" hidden>
+                            <summary>{{ _('Firewall rules at activation') }}</summary>
+                            <pre><code></code></pre>
+                        </details>
+                        <div class="settings-actions">
+                            {% if cluster_web_available %}<button type="button" id="cluster-plan-stage" disabled>{{ _('Save plan on this node') }}</button>{% endif %}
+                            <a id="cluster-plan-download" download="cluster-plan.json">{{ _('Download cluster plan') }}</a>
+                        </div>
+                    </div>
+                </section>
+                {% if cluster_web_available %}
+                <section class="cluster-step cluster-local-preparation" aria-labelledby="cluster-local-title">
+                    <h3 id="cluster-local-title">{{ _('2. Prepare this node') }}</h3>
+                    <p id="cluster-local-saved" hidden>{{ _('Saved plan fingerprint') }} <code></code></p>
+                    <p>{{ _('Save the same plan on both nodes, then prepare the packages on each. The current HA pair continues serving traffic.') }}</p>
+                    <div class="settings-actions">
+                        <button type="button" id="cluster-plan-prepare" class="button-secondary" disabled>{{ _('Prepare cluster packages') }}</button>
+                        <button type="button" id="cluster-plan-load" class="button-secondary" hidden>{{ _('Load saved plan') }}</button>
+                    </div>
+                    <p id="cluster-plan-job-status" role="status"></p>
+                </section>
+                <dialog id="cluster-plan-dialog" class="workspace-dialog credential-dialog" aria-labelledby="cluster-job-title">
+                    <form id="cluster-plan-job-form" class="workspace-panel">
+                        <header class="workspace-dialog-header"><h3 id="cluster-job-title"></h3></header>
+                        <div class="workspace-dialog-body">
+                            <p id="cluster-job-summary"></p>
+                            <label>{{ _('Je huidige wachtwoord') }}<input name="password" type="password" autocomplete="current-password" maxlength="256" required></label>
+                            {% if mfa %}<label>{{ _('Authenticatorcode') }}<input name="otp" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" aria-describedby="cluster-job-otp-hint" required></label>
+                            <p id="cluster-job-otp-hint" class="hint">{{ _('Use a new authenticator code for each confirmation.') }}</p>{% endif %}
+                            <p id="cluster-job-error" role="alert"></p>
+                        </div>
+                        <footer class="workspace-dialog-footer">
+                            <button type="button" id="cluster-plan-job-cancel" class="button-secondary">{{ _('Annuleren') }}</button>
+                            <button type="submit" id="cluster-plan-job-confirm"></button>
+                        </footer>
+                    </form>
+                </dialog>
+                {% else %}
+                <section class="cluster-step" aria-labelledby="cluster-local-title">
+                    <h3 id="cluster-local-title">{{ _('2. Prepare this node') }}</h3>
+                    <p>{{ _('Review and download the plan, then give it to the system administrator to apply on the hosts.') }}</p>
+                </section>
+                {% endif %}
+                <section class="cluster-step" aria-labelledby="cluster-handoff-title">
+                    <h3 id="cluster-handoff-title">{{ _('3. Set up the witness and test fencing') }}</h3>
+                    <p>{{ _('Continue over SSH in a maintenance window. Set up the witness, give each node power controls for only the other VM, and test that both VMs can be recovered.') }}</p>
+                    {% include '_cluster_enrollment.html' %}
+                </section>
+                <details id="cluster-network-details" class="cluster-plan-guide">
+                    <summary>{{ _('Required network connections') }}</summary>
+                    <ul>
+                        <li>{{ _('Between A and B: UDP 5405.') }}</li>
+                        <li>{{ _('From A and B to the witness: TCP 5403.') }}</li>
+                        <li>{{ _('From A and B to the Proxmox API: TCP 8006.') }}</li>
+                    </ul>
+                    <p>{{ _('Use static addresses, synchronize time on all three hosts and keep direct SSH access available.') }}</p>
+                </details>
+            </div>
+            <details id="cluster-technical-checks" class="cluster-plan-guide">
+                <summary>{{ _('Technical checks on this node') }}</summary>
+                <dl class="settings-facts cluster-prerequisites">
+                    {% for key, label in [('managedHa', 'Managed two-node HA'), ('time', 'OS reports synchronized network time'), ('packages', 'Cluster packages installed'), ('plan', 'OS-approved cluster and witness plan'), ('enrollment', 'Local witness enrollment and Corosync key recorded'), ('agent', 'Supported fencing agent installed'), ('authentication', 'Fencing authentication and TLS verified'), ('powerTest', 'Real power-off and recovery test')] %}
+                    <div><dt>{{ _(label) }}</dt><dd data-cluster-check="{{ key }}">{{ _('Not confirmed') }}</dd></div>
+                    {% endfor %}
+                </dl>
+            </details>
         </details>
         {% endif %}
         {% if permissions.admin and cluster_reserved %}
         <details id="cluster-migration" class="ha-settings">
             <summary>{{ _('Protected HA migration and recovery') }}</summary>
             <p id="cluster-migration-phase" role="status">{{ _('The local migration phase could not be confirmed.') }}</p>
-            <p>{{ _('Use the direct addresses of A and B. Compare the operation ID and plan fingerprint on both hosts before resuming.') }}</p>
+            <dl id="cluster-migration-reference" class="settings-facts cluster-migration-reference" hidden>
+                <div><dt>{{ _('Operation ID') }}</dt><dd><code id="cluster-migration-operation"></code></dd></div>
+                <div><dt>{{ _('Plan fingerprint') }}</dt><dd><code id="cluster-migration-fingerprint"></code></dd></div>
+            </dl>
+            <p>{{ _('Open Settings using the direct address of each node. Compare the operation ID and plan fingerprint. The phases can differ while you work through both hosts.') }}</p>
+            <p>{{ _('Stop if an identifier differs or is missing. Confirm the state on both hosts before taking any action.') }}</p>
             <p>{{ _('Run this command from the installed ProxyPermit directory on each node:') }}</p>
             <pre><code>sudo .venv/bin/python -m scripts.deploy.cluster_native --phase status</code></pre>
             <p class="hint">{{ _('Follow the next step reported by each host. Keep Keepalived under cluster control and retain the recovery checkpoint.') }}</p>
@@ -180,7 +223,9 @@
                 <div><dt>{{ _('Management node') }}</dt><dd id="ha-management-node">{{ _('Node A') if management_node_role == 'a' else _('Node B') }}{% if public_node_label %} · {{ public_node_label }}{% endif %}</dd></div>
                 <div><dt>{{ _('Beleid synchroniseren') }}</dt><dd id="ha-policy-status" role="status">—</dd></div>
                 <div><dt>{{ _('Virtueel IP') }}</dt><dd id="ha-policy-vip">—</dd></div>
+                <div><dt>Tinyproxy</dt><dd id="ha-policy-proxy">—</dd></div>
                 <div><dt>{{ _('Failover protection') }}</dt><dd id="ha-protection-status" role="status">—</dd></div>
+                <div id="ha-protection-checked-row" hidden><dt>{{ _('Cluster status checked') }}</dt><dd><time id="ha-protection-checked"></time></dd></div>
                 <div id="ha-policy-published-row" hidden><dt>{{ _('Laatst opgehaalde revisie van A') if ha_policy_role == 'b' else _('Gepubliceerde revisie') }}</dt><dd><code id="ha-policy-published"></code></dd></div>
                 <div id="ha-policy-applied-row" hidden><dt>{{ _('Toegepaste revisie op B') }}</dt><dd><code id="ha-policy-applied"></code></dd></div>
                 <div id="ha-policy-checked-row" hidden><dt>{{ _('Laatste succesvolle contact') }}</dt><dd><time id="ha-policy-checked"></time></dd></div>
@@ -236,7 +281,9 @@
                 </ol>
             </details>
             <div class="ha-setup-intent"><label for="haSetupMode">{{ _('Wat wil je doen?') }}</label>
-            <select id="haSetupMode"><option value="create">{{ _('Nieuw HA-cluster maken') }}</option><option value="join">{{ _('Aansluiten met koppelcode') }}</option></select></div>
+            <select id="haSetupMode" aria-describedby="haSetupCreateHint"><option value="create">{{ _('Nieuw HA-cluster maken') }}</option><option value="join">{{ _('Aansluiten met koppelcode') }}</option></select></div>
+            <p class="hint" id="haSetupCreateHint">{{ _('Use this option on node A. Keep B standalone until you have checked A and generated its pairing code in Settings.') }}</p>
+            <p class="hint" id="haSetupJoinHint" hidden>{{ _('Use this option on node B. Paste the pairing code from A and select B’s local interface with the expected static address.') }}</p>
             {% endif %}
             <form id="haPreviewForm" class="ha-fields" data-can-setup="{{ 'true' if ha_setup_available else 'false' }}">
                 <div class="ha-network-picker">
@@ -291,6 +338,11 @@
         {% if ha_enabled and permissions.admin %}
         <details class="ha-settings ha-maintenance">
             <summary>{{ _('HA-beheeracties') }}</summary>
+            {% if cluster_reserved %}
+            <p>{{ _('For an interrupted protected upgrade or rollback, check the local reservation from the installed application directory:') }}</p>
+            <pre><code>sudo .venv/bin/python -m scripts.deploy.cluster_maintenance --status</code></pre>
+            <p><a href="{{ 'https://dantdmnl.github.io/ProxyPermit/nl/noodprocedures/' if locale == 'nl' else 'https://dantdmnl.github.io/ProxyPermit/en/recovery/' }}">{{ _('Command-line recovery guide') }}</a></p>
+            {% endif %}
             {% if ha_policy_role in ('a', 'b') %}
             <button type="button" class="button button-danger" data-ha-policy="disconnect" aria-haspopup="dialog" hidden>{{ _('Koppeling intrekken') }}</button>
             <dialog id="ha-disconnect-dialog" class="workspace-dialog credential-dialog" aria-labelledby="ha-disconnect-title" aria-describedby="ha-disconnect-description">
@@ -322,6 +374,10 @@
                 <div class="ha-plan-actions"><button type="submit" class="button button-danger">{{ _('Deze HA-node uit bedrijf nemen') }}</button></div>
             </form>
             <p id="haRetireFeedback" role="status"></p>
+            {% elif cluster_reserved %}
+            <p>{{ _('Keep direct SSH access to both nodes. Verify that the peer can keep quorum and serve the virtual IP, then have the OS administrator detach this node.') }}</p>
+            <p>{{ _('After detaching a native Proxmox HA node, review its services and firewall rules from the unpacked release directory:') }}</p>
+            <pre><code>sudo bash install.sh --retire-ha --detached-ha --plan</code></pre>
             {% else %}
             <p>{{ _('Voor het verwijderen van HA is een afzonderlijke migratie op de hosts nodig.') }}</p>
             {% endif %}
@@ -391,6 +447,12 @@
         {% endif %}
     </section>
     {% if permissions.admin %}
+    <section class="card settings-panel" aria-labelledby="diagnostics-title">
+        <header><div><h2 id="diagnostics-title">{{ _('Diagnostics') }}</h2>
+            <p>{{ _('Download a snapshot of service and cluster status for troubleshooting.') }}</p></div>
+            <a class="button button-secondary" href="{{ url_for('settings.diagnostics') }}">{{ _('Download diagnostic report') }}</a>
+        </header>
+    </section>
     <section class="card settings-panel" aria-labelledby="accounts-title">
         <header><div><h2 id="accounts-title">{{ _('Gebruikers en rollen') }}</h2>
             <p>{{ _('Systeembeheerders beheren accounts en HA. Proxybeheerders wijzigen proxybeleid. Monitors bekijken status, regels en logs.') }}</p></div>

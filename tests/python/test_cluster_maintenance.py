@@ -53,6 +53,20 @@ class MaintenanceTests(unittest.TestCase):
         self.assertIsNone(cluster_lease.marker(self.cib))
         self.assertFalse(self.cib.findall('.//nvpair'))
 
+    def test_status_is_read_only_and_reports_checkpoint_mismatch_without_token(self):
+        self.assertEqual(maintenance.status(), {'state': 'no-reservation'})
+        saved = maintenance.acquire()
+        cluster_before = ET.tostring(self.cib)
+        self.assertEqual(maintenance.status(), {'state': 'local-reservation', 'phase': 'entered',
+                                                'peerServingProtectedVIP': True})
+        self.assertEqual(ET.tostring(self.cib), cluster_before)
+        self.assertEqual(self.saved, saved)
+        maintenance.drained.return_value = False
+        self.assertFalse(maintenance.status()['peerServingProtectedVIP'])
+        self.saved['token'] = '0' * 32 if saved['token'] != '0' * 32 else '1' * 32
+        self.assertEqual(maintenance.status(), {'state': 'reservation-mismatch', 'phase': 'entered'})
+        self.audit.assert_not_called()
+
     def test_upgrade_failure_preserves_standby_and_reservation(self):
         with self.assertRaisesRegex(RuntimeError, 'update failed'):
             with maintenance.rolling(lambda: True, '/opt/proxypermit'):

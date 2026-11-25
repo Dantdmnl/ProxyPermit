@@ -4,6 +4,7 @@ The ordered native file is the interchange format. Unknown directives and
 comments survive migration; unknown directives block activation until reviewed.
 Reference: https://tinyproxy.github.io/ (tinyproxy.conf(5), release 1.11.1).
 """
+import errno
 import hashlib
 import ipaddress
 import json
@@ -189,13 +190,14 @@ def summary(content):
                 filterPath=values.get('filter', [''])[0])
 
 
-def atomic_write(path, content, mode=0o600):
+def atomic_write(path, content, mode=0o600, *, metadata_from=None):
     path = Path(path)
+    metadata = Path(metadata_from) if metadata_from is not None else path
     path.parent.mkdir(parents=True, exist_ok=True)
     # Preserve named readers only when the caller retains the original mode.
     # Explicit permission changes must not transiently expose new contents via
     # an old ACL mask that is wider than the requested mode.
-    acl = access_acl(path) if path.exists() and stat.S_IMODE(path.stat().st_mode) == mode else None
+    acl = access_acl(metadata) if metadata.exists() and stat.S_IMODE(metadata.stat().st_mode) == mode else None
     descriptor, name = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8', newline='') as handle:
@@ -203,8 +205,8 @@ def atomic_write(path, content, mode=0o600):
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(name, mode)
-        if path.exists() and os.name != 'nt' and os.geteuid() == 0:  # pylint: disable=no-member
-            info = path.stat()
+        if metadata.exists() and os.name != 'nt' and os.geteuid() == 0:  # pylint: disable=no-member
+            info = metadata.stat()
             os.chown(name, info.st_uid, info.st_gid)  # pylint: disable=no-member
         restore_access_acl(name, acl)
         os.replace(name, path)
@@ -225,20 +227,31 @@ class TinyproxyConfigStore:
         self.mode = stat.S_IMODE(self.path.stat().st_mode) if self.path.exists() else mode
         self.pending_path = self.backup_dir / ('pending-' + hashlib.sha256(str(self.path.resolve()).encode()).hexdigest()[:16] + '.json')
         self.draft_path = self.pending_path.with_name(self.pending_path.name.replace('pending-', 'draft-', 1))
+        self.rollback_path = self.pending_path.with_suffix('.conf')
+        self.activation_lock = Path(str(self.path) + '.activation.lock')
 
     def finish_activation(self):
         if self.pending_path.exists():
             self.pending_path.unlink()
+            sync_directory(self.backup_dir)
+        self.rollback_path.unlink(missing_ok=True)
 
-    def restore_pending(self):
+    def restore_pending(self, *, keep_checkpoint=False):
         """Restore the last activated baseline, including saves before activation."""
         if self.pending_path.exists():
             baseline = json.loads(self.pending_path.read_text(encoding='utf-8'))
             if baseline.get('existed', True):
-                atomic_write(self.path, baseline['content'], self.mode)
+                if baseline.get('rollbackReserved') and self.rollback_path.is_file():
+                    os.replace(self.rollback_path, self.path)
+                    sync_directory(self.path.parent)
+                elif self._live_content() != baseline['content']:
+                    if baseline.get('rollbackReserved'):
+                        raise OSError('The reserved proxy rollback file is missing.')
+                    atomic_write(self.path, baseline['content'], self.mode)
             else:
                 self.path.unlink(missing_ok=True)
-            self.finish_activation()
+            if not keep_checkpoint:
+                self.finish_activation()
 
     def _live_content(self):
         return self.path.read_text(encoding='utf-8-sig') if self.path.exists() else ''
@@ -261,9 +274,24 @@ class TinyproxyConfigStore:
             raise RevisionConflict('The proxy file changed outside ProxyPermit. Discard the saved draft before continuing.')
 
     def _publish(self, content, live):
-        if not self.pending_path.exists():
-            atomic_write(self.pending_path, json.dumps(dict(content=live, existed=self.path.exists())))
-        atomic_write(self.path, content, self.mode)
+        try:
+            if not self.pending_path.exists():
+                existed = self.path.exists()
+                # Reserve recovery space before replacing active policy.
+                if existed:
+                    with self.path.open(encoding='utf-8', newline='') as original:
+                        atomic_write(self.rollback_path, original.read(), self.mode, metadata_from=self.path)
+                else:
+                    self.rollback_path.unlink(missing_ok=True)
+                atomic_write(self.pending_path, json.dumps(dict(content=live, existed=existed, rollbackReserved=existed,
+                                                               checkpointVersion=2)))
+            atomic_write(self.path, content, self.mode)
+        except OSError:
+            if self.pending_path.exists():
+                self.restore_pending()
+            else:
+                self.rollback_path.unlink(missing_ok=True)
+            raise
 
     def publish_draft(self):
         draft = self._draft()
@@ -304,18 +332,29 @@ class TinyproxyConfigStore:
                 atomic_write(self.draft_path, json.dumps(dict(content=content, base=revision(live))))
             else:
                 self._publish(content, live)
+                disk_full = False
                 try:
                     ok, _ = activate()
+                except OSError as error:
+                    disk_full = error.errno == errno.ENOSPC
+                    ok = False
                 except Exception:
                     ok = False
                 if not ok:
-                    self.restore_pending()
+                    self.restore_pending(keep_checkpoint=True)
                     try:
                         recovered, _ = activate()
                     except Exception:
                         recovered = False
-                    raise ConfigError('Activation failed. The previous configuration was restored. ' +
-                                      ('The service is running again.' if recovered else 'Check the service on the server.'))
+                    if recovered is not False:
+                        self.finish_activation()
+                    if recovered is None:
+                        if disk_full:
+                            raise ConfigError('Disk space ran out during publication. The previous policy was restored and Tinyproxy was not restarted.')
+                        recovery = 'The proxy service was left untouched.'
+                    else:
+                        recovery = 'The service is running again.' if recovered else 'Check the service on the server.'
+                    raise ConfigError('Activation failed. The previous configuration was restored. ' + recovery)
                 self.finish_activation()
                 self.draft_path.unlink(missing_ok=True)
             return dict(revision=revision(content), backup=backup.name, activated=activate is not None,

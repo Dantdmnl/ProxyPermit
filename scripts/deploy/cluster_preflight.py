@@ -30,6 +30,11 @@ def operation_directory(folder):
         raise ValueError('The operation directory must be root-only.')
 
 
+def record_operation(folder, stamp):
+    atomic_write(folder.parent / 'preflight-current.json', json.dumps(
+        dict(operation=folder.name, planHash=stamp)), 0o600)
+
+
 def secret_key(side, folder):
     path = folder / 'authkey'
     if side == 'a' and not (path.exists() or path.is_symlink()):
@@ -106,8 +111,7 @@ def power_observation(plan, side, stamp, folder, action):
     else:
         atomic_write(receipt, json.dumps(dict(**identity, offConfirmed=True,
                      recoveryConfirmed=True, checked=int(time.time()))), 0o600)
-        atomic_write(folder.parent / 'preflight-current.json', json.dumps(
-            dict(operation=folder.name, planHash=stamp)), 0o600)
+        record_operation(folder, stamp)
         pending.unlink()
     return {'peer': peer['name'], 'power': expected[1].removeprefix('Status: ')}
 
@@ -124,12 +128,14 @@ def perform(action, operation, ca_hash=None):
         result['directory'] = str(folder)
     elif action == 'key':
         secret_key(topology['node'], folder)
+        record_operation(folder, stamp)
         result['keyReady'] = True
     elif action == 'witness':
         ca_hash = ca_hash.replace(':', '').lower() if isinstance(ca_hash, str) else None
         client_hash = certificate_material(name, ca_hash)
         receipt = dict(version=1, cluster=name, planHash=stamp, caHash=ca_hash, certificateHash=client_hash)
         atomic_write(folder / 'qdevice-ready.json', json.dumps(receipt), 0o600)
+        record_operation(folder, stamp)
         result.update(certificateHash=client_hash)
     else:
         result.update(power_observation(plan, topology['node'], stamp, folder, action))

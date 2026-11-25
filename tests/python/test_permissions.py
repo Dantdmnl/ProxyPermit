@@ -59,6 +59,27 @@ class PermissionTests(unittest.TestCase):
             for role, status in [('admin', 200), ('manager', 403), ('monitor', 403)]:
                 self.assertEqual(self.login(role).get('/api/settings/cluster-readiness').status_code, status)
 
+    def test_diagnostic_download_is_private_and_omits_raw_status(self):
+        url = '/api/settings/diagnostics'
+        self.assertIn(manager.app.test_client().get(url).status_code, (401, 403))
+        for role in ('manager', 'monitor'):
+            client = self.login(role)
+            self.assertEqual(client.get(url).status_code, 403)
+            self.assertNotIn(url, client.get('/settings').get_data(as_text=True))
+        client = self.login('admin')
+        self.assertIn(url, client.get('/settings').get_data(as_text=True))
+        with patch.object(manager.whitelist_manager, 'get_service_status',
+                          return_value={'running': True, 'uptime': 'private metadata'}), \
+                patch('app.web.settings.cluster.read_status',
+                      return_value={'state': 'degraded', 'owners': 0, 'key': 'private metadata'}):
+            response = client.get(url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers['Cache-Control'], 'no-store')
+        self.assertEqual(response.headers['Content-Disposition'], 'attachment; filename="proxypermit-diagnostics.json"')
+        self.assertTrue(response.json['tinyproxyRunning'])
+        self.assertEqual(response.json['protection'], {'state': 'degraded', 'owners': 0})
+        self.assertNotIn('private metadata', response.get_data(as_text=True))
+
     def test_cluster_plan_preview_uses_installed_addresses_without_staging(self):
         path = '/api/settings/cluster-plan/preview'
         headers = {'X-CSRF-Token': 'isolated-csrf'}
@@ -271,7 +292,8 @@ class PermissionTests(unittest.TestCase):
     def test_every_authenticated_browser_endpoint_has_an_explicit_permission(self):
         root = Path(__file__).resolve().parents[2]
         configured = READ | PROXY | ADMIN | SELF | {'proxy.manage_replication'}
-        for name, prefix in (('manager', ''), ('proxy', 'proxy.'), ('settings', 'settings.')):
+        for name, prefix in (('manager', ''), ('proxy', 'proxy.'), ('settings', 'settings.'),
+                             ('https_settings', 'https_settings.')):
             tree = ast.parse((root / 'app/web' / (name + '.py')).read_text(encoding='utf-8'))
             for function in ast.walk(tree):
                 if isinstance(function, ast.FunctionDef) and any(isinstance(item, ast.Name) and item.id == 'requires_auth' for item in function.decorator_list):

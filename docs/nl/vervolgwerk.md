@@ -6,7 +6,7 @@ Welke verbeteringen komen eraan en wat heb je daar als beheerder aan? De
 belangrijkste ontwikkelprioriteit is HA met bescherming tegen onveilige overname.
 Ook gebruiksgemak, HTTPS en logging krijgen aandacht.
 
-Bijgewerkt op 22 november 2026, met **v1.3.0** als uitgangspunt voor uitgebrachte
+Bijgewerkt op 24 november 2026, met **v1.3.0** als uitgangspunt voor uitgebrachte
 functies. Er zijn geen toegezegde opleverdatums; de volgorde kan veranderen.
 
 **Zo lees je deze pagina:** een vinkje betekent dat een ontwikkelstap is afgerond
@@ -38,14 +38,15 @@ HA-wizard richt dit cluster nog niet voor je in.
     in. Lees [HA instellen en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname)
     voordat je een productieopstelling kiest.
 
-## Beschikbaar om te testen in v1.4.0-dev.2
+## Beschikbaar om te testen in v1.4.0-dev.3
 
 - **Veiliger HA-beheer:** de koppeling intrekken vraagt opnieuw om het beheerderswachtwoord en, als 2FA aanstaat, een verse authenticatorcode. De beschermingsstatus controleert strenger of de clustergegevens betrouwbaar zijn.
 - **Voorbereiding van beschermde HA:** systeembeheerders kunnen in Instellingen een Proxmox-plan controleren en opslaan en op elke node de pakketten voorbereiden. De OS-beheerder regelt de witness, fencing en activering.
 - **Migratie en herstel:** controleer het clusterverkeer vóór de VIP-overdracht en zet een applicatieversie terug terwijl de andere node het verkeer bedient. Bekijk de resultaten van de Proxmox-proeven in het [verificatierapport](verification.md).
-- **HTTPS instellen via de webinterface:** systeembeheerders kunnen certificaten voorbereiden en vernieuwen en HTTPS activeren. HTTPS is nog niet standaard bij installatie. Zie [HTTPS voor beheer](beheer-https.md).
+- **HTTPS voor beheer:** de wizard stelt bij een nieuwe installatie HTTPS met een lokale CA voor. Systeembeheerders kunnen HTTPS inschakelen en certificaten vernieuwen via Instellingen. Zie [HTTPS voor beheer](beheer-https.md).
+- **Beleidsherstel en diagnose:** bij beheerde installaties zet ProxyPermit onbevestigde wijzigingen terug voordat Tinyproxy start. Systeembeheerders kunnen in Instellingen een statusrapport downloaden.
 
-Deze functies zitten in de [prerelease v1.4.0-dev.2](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2),
+Deze functies zitten in de [prerelease v1.4.0-dev.3](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3),
 naast de stabiele v1.3.0. Gebruik voor de prerelease een tijdelijke of herstelbare
 testomgeving en de handleiding die bij de geïnstalleerde versie hoort.
 
@@ -79,16 +80,25 @@ het gebruikte platform.
 - [x] Een node die al via OS-clusterbeheer is losgekoppeld lokaal uit bedrijf nemen en de-installeren, met behoud van vaste beheerregels.
 - [x] Controleren dat B na enkele minuten uitval terugkomt en in een aparte proef een gemiste beleidsrevisie alsnog toepast.
 - [x] Uitleggen hoe de inrichting verschilt voor vSphere, libvirt en fysieke servers, en onveilige VMware TLS- en IPMI-configuraties bij de statuscontrole weigeren.
-- [ ] De eerste inrichting en het toevoegen van een node begeleiden via de webinterface, met duidelijke uitleg over benodigde hosts, netwerktoegang en rechten.
-- [ ] Bestaande HA-installaties gecontroleerd laten overstappen, met een begrijpelijke herstelprocedure als de omzetting wordt onderbroken.
-- [ ] Terugdraaien, een node verwijderen en de-installatie afronden voor beschermde clusters, met behoud van beheertoegang.
+- [x] Per node aanwijzingen geven voor aanmaken en koppelen, en actuele migratiegegevens tonen die je in Instellingen kunt vergelijken.
+- [x] Het uit gebruik nemen van een node na een onderbreking hervatten en een herhaalde aanvraag veilig herkennen.
+- [x] De inrichting van beschermde HA op Proxmox begeleiden in Instellingen. Toon de witness, netwerktoegang, rechten en lokale controles. De OS-beheerder rondt de inschrijving en activering af.
+- [x] Bij de voorbereiding op Proxmox de eerstvolgende stap op de lokale node tonen en voor andere platforms de mogelijkheden uitleggen voordat specifieke velden verschijnen.
+- [x] Een bestaand Proxmox HA-paar gecontroleerd laten overstappen en herstel na onderbreking beschrijven. Beide zijn in het migratielab getest.
+- [x] Bevestigen dat ProxyPermit een OS-beheerd KVM/libvirt-cluster herkent en dat het cluster een bevroren VM uitschakelt voordat het VIP verhuist.
+- [x] Op een live stand-bynode geïsoleerd verifiëren dat verlopen Proxmox-fencingtokens en witnessclientcertificaten worden geweigerd.
+- [x] Op Proxmox controleren dat een losgekoppelde beschermde node uit bedrijf kan en de console kan worden verwijderd terwijl de andere node het VIP bedient en SSH beschikbaar blijft.
+- [ ] Maak een procedure om een lid van een beschermd cluster definitief te vervangen. Controleer dat de overblijvende node quorum behoudt, dat de vervanger het beleid synchroniseert en het VIP kan overnemen, en dat de oude node niet meer kan deelnemen of een van beide nodes kan uitschakelen.
 - [ ] Aanvullende virtualisatieplatformen en fysieke hosts ondersteunen, met per platform de mogelijkheden en beperkingen.
 - [ ] Herstel na stroomuitval, netwerkonderbrekingen en een lang offline gebleven node verder controleren voordat de volledige inrichting als productieklaar wordt aangeboden.
+- [x] Gecontroleerd VIP-herstel testen wanneer bewaarde monitorfouten beide nodes uitsluiten. Zie de [Proxmox-proef](verification.md#vip-herstellen-en-een-losgekoppelde-node-verwijderen-op-proxmox).
+- [ ] De oorzaak van incidentele time-outs van de VIP-monitor onderzoeken. Zie de [eerste observatie](verification.md#vip-van-b-naar-a-na-een-monitortime-out).
 
 B blijft na verkeersovername alleen-lezen voor gedeeld proxybeleid. Een witness
 moet niet afhankelijk zijn van hetzelfde storingspunt als de proxynodes.
-Zie de [HA-handleiding](hoge-beschikbaarheid.md) voor de voorwaarden en het
-[verificatierapport](verification.md) voor de huidige testdekking.
+Zie de [HA-handleiding](hoge-beschikbaarheid.md) voor de voorwaarden en de
+[acceptatieproeven](verification.md#acceptatieproeven-voor-beschermde-ha-in-v140)
+voor wat er nog bewezen moet worden.
 
 ## Snellere en duidelijkere logs
 
@@ -114,8 +124,11 @@ certificaatbeheer zonder voor elke handeling de terminal te gebruiken.
 
 - [x] In de ontwikkelversie HTTPS met een eigen certificaatautoriteit (CA) per node aanbieden, inclusief gecontroleerde activering, vervalwaarschuwingen, vernieuwing en herstel.
 - [x] Systeembeheerders deze certificaathandelingen via de webinterface laten uitvoeren, met wachtwoordbevestiging en optionele 2FA.
-- [ ] HTTPS standaard maken bij nieuwe installaties en bestaande HTTP-installaties begeleid laten overstappen.
-- [ ] Eigen certificaten en interne CA’s ondersteunen; automatische uitgifte via ACME onderzoeken waar dat past.
+- [x] Bij nieuwe installaties via de wizard HTTPS met een lokale CA voorstellen.
+- [ ] De standaard voor installaties zonder wizard beoordelen en bestaande HTTP-installaties begeleiden bij de overstap.
+- [x] Tijdens installatie een lokale CA of een eigen PEM-certificaat aanbieden en beide opties testen op Ubuntu-VM’s in VMware.
+- [x] Controleren of een Keepalived-paar zijn HTTPS-instellingen behoudt bij een upgrade en bij het terugzetten van de stand-bynode. Zie de [VMware-proef](verification.md#upgrade-en-rollback-op-een-keepalived-paar-met-https).
+- [ ] Automatische vernieuwing voor extern uitgegeven certificaten onderzoeken, waaronder ACME waar dat past.
 - [ ] HTTPS-beveiligingsheaders, waaronder HSTS, zorgvuldig toepassen en cookies en doorverwijzingen daarop afstemmen.
 - [ ] De volledige installatie-, upgrade- en herstelprocedure afronden voor zelfstandige nodes en HA-opstellingen.
 
@@ -151,6 +164,22 @@ je eventueel opnieuw moet inloggen.
 
 Accounts en sessies zijn nu lokaal. Verkeersovername maakt een account op de
 andere node niet automatisch beschikbaar.
+
+### Beleid beheren als alleen het VIP bereikbaar is
+
+Sommige beheernetwerken geven alleen toegang tot het VIP. In de huidige
+beschermde opstelling kan B het verkeer blijven bedienen nadat A hersteld is.
+Gedeeld beleid wijzigen kan alleen op A. Een beheerder die via het VIP op B
+uitkomt, kan daardoor geen regel toevoegen.
+
+- [ ] A na herstel weer de voorkeursnode voor beheer maken. Ontwerp automatische terugkeer van het VIP naar A nadat de node een tijd stabiel is en quorum, fencing en actueel beleid zijn bevestigd. Test dat het VIP niet heen en weer verhuist als A steeds kort uitvalt.
+- [ ] Beleidsbeheer via het VIP mogelijk houden zolang A onbereikbaar is. Zorg dat maar één geauthenticeerde node tegelijk mag publiceren. Geef B pas schrijfrecht als quorum en fencing bevestigen dat A niet meer kan schrijven. Trek beleidsrevisies gelijk voordat A het schrijfrecht terugkrijgt.
+- [ ] Testen vanuit een beheernetwerk dat alleen het VIP toestaat. Controleer of een systeembeheerder na overname en na terugkeer van A een regel kan toevoegen, met lokale aanmelding, rolcontrole, auditregistratie en bescherming tegen dubbele publicatie.
+
+Pacemaker combineert de voorkeur voor een node met de score voor het behouden
+van de huidige eigenaar. Met de huidige instellingen weegt behoud op een
+gezonde B zwaarder dan de voorkeur voor A. Terugkeer van het VIP en overdracht
+van schrijfrechten zijn aparte handelingen. [Plaatsing in Pacemaker](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/constraints.html) · [Fencing](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/fencing.html)
 
 ## Later te onderzoeken
 

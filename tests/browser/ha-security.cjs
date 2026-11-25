@@ -58,6 +58,9 @@ async function main() {
             'import json,os; from pathlib import Path; from app.core import cluster',
             'cluster.read_status = lambda **kwargs: json.loads(Path(os.environ["PP_TEST_CLUSTER_STATUS"]).read_text())',
             'cluster.reserved = lambda: bool(cluster.read_status().get("migrationPhase"))',
+            'standalone = lambda: Path(os.environ["PP_TEST_CLUSTER_STATUS"]).with_name("standalone").exists()',
+            'settings.ha_enabled = settings.managed_ha = lambda: not standalone()',
+            'settings.ha_setup_available = standalone',
             'settings.cluster_setup.web_enabled = lambda: Path(os.environ["PP_TEST_CLUSTER_STATUS"]).with_name("cluster-web-enabled").exists()',
             'settings.cluster_setup.read_readiness = lambda **kwargs: dict(planRevision="")',
             'settings.management_tls_status = lambda: json.loads(Path(os.environ["PP_TEST_TLS_STATUS"]).read_text())',
@@ -112,7 +115,7 @@ async function main() {
         let readinessLifetime = 90;
         await page.route('**/api/settings/cluster-readiness', route => route.fulfill({ json: {
             state: 'preparation', validFor: readinessLifetime,
-            checks: { managedHa: 'pass', time: 'blocked', packages: 'blocked', plan: 'pending',
+            checks: { managedHa: 'pass', time: 'blocked', packages: 'blocked', plan: 'pending', enrollment: 'pass',
                 agent: 'pending', authentication: 'pending', powerTest: 'pending' }
         } }));
         assert.equal((await page.request.post(base + '/api/auth/login', { data: { username: 'admin', password } })).status(), 200);
@@ -125,14 +128,29 @@ async function main() {
                     assert.equal(await page.locator('#ha-management-node').textContent(), 'Node A · Lab West');
                     await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
                     await page.locator('#cluster-preparation > summary').click();
+                    const platform = page.locator('#cluster-platform');
+                    await page.locator('#cluster-proxmox-setup').waitFor({ state: 'hidden' });
+                    await platform.selectOption('workstation');
+                    await page.locator('#cluster-platform-help').filter({ hasText: /VMware Workstation/ }).waitFor();
+                    assert.equal(await page.locator('#cluster-plan-form').isVisible(), false);
+                    await platform.selectOption('external');
+                    assert.equal(await page.locator('#cluster-plan-form').isVisible(), false);
+                    await platform.selectOption('proxmox');
+                    await page.locator('#cluster-technical-checks > summary').click();
                     await page.locator('[data-cluster-check="time"]').filter({ hasText: language === 'en' ? 'Action required' : 'Actie nodig' }).waitFor();
+                    assert.equal(await page.locator('[data-cluster-check="enrollment"]').textContent(), language === 'en' ? 'Confirmed locally' : 'Lokaal bevestigd');
                     assert.equal(await page.locator('[data-cluster-check="powerTest"]').textContent(), language === 'en' ? 'Still to verify' : 'Nog te controleren');
                     if (width === 360 && theme === 'dark') {
-                        const guide = page.locator('.cluster-plan-guide');
+                        const guide = page.locator('#cluster-network-details');
                         await guide.locator('summary').click();
                         for (const port of ['5405', '5403', '8006']) {
                             await guide.getByText(port, { exact: false }).waitFor();
                         }
+                        const enrollment = page.locator('#cluster-enrollment-guide');
+                        await enrollment.locator('summary').press('Enter');
+                        await enrollment.locator('code').filter({ hasText: '--role witness' }).waitFor();
+                        assert.match(await enrollment.getByRole('link').getAttribute('href'), new RegExp(`/${language}/`));
+                        assert.ok(await enrollment.evaluate(element => element.scrollWidth <= element.clientWidth));
                         const form = page.locator('#cluster-plan-form');
                         for (const [name, value] of Object.entries({ nodeAName: 'node-a', nodeBName: 'node-b',
                             nodeATarget: '8101', nodeBTarget: '8102', witness: '192.0.2.13', fenceAddress: '192.0.2.14' })) {
@@ -230,6 +248,7 @@ async function main() {
         readinessLifetime = 1;
         await page.goto(base + '/settings?lang=en');
         await page.locator('#cluster-preparation > summary').click();
+        await page.locator('#cluster-platform').selectOption('proxmox');
         await page.locator('#cluster-readiness-message').filter({ hasText: 'OS prerequisite checks are unavailable or expired.' }).waitFor();
         assert.equal(await page.locator('[data-cluster-check="time"]').textContent(), 'Not confirmed');
         readinessLifetime = 90;
@@ -282,8 +301,12 @@ async function main() {
         await page.context().setOffline(true);
         await page.locator('#ha-protection-status').filter({ hasText: 'De clusterbescherming kon niet worden bevestigd' }).waitFor();
         await page.context().setOffline(false);
+        await page.route('**/api/status', route => route.fulfill({
+            json: { tinyproxy_active: true, tinyproxy_check_status: 'active', vip_active: false }
+        }));
+        const checked = Math.floor(Date.now() / 1000);
         writeFileSync(file('cluster-status.json'), JSON.stringify({
-            state: 'degraded', validFor: 20, quorate: true, witnessConnected: false,
+            state: 'degraded', checked, validFor: 20, owners: 0, quorate: true, witnessConnected: false,
             fencingConfigured: true, fencingReady: true, policySafe: true
         }));
         for (const [language, reason] of [
@@ -293,7 +316,26 @@ async function main() {
             await page.goto(base + '/settings?lang=' + language);
             const protection = page.locator('#ha-protection-status');
             await protection.filter({ hasText: reason }).waitFor();
+            assert.ok((await protection.textContent()).includes(language === 'en'
+                ? 'No node currently holds the virtual IP' : 'Geen enkele node voert momenteel het virtuele IP'));
+            await page.locator('#ha-policy-proxy').filter({ hasText: language === 'en'
+                ? 'Proxy service is running' : 'Proxyservice draait' }).waitFor();
+            assert.equal(await page.locator('#ha-protection-checked').getAttribute('datetime'),
+                new Date(checked * 1000).toISOString());
+            assert.ok(await page.locator('#diagnostics-title').isVisible());
             assert.ok(!(await protection.textContent()).includes(language === 'en' ? 'No cluster quorum' : 'Geen quorum in het cluster'));
+        }
+        await page.unroute('**/api/status');
+        writeFileSync(file('cluster-status.json'), JSON.stringify({
+            state: 'degraded', validFor: 20, quorate: true, witnessConnected: true,
+            fencingConfigured: true, fencingReady: false, policySafe: true, localFencingCredential: 'expired'
+        }));
+        for (const [language, reason] of [
+            ['en', 'Local Proxmox fencing credential expired'],
+            ['nl', 'Lokale Proxmox-fencingtoken verlopen']
+        ]) {
+            await page.goto(base + '/settings?lang=' + language);
+            await page.locator('#ha-protection-status').filter({ hasText: reason }).waitFor();
         }
         writeFileSync(file('cluster-status.json'), JSON.stringify({ state: 'unsafe', validFor: 20 }));
         await page.reload();
@@ -306,6 +348,7 @@ async function main() {
         assert.equal((await monitor.request.post(base + '/api/proxy/ha-replication/rotate-key', { data: { password } })).status(), 403);
         assert.equal(await readOnly.locator('#https-control').count(), 0);
         assert.equal(await readOnly.locator('#cluster-preparation').count(), 0);
+        assert.equal(await readOnly.locator('#diagnostics-title').count(), 0);
         assert.equal((await monitor.request.get(base + '/api/settings/cluster-readiness')).status(), 403);
         assert.equal((await monitor.request.get(base + '/api/settings/https')).status(), 403);
         await monitor.close();
@@ -390,6 +433,9 @@ async function main() {
         await page.goto(base + '/settings?lang=nl');
         await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
         await page.locator('#cluster-preparation > summary').click();
+        await page.locator('#cluster-platform').selectOption('proxmox');
+        const nextStep = page.locator('#cluster-readiness-message');
+        await nextStep.filter({ hasText: 'Vul de gegevens van Proxmox en de witness in' }).waitFor();
         const clusterForm = page.locator('#cluster-plan-form');
         assert.equal(await clusterForm.locator('[name=nodeAName]').inputValue(), os.hostname().split('.')[0]);
         for (const [name, value] of Object.entries({ nodeBName: 'node-b', nodeATarget: '8101',
@@ -397,6 +443,7 @@ async function main() {
             await clusterForm.locator(`[name="${name}"]`).fill(value);
         }
         await clusterForm.locator('[type=submit]').click();
+        await nextStep.filter({ hasText: 'Sla het gecontroleerde plan op deze node op.' }).waitFor();
         const firewall = page.locator('#cluster-plan-firewall');
         await firewall.locator('summary').click();
         await firewall.locator('code').filter({ hasText: /port 5405 proto udp/ }).waitFor();
@@ -411,6 +458,7 @@ async function main() {
             await clusterDialog.locator('[type=submit]').click();
             await page.locator('#cluster-plan-job-status').filter({ hasText: result }).waitFor();
         }
+        await nextStep.filter({ hasText: 'Gebruik de SSH-handleiding hieronder om de witness' }).waitFor();
         assert.equal(await page.locator('#cluster-local-saved code').textContent(), planRevision);
         assert.equal(await page.locator('#cluster-plan-prepare').isDisabled(), true);
         await clusterForm.locator('[name=witness]').fill('192.0.2.55');
@@ -418,7 +466,8 @@ async function main() {
         assert.equal(await clusterForm.locator('[name=witness]').inputValue(), stagedPlan.witness);
         await page.unroute('**/api/settings/cluster-readiness');
         writeFileSync(file('cluster-status.json'), JSON.stringify({
-            state: 'unknown', migrationPhase: 'reserving', validFor: 20
+            state: 'unknown', migrationPhase: 'reserving', validFor: 20,
+            operation: 'a'.repeat(32), planHash: 'b'.repeat(64), transportProof: 'private'
         }));
         for (const [language, theme, width] of [['en', 'light', 1440], ['nl', 'dark', 360]]) {
             await page.setViewportSize({ width, height: 740 });
@@ -430,16 +479,51 @@ async function main() {
             await migration.getByText(language === 'en' ? 'Reservation interrupted or in progress.' :
                 'De reservering loopt nog of is onderbroken.', { exact: false }).waitFor();
             await migration.locator('code').filter({ hasText: '--phase status' }).waitFor();
+            await migration.locator('#cluster-migration-fingerprint').filter({ hasText: 'b'.repeat(64) }).waitFor();
+            assert.equal(await migration.locator('#cluster-migration-operation').textContent(), 'a'.repeat(32));
             assert.ok(await migration.evaluate(element => element.scrollWidth <= element.clientWidth));
+            const maintenance = page.locator('.ha-maintenance');
+            await maintenance.locator(':scope > summary').press('Enter');
+            await maintenance.locator('code').filter({ hasText: 'cluster_maintenance --status' }).waitFor();
+            assert.match(await maintenance.getByRole('link').getAttribute('href'), new RegExp(`/${language}/`));
+            await maintenance.locator('details > summary').press('Enter');
+            await maintenance.locator('code').filter({ hasText: '--retire-ha --detached-ha --plan' }).waitFor();
+            assert.equal(await maintenance.locator('#haRetireForm').count(), 0);
         }
+        const recovery = await (await page.request.get(base + '/api/settings/cluster-readiness')).json();
+        assert.equal(recovery.operation, 'a'.repeat(32));
+        assert.equal(recovery.transportProof, undefined);
         await page.route('**/api/settings/cluster-readiness', route => route.fulfill({ json: {
-            state: 'migration', phase: 'activating', validFor: 1
+            state: 'migration', phase: 'activating', validFor: 1, operation: 'a'.repeat(32), planHash: 'b'.repeat(64)
         } }));
         await page.goto(base + '/settings?lang=en');
         await page.locator('#cluster-migration > summary').click();
         const phase = page.locator('#cluster-migration-phase');
         await phase.filter({ hasText: 'Activation requested.' }).waitFor();
         await phase.filter({ hasText: 'The local migration phase could not be confirmed.' }).waitFor();
+        assert.equal(await page.locator('#cluster-migration-reference').isHidden(), true);
+        assert.equal(await page.locator('#cluster-migration-operation').textContent(), '');
+        writeFileSync(file('cluster-status.json'), JSON.stringify({ state: 'not-configured' }));
+        writeFileSync(file('standalone'), '');
+        await page.route('**/api/settings/ha/network', route => route.fulfill({ json: { networks: [
+            { interface: 'ens18', address: '192.0.2.12', prefix: 24, network: '192.0.2.0/24', dynamic: false }
+        ] } }));
+        for (const [language, theme, width] of [['en', 'light', 1440], ['nl', 'dark', 360]]) {
+            await page.setViewportSize({ width, height: 740 });
+            await page.goto(base + '/settings?lang=' + language);
+            await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+            const setup = page.locator('details').filter({ has: page.locator('#haSetupMode') }).first();
+            await setup.locator(':scope > summary').press('Enter');
+            const mode = setup.locator('#haSetupMode');
+            await setup.locator('#haSetupCreateHint').waitFor();
+            assert.match(await setup.locator('#haSetupCreateHint').textContent(), /node A/);
+            await mode.selectOption('join');
+            await setup.locator('#haSetupJoinHint').waitFor();
+            assert.match(await setup.locator('#haSetupJoinHint').textContent(), /node B/);
+            assert.equal(await mode.getAttribute('aria-describedby'), 'haSetupJoinHint');
+            assert.equal(await setup.locator('#haSetupCreateHint').isHidden(), true);
+            assert.ok(await setup.evaluate(element => element.scrollWidth <= element.clientWidth));
+        }
         console.log('Playwright HA: NL/EN, light/dark, mobile/desktop, focus, discard confirmation, reauthentication and monitor restrictions passed.');
     } finally {
         if (browser) await browser.close();

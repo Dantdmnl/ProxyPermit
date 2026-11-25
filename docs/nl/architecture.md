@@ -74,10 +74,10 @@ Een volledige Rust-rewrite is nu niet gekozen. De grootste verbeterpunten zitten
 in transacties, configuratieverdeling, autorisatie en deployment. Een taalwissel
 lost die ontwerpvragen niet op.
 
-Granian gebruikt in deze integratie HTTP achter TLS-terminatie door Nginx.
-Bestaande directe TLS-configuraties blijven via Gunicorn beschikbaar. Voor een
-Granian Unix-socket geldt mode 0660: geef de Nginx-worker toegang via de juiste
-groep. Wissel bestaande productiebackends pas na een stagingtest.
+Beide servers ondersteunen directe TLS op een TCP-poort en kunnen achter een
+reverse proxy draaien. Gebruik je een Unix-socket voor Granian, geef de
+reverse proxy dan via de juiste groep toegang tot de socket met mode `0660`.
+Wissel bestaande productiebackends pas na een stagingtest.
 
 Bronnen: [Gunicorn](https://gunicorn.org/design/),
 [Granian](https://github.com/emmett-framework/granian),

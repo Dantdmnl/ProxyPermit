@@ -1,9 +1,12 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock
 
 from app.core.tinyproxy import ConfigError, RevisionConflict, TinyproxyConfigStore, parse, summary, validate
+from app.core.files import file_lock
+from app.runtime.policy_recovery import recover
 
 BASE = 'Port 3128\nAllow 127.0.0.1\nConnectPort 443\n'
 
@@ -94,6 +97,36 @@ ErrorFile 403 "/usr/share/tinyproxy/403.html"
                 store.save(BASE + 'Timeout 60\n', store.read()['revision'], Mock(return_value=(False, 'failed')))
             self.assertEqual(store.path.read_text(encoding='utf-8'), BASE)
             self.assertEqual(store.read()['content'], BASE + 'Timeout 50\n')
+
+    def test_prestart_recovers_only_an_unconfirmed_policy_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = TinyproxyConfigStore(Path(directory) / 'tinyproxy.conf')
+            filters = TinyproxyConfigStore(Path(directory) / 'filters')
+            for store, original in ((config, BASE), (filters, 'original\n')):
+                store.path.write_text(original, encoding='utf-8')
+
+            for committed in (False, True):
+                with self.subTest(committed=committed):
+                    config._publish(BASE + 'Timeout 40\n', BASE)
+                    filters._publish('changed\n', 'original\n')
+                    if committed:
+                        config.finish_activation()
+                    self.assertEqual(recover(config.path, filters.path), not committed)
+                    self.assertEqual(config.path.read_text(), BASE + ('Timeout 40\n' if committed else ''))
+                    self.assertEqual(filters.path.read_text(), 'changed\n' if committed else 'original\n')
+                    self.assertFalse(config.pending_path.exists() or filters.pending_path.exists())
+
+    def test_prestart_allows_service_operation_requested_by_active_publisher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = TinyproxyConfigStore(Path(directory) / 'tinyproxy.conf')
+            filters = Path(directory) / 'filters'
+            config.path.write_text(BASE, encoding='utf-8')
+            config._publish(BASE + 'Timeout 40\n', BASE)
+            with file_lock(config.activation_lock), ThreadPoolExecutor(max_workers=1) as worker:
+                self.assertFalse(worker.submit(recover, config.path, filters).result(timeout=5))
+            self.assertTrue(config.pending_path.exists())
+            self.assertTrue(recover(config.path, filters))
+            self.assertEqual(config.path.read_text(), BASE)
 
 
 if __name__ == '__main__':

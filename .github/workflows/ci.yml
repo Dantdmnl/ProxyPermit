@@ -222,6 +222,20 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python scripts/release.py check --tag "$RELEASE_TAG"
       - run: python scripts/release.py archive
+      - run: python scripts/release.py verify-archive
+      - name: Exercise the installer from the release archive
+        run: |
+          version="$(tr -d '\r\n' < VERSION)"
+          archive="proxypermit-${version}.tar.gz"
+          directory="$(mktemp -d)"
+          trap 'rm -rf -- "$directory"' EXIT
+          tar -xzf "dist/$archive" -C "$directory"
+          cd "$directory/proxypermit-$version"
+          bash install.sh --plan --root "$directory/standalone" --mode standalone
+          bash install.sh --plan --root "$directory/standalone" --mode standalone --manager-tls local-ca
+          bash install.sh --plan --root "$directory/ha" --mode ha --ha-node a --ha-interface ens18 \
+            --ha-node-a 192.0.2.11 --ha-node-b 192.0.2.12 --ha-vip 192.0.2.10/24 \
+            --ha-client-cidr 192.0.2.0/24 --ha-vrid 51
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: proxypermit-source-release

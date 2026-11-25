@@ -331,8 +331,16 @@ quorum for the change. Stop the departing node's cluster participation. Its
 `keepalived.service` must be inactive and persistently masked. The installer
 does not edit the peer's cluster membership, witness or fencing topology.
 
-Use the release source on the detached node. Review the owned firewall rules
-and services in the plan before applying:
+Replacing a node with a different Proxmox VM ID requires a separate cluster
+procedure. ProxyPermit derives the Corosync cluster name and witness enrollment
+from the plan, which includes both VM IDs. A new ID changes that identity even
+when the node keeps its hostname and IP address. Keep the retired VM isolated
+and retain its recovery data until the replacement procedure has been verified.
+See the [remaining replacement checks](planned-work.md#ha-with-protection-against-unsafe-takeover).
+
+Use the release source on the detached node. **Settings → HA maintenance**
+shows the read-only plan command. Review the owned firewall rules and services
+in the plan before applying:
 
 ```bash
 sudo bash install.sh --retire-ha --detached-ha --plan
@@ -344,6 +352,13 @@ that the peer's proxy and the local console remain reachable and removes only
 the recorded HA and native cluster rules. Pinned management rules remain in
 place. The local management console remains available after retirement.
 
+If retirement is interrupted, confirm the local cluster services are still
+masked and the peer is still serving the VIP. Rerun `--retire-ha --detached-ha
+--plan` before reapplying. A completed retirement reports `alreadyRetired`.
+An incomplete retirement retains the firewall rule record so the installer can
+resume with the same scope. Keep the timestamped recovery backup if the checks
+fail or a rule was edited.
+
 To remove that console as well, verify SSH access, then review and apply:
 
 ```bash
@@ -352,8 +367,9 @@ sudo bash install.sh --uninstall --detached-ha --apply
 ```
 
 The uninstaller checks retirement and verifies that the native services
-remain masked. OS packages, cluster recovery records, policy and backups
-remain available for the OS administrator. Follow your cluster procedure to
+remain masked. SSH settings, pinned firewall rules and the separately
+installed fencing agent remain in place, along with OS packages, cluster
+recovery records, policy and backups. Follow your cluster procedure to
 replace the node or reconfigure the surviving deployment.
 
 The installer also validates private native draft backups. It refuses symlinks,

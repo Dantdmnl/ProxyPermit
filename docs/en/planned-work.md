@@ -6,7 +6,7 @@ Which improvements are coming, and what will they mean for administrators? The
 main development priority is HA with protection against unsafe takeover.
 Usability, HTTPS and logging are also areas of focus.
 
-Updated on 22 November 2026, using **v1.3.0** as the baseline for released
+Updated on 24 November 2026, using **v1.3.0** as the baseline for released
 features. There are no promised delivery dates, and the order may change.
 
 **How to read this page:** a checked item is an implemented or experimentally
@@ -37,14 +37,15 @@ The normal HA wizard does not yet configure that cluster for you.
     [HA setup and its limits](high-availability.md#understand-failover-protection)
     before choosing a production deployment.
 
-## Available for testing in v1.4.0-dev.2
+## Available for testing in v1.4.0-dev.3
 
 - **Safer HA administration:** revoking pairing requires the administrator password again and a fresh authenticator code when 2FA is enabled. Protection status checks more strictly whether the cluster evidence is trustworthy.
 - **Protected HA preparation:** system administrators can save and review a Proxmox plan and prepare the packages on each node in Settings. The OS administrator handles witness enrollment, fencing and activation.
 - **Migration and recovery:** validate transport before moving the VIP and roll back an application release while the peer serves traffic. See the [verification report](verification.md) for the Proxmox test results.
-- **HTTPS setup through the web interface:** system administrators can prepare and renew certificates and enable HTTPS. HTTPS is not yet the installation default. See [Management HTTPS](management-https.md).
+- **Management HTTPS:** the fresh-install wizard suggests a local CA. System administrators can enable HTTPS and renew certificates from Settings. See [Management HTTPS](management-https.md).
+- **Policy recovery and diagnostics:** managed Tinyproxy restores unconfirmed changes before it starts. System administrators can download a proxy and cluster status report from Settings.
 
-These capabilities are included in the [v1.4.0-dev.2 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.2),
+These capabilities are included in the [v1.4.0-dev.3 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3),
 not in stable v1.3.0. Use a disposable or recoverable test deployment for the
 prerelease and the guide that corresponds to your installed version.
 
@@ -77,16 +78,25 @@ platform.
 - [x] Provide guarded local retirement and uninstall commands for a node already detached through OS cluster administration.
 - [x] Verify a standby returning after several minutes offline and a separate policy catch-up after the standby misses a publication.
 - [x] Document the provisioning boundary for vSphere, libvirt and physical servers and reject unsafe VMware TLS and IPMI fencing evidence.
-- [ ] Guide initial setup and node joining through the web interface, explaining the required hosts, network access and permissions.
-- [ ] Help existing HA installations migrate in a controlled way, with an understandable recovery procedure if migration is interrupted.
-- [ ] Complete rollback, node retirement and uninstallation for protected clusters while preserving management access.
+- [x] Show role-specific guidance for creating A or joining B, and display fresh migration identifiers for comparison in Settings.
+- [x] Keep detached retirement resumable after an interruption and make repeated completion safe.
+- [x] Guide protected setup and enrollment in Settings for Proxmox. Show the witness, network access, permissions and local preparation checks. The OS administrator completes enrollment and activation.
+- [x] Show the next local setup step for Proxmox and explain the available options for other platforms before showing platform-specific fields.
+- [x] Guide controlled migration of an existing Proxmox HA pair and recovery from an interrupted migration. Verify both paths in the migration lab.
+- [x] Verify that ProxyPermit recognizes an OS-managed KVM/libvirt cluster and that it fences a frozen VM before moving the VIP.
+- [x] Verify local Proxmox fencing-token and witness-client certificate expiry in isolated checks on a live standby.
+- [x] Verify local retirement and console uninstall on a detached protected Proxmox node while the peer serves the VIP and direct SSH remains available.
+- [ ] Provide a procedure for permanently replacing a member of a protected cluster. Verify that the surviving node retains quorum, the replacement synchronizes policy and can take over the VIP, and the retired member can no longer join or fence either node.
 - [ ] Support additional virtualization platforms and physical hosts, documenting each platform's capabilities and limitations.
 - [ ] Extend recovery checks for power loss, network partitions and nodes returning after a long absence before offering the full setup as production-ready.
+- [x] Verify controlled VIP recovery when retained monitor failures exclude both nodes. See the [Proxmox trial](verification.md#vip-recovery-and-detached-node-removal-on-proxmox).
+- [ ] Diagnose the cause of intermittent VIP monitor timeouts. See the [initial observation](verification.md#vip-moved-from-b-to-a-after-a-monitor-timeout).
 
 B remains read-only for shared proxy policy after traffic takeover. A witness
 should not depend on the same point of failure as the proxy nodes. See the
 [HA guide](high-availability.md) for prerequisites and the
-[verification report](verification.md) for current test coverage.
+[acceptance checks](verification.md#protected-ha-acceptance-checks-for-v140) for
+the evidence required for wider use.
 
 ## Faster, clearer logs
 
@@ -112,8 +122,11 @@ certificate administration without needing the terminal for every operation.
 
 - [x] Offer HTTPS with a certificate authority (CA) for each node in the development version, including controlled activation, expiry warnings, renewal and recovery.
 - [x] Let system administrators perform these certificate operations through the web interface, with password confirmation and optional 2FA.
-- [ ] Make HTTPS the default for new installations and guide existing HTTP installations through migration.
-- [ ] Support administrator-provided certificates and internal CAs; investigate automated issuance through ACME where appropriate.
+- [x] Suggest HTTPS with a local CA in the interactive wizard for new installations.
+- [ ] Review the default for unattended installations and guide existing HTTP installations through migration.
+- [x] Offer a local CA or an administrator-provided PEM certificate at installation and verify both in Ubuntu VMware guests.
+- [x] Verify that a Keepalived pair retains its HTTPS configuration during an upgrade and when rolling back the standby. See the [VMware trial](verification.md#upgrade-and-rollback-on-a-keepalived-pair-with-https).
+- [ ] Investigate automated renewal for externally issued certificates, including ACME where appropriate.
 - [ ] Apply HTTPS security headers, including HSTS, carefully and align cookies and redirects with them.
 - [ ] Complete the installation, upgrade and recovery workflow for standalone nodes and HA deployments.
 
@@ -149,6 +162,21 @@ why you may need to sign in again.
 
 Accounts and sessions are currently local. Traffic takeover does not
 automatically make an account available on the other node.
+
+### Managing policy when only the VIP is reachable
+
+Some management networks allow access only to the VIP. In the current protected
+setup, B can keep serving traffic after A recovers, while shared policy edits
+remain on A. An administrator who reaches B through the VIP cannot add a rule.
+
+- [ ] Make A the preferred node for management after recovery. Design automatic return of the VIP to A after a stable health window with confirmed quorum, fencing and current policy. Test that a node repeatedly dropping offline does not move the VIP back and forth.
+- [ ] Keep policy management available through the VIP while A is unavailable. Design a single authenticated writer at a time. Let B take write authority only after quorum and fencing confirm that A cannot write, and reconcile policy revisions before handing authority back.
+- [ ] Test from a management network that allows only the VIP. Verify that a system administrator can add a rule after takeover and after A returns, with local sign-in, role checks, audit attribution and protection against duplicate publication.
+
+Pacemaker combines location preferences with the score for keeping a resource
+on its current node. With the current settings, keeping the VIP on a healthy B
+outweighs A’s location preference. Returning the VIP and handing over policy
+write authority are distinct operations. [Pacemaker placement](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/constraints.html) · [Fencing](https://clusterlabs.org/projects/pacemaker/doc/3.0/Pacemaker_Explained/html/fencing.html)
 
 ## Topics for later investigation
 

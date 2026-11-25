@@ -127,19 +127,72 @@ class AccessSafetyTests(unittest.TestCase):
 
     def test_non_root_wizard_keeps_reviewed_access_sources_and_real_host_ports(self):
         args = SimpleNamespace(install_dir='/opt/proxypermit', admin_user='admin', manager_port=8080,
-                               management_cidr=None, management_ssh_port=None, management_web_port=None)
-        plan = dict(action='install', mode='standalone', server='gunicorn')
+                               manager_bind='127.0.0.1', manager_tls=None, manager_name=[], manager_cert=None,
+                               manager_key=None, management_cidr=None, management_ssh_port=None,
+                               management_web_port=None, enable_ufw=False)
+        plan = dict(action='install', mode='standalone', server='gunicorn', steps=[], notes=[])
         terminal = Mock()
-        terminal.choose.side_effect = [0, 0, 1]
-        terminal.ask.side_effect = ['admin', 8080, '192.0.2.8/32', 2222, 443]
+        terminal.choose.side_effect = [0, 1, 1, 1, 1, 1]
+        terminal.ask.side_effect = ['admin', '/root/fullchain.pem', '/root/privkey.pem', 8444, '192.0.2.8/32', 2222, 443]
         output = io.StringIO()
         with patch.object(install, 'InstallTerminal', return_value=terminal), \
                 patch.object(install, 'build_plan', return_value=plan), \
+                patch.object(install, 'wizard_sudo', return_value=7) as sudo, \
                 patch.object(install.sys, 'platform', 'linux'), \
                 patch.object(install.os, 'geteuid', return_value=1000, create=True), \
                 patch.dict(os.environ, SSH_CONNECTION=''), redirect_stdout(output):
-            self.assertEqual(install.run_wizard(args), 0)
-        self.assertIn('--management-cidr 192.0.2.8/32', output.getvalue())
-        self.assertIn('--management-ssh-port 2222', output.getvalue())
-        self.assertIn('--management-web-port 443', output.getvalue())
-        self.assertIsNone(terminal.ask.call_args_list[2].args[1])
+            self.assertEqual(install.run_wizard(args), 7)
+        sudo.assert_called_once_with('--mode', 'standalone', '--server', 'granian', '--install-dir', '/opt/proxypermit',
+                                     '--reviewed-action', 'install', '--apply', '--admin-user=admin', '--manager-port', '8444',
+                                     '--manager-tls', 'custom', '--manager-cert', '/root/fullchain.pem', '--manager-key', '/root/privkey.pem',
+                                     '--management-cidr', '192.0.2.8/32', '--management-ssh-port', '2222',
+                                     '--management-web-port', '443', '--enable-ufw')
+        self.assertIsNone(terminal.ask.call_args_list[4].args[1])
+
+    def test_ufw_activation_requires_current_ssh_access(self):
+        args = SimpleNamespace(enable_ufw=True, management_cidr=['192.0.2.0/24'], management_ssh_port=[22])
+        with patch.dict(os.environ, SSH_CONNECTION='192.0.2.8 40001 192.0.2.10 2222'):
+            with self.assertRaisesRegex(ValueError, 'current SSH connection'):
+                install.validate_ufw_activation({'action': 'install'}, args)
+            args.management_ssh_port.append(2222)
+            install.validate_ufw_activation({'action': 'install'}, args)
+            with self.assertRaisesRegex(ValueError, 'fresh installation'):
+                install.validate_ufw_activation({'action': 'upgrade'}, args)
+
+    def test_wizard_switches_ports_and_clears_certificate_fields_when_returning_to_http(self):
+        args = SimpleNamespace(admin_user='admin', manager_port=8444, manager_tls='custom', manager_name=[],
+                               manager_cert='/root/cert.pem', manager_key='/root/key.pem',
+                               management_cidr=['192.0.2.8/32'], management_ssh_port=[2222], management_web_port=[8444])
+        ui = install.InstallTerminal()
+        with patch.object(ui, 'choose', return_value=0), patch.object(install, 'console_port_available', return_value=True), \
+                patch('builtins.input', side_effect=[''] * 5):
+            install.wizard_management(ui, args)
+        self.assertEqual((args.manager_tls, args.manager_port, args.management_web_port), ('http', 8080, [8080]))
+        self.assertIsNone(args.manager_cert)
+        self.assertIsNone(args.manager_key)
+
+    def test_fresh_wizard_suggests_local_https_and_matching_management_port(self):
+        args = SimpleNamespace(admin_user='admin', manager_port=8080, manager_tls=None, manager_name=[],
+                               manager_cert=None, manager_key=None, management_cidr=['192.0.2.8/32'],
+                               management_ssh_port=[22], management_web_port=None)
+        ui = install.InstallTerminal()
+        with patch.object(install, 'console_port_available', return_value=True), \
+                patch('builtins.input', side_effect=[''] * 8):
+            install.wizard_management(ui, args)
+        self.assertEqual((args.manager_tls, args.manager_port, args.management_web_port), ('local-ca', 8444, [8444]))
+
+    def test_ufw_activation_preserves_active_firewall_and_requires_restrictive_inbound_policy(self):
+        config = self.path.with_name('ufw.conf')
+        defaults = self.path.with_name('defaults')
+        defaults.write_text('DEFAULT_INPUT_POLICY="ACCEPT"\n', encoding='utf-8')
+        config.write_text('ENABLED=yes\n', encoding='utf-8')
+        transaction = Mock()
+        with patch.multiple(install, UFW_CONFIG=config, UFW_DEFAULTS=defaults, require_trusted_path=Mock()):
+            self.assertFalse(install.prepare_ufw_activation(transaction))
+            config.write_text('ENABLED=no\n', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'deny or reject'):
+                install.prepare_ufw_activation(transaction)
+            transaction.track.assert_not_called()
+            defaults.write_text('DEFAULT_INPUT_POLICY="DROP"\n', encoding='utf-8')
+            self.assertTrue(install.prepare_ufw_activation(transaction))
+        transaction.track.assert_called_once_with(config)

@@ -22,6 +22,15 @@ Before choosing the release version:
   Do not describe a planned feature as available in the release.
 - Check backup and recovery instructions before asking operators to upgrade.
 
+CI verifies the checksum and complete file manifest, then runs the standalone
+HTTP, standalone HTTPS and two-node HA installer plans from the release
+archive. Before tagging a stable release, use that archive on disposable hosts
+to test a clean install, an upgrade from the last supported stable release,
+rollback and uninstall. Record the version, platform and archive checksum.
+Verify sign-in and active policy after install, upgrade and rollback. Test one
+allowed and one blocked destination through Tinyproxy. After uninstall, check
+that SSH and pinned management firewall rules still work.
+
 The documentation website follows `main`, including unreleased work. For a stable
 release, its source tag and bundled documentation identify the matching version.
 The website is static documentation, not the management console.
@@ -74,6 +83,7 @@ From a Python virtual environment with `requirements/dev.txt` installed:
 ```sh
 python scripts/check.py
 python scripts/release.py archive
+python scripts/release.py verify-archive
 ```
 
 Use Linux/WSL for shell checks and Gunicorn. Windows checks use Granian and
@@ -85,7 +95,9 @@ Build the documentation with the pinned tools in `requirements/docs.txt` using
 [documentation-site guide](documentation-site.md#preview-locally) explains setup.
 
 The archive is `dist/proxypermit-VERSION.tar.gz`, accompanied by a SHA-256
-checksum. Its internal manifest lists file hashes. Secrets, local environments,
+checksum. Its internal manifest lists file hashes. Rebuilding with the same
+toolchain, source bytes and executable permissions yields the same checksum.
+Secrets, local environments,
 runtime state and the generated website must stay outside the archive.
 
 ## 4. Push, check CI, then tag the tested commit

@@ -13,8 +13,10 @@ You can also inspect logs and use two servers for automatic takeover.
 | I have a console address and an account | [First steps](getting-started.md) |
 | I want to add a website, import rules or change settings | [Using the console](user-guide.md) |
 | I want to install, update or remove ProxyPermit | [Installation](installation.md) |
+| I want to check dependencies or platform coverage | [Requirements and tested platforms](requirements.md) |
 | I want two servers to take over from each other | [High availability](high-availability.md) |
 | Something is not working | [Troubleshooting](troubleshooting.md) |
+| I need to recover a host or an interrupted cluster operation over SSH | [Recovery commands](recovery.md) |
 | I do not recognize a technical term | [Terms explained](glossary.md) |
 
 ## For the administrator

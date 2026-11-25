@@ -358,13 +358,30 @@ Op die node moeten `pacemaker.service`, `corosync.service`,
 gemaskeerd zijn. De installer wijzigt het clusterlidmaatschap, de witness
 en de fencinginstellingen van de overblijvende node niet.
 
-Voer de installer op de losgekoppelde node uit vanuit de uitgepakte bronmap.
-Controleer in het plan welke services en firewallregels worden verwijderd:
+Voor een vervanger met een ander Proxmox-VM-ID is een aparte clusterprocedure
+nodig. ProxyPermit leidt de Corosync-clusternaam en de inschrijving bij de
+witness af uit het plan, waarin beide VM-ID's staan. Een nieuw VM-ID verandert
+die identiteit, ook als de hostnaam en het IP-adres gelijk blijven. Houd de
+uitgeschakelde VM geïsoleerd en bewaar de herstelgegevens totdat de
+vervangingsprocedure is getest. Zie de
+[openstaande controles voor vervanging](vervolgwerk.md#ha-met-bescherming-tegen-onveilige-overname).
+
+Voer de installer op de losgekoppelde node uit vanuit de uitgepakte release.
+In **Instellingen → HA-beheeracties** vind je de opdracht om het plan te
+bekijken. Controleer welke diensten en firewallregels worden verwijderd:
 
 ```bash
 sudo bash install.sh --retire-ha --detached-ha --plan
 sudo bash install.sh --retire-ha --detached-ha --apply
 ```
+
+Is het uit gebruik nemen onderbroken? Controleer of de lokale clusterdiensten
+nog gemaskeerd zijn en de andere node het VIP nog bedient. Voer opnieuw
+`--retire-ha --detached-ha --plan` uit voordat je de wijziging doorvoert.
+Een afgeronde actie meldt `alreadyRetired`. Zolang de actie niet klaar is,
+bewaart de installer de lijst met firewallregels zodat hij binnen dezelfde
+grenzen kan hervatten. Bewaar de back-up met tijdstempel als de controles
+mislukken of een regel is aangepast.
 
 De installer controleert de opgeslagen migratiestatus, het ontbreken van
 een lokaal VIP en de bereikbaarheid van de proxy op de andere node en
@@ -379,6 +396,10 @@ bekijk daarna het plan voordat je het uitvoert:
 sudo bash install.sh --uninstall --detached-ha --plan
 sudo bash install.sh --uninstall --detached-ha --apply
 ```
+
+De de-installatie behoudt de SSH-instellingen, vaste firewallregels en de
+afzonderlijk geïnstalleerde fencingagent. Ruim achtergebleven OS-onderdelen
+pas op nadat je hebt gecontroleerd dat het cluster ze niet meer nodig heeft.
 
 De uninstaller controleert of de vorige stap is afgerond en de
 clusterdiensten nog gemaskeerd zijn. OS-pakketten, herstelgegevens van het

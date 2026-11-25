@@ -1,2 +1,2 @@
 // Generated from VERSION by scripts/release.py sync.
-window.ProxyPermitVersion = "1.4.0-dev.2";
+window.ProxyPermitVersion = "1.4.0-dev.3";

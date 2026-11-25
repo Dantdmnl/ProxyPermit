@@ -29,8 +29,8 @@ running the same Flask application. The entry point for both is
 blocking thread per worker. Performance depends on workload and needs a
 representative benchmark.
 
-Use a reverse proxy to terminate TLS with Granian. Existing Gunicorn deployments
-can use direct TLS. For a Granian Unix socket, grant the reverse-proxy worker
+Both servers support direct TLS on a TCP listener and can run behind a reverse
+proxy. For a Granian Unix socket, grant the reverse-proxy worker
 access through the appropriate group with socket permissions of `0660`.
 
 ## High availability

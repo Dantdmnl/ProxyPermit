@@ -66,11 +66,22 @@
 .ha-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); align-items:end; gap:10px; margin:12px 0; }
 .ha-fields label { display:grid; gap:4px; min-width:0; }
 #cluster-plan-form { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#cluster-plan-form label:has(.hint) { align-self:start; }
 #cluster-plan-form fieldset { display:grid; gap:8px; min-width:0; padding:10px; border:1px solid var(--line); border-radius:8px; }
 .cluster-plan-context { grid-column:1/-1; margin:0; }
+.cluster-platform-picker { display:grid; gap:6px; max-width:28rem; margin-block:14px; }
+.cluster-platform-picker label { font-weight:600; }
+.cluster-platform-picker select { width:100%; min-height:40px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:var(--field,#fff); color:var(--ink); }
+.cluster-next { margin-block:14px; padding:12px; border:1px solid var(--line); border-inline-start:3px solid var(--accent,var(--line)); border-radius:8px; background:var(--field); }
+.cluster-next p { margin:4px 0 0; }
+.cluster-step { margin-block:16px; padding-block-start:14px; border-top:1px solid var(--line); }
+.cluster-step h3 { margin:0 0 6px; }
+.cluster-step > p { margin:0 0 8px; }
 .cluster-plan-guide, .cluster-plan-import, #cluster-plan-result { margin-block:12px; padding:12px; border:1px solid var(--line); border-radius:8px; }
 .cluster-plan-guide ol { margin-bottom:0; padding-inline-start:20px; }
 .cluster-plan-guide li + li { margin-top:8px; }
+.cluster-migration-reference { grid-template-columns:repeat(auto-fit,minmax(min(100%,16rem),1fr)); }
+.cluster-migration-reference dd { overflow-wrap:anywhere; }
 .cluster-local-preparation { margin-block:16px 0; padding-block-start:12px; border-top:1px solid var(--line); }
 .cluster-local-preparation h3 { margin-block:0 8px; }
 .cluster-local-preparation code, #cluster-plan-fingerprint { overflow-wrap:anywhere; }

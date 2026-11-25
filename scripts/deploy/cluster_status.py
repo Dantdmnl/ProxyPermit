@@ -13,11 +13,28 @@ from app.core.tinyproxy import atomic_write
 from scripts.deploy import ha_resource
 
 MARKER = '# Managed by ProxyPermit cluster status\n'
+FENCING_PROFILE = Path('/etc/proxypermit/proxmox-fencing.json')
 
 
-def command(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=3,
-                          env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'}).stdout
+def command(*args, accepted=(0,)):
+    result = subprocess.run(args, capture_output=True, text=True, timeout=3,
+                            env={'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LC_ALL': 'C'})
+    if result.returncode not in accepted:
+        result.check_returncode()
+    return result.stdout
+
+
+def native_credential_status(now=None):
+    """Report only local expiry, using the same private file the agent reads."""
+    try:
+        profile = cluster_setup.protected(FENCING_PROFILE, private=True)
+        if isinstance(profile, dict) and type(profile.get('version')) is int and profile['version'] == 1:
+            expires = profile.get('expires')
+            if type(expires) is int and expires > 0:
+                return 'current' if expires > (time.time() if now is None else now) else 'expired'
+    except (OSError, ValueError, RecursionError):
+        pass
+    return 'unknown'
 
 
 def evidence():
@@ -30,7 +47,9 @@ def evidence():
         return summarize(command('cibadmin', '--query'), command('crm_mon', '--one-shot', '--as-xml'),
             command('corosync-qdevice-tool', '-s', '-v'),
             command('corosync-cmapctl', 'totem.crypto_cipher', 'totem.crypto_hash'),
-            ha_resource.owns_vip(profile), command('crm_node', '--name').strip())
+            ha_resource.owns_vip(profile), command('crm_node', '--name').strip(),
+            quorum_text=command('corosync-quorumtool', '-s', accepted=(0, 2)),
+            native_credential=native_credential_status())
     except (OSError, ValueError, subprocess.SubprocessError):
         return dict(state='unknown', owners=0, quorate=False, witnessConnected=False,
                     fencingConfigured=False, fencingReady=False, policySafe=False)
@@ -57,8 +76,10 @@ def publish(value):
     exported = dict(version=1, checked=int(time.time()), **value)
     try:
         checkpoint = cluster_setup.protected(cluster.SETUP_CHECKPOINT, private=True)
-        if isinstance(checkpoint, dict) and checkpoint.get('version') == 1 and checkpoint.get('phase') in cluster.MIGRATION_PHASES:
+        if (isinstance(checkpoint, dict) and type(checkpoint.get('version')) is int
+                and checkpoint['version'] == 1 and checkpoint.get('phase') in cluster.MIGRATION_PHASES):
             exported['migrationPhase'] = checkpoint['phase']
+            exported.update(cluster.migration_reference(checkpoint.get('operation'), checkpoint.get('planHash')))
     except (OSError, ValueError, RecursionError):
         pass
     atomic_write(cluster.STATUS, json.dumps(exported), 0o640)

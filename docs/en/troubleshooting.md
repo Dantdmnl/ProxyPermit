@@ -4,6 +4,7 @@
 
 Start with the symptom. Avoid repeating a write action if its response was lost:
 the server may already have saved it. Reconnect and check the actual result first.
+For OS or cluster recovery over SSH, use the [recovery command reference](recovery.md).
 
 ## The console does not open
 
@@ -48,6 +49,29 @@ when ready. If activation failed, read the error; do not assume the draft became
 If someone else changed the file, reload the latest version and review your change
 again. Do not overwrite a newer version just to dismiss a conflict message.
 
+### Tinyproxy fails to start after an interrupted publication
+
+Managed installations attempt to restore the last confirmed policy before
+Tinyproxy starts. A normal publication may restart Tinyproxy after both
+policy files have been written. If the publication process was interrupted,
+recovery uses the saved configuration and filter copies.
+
+Run these commands through direct SSH to the affected node.
+
+```bash
+sudo systemctl status tinyproxy.service --no-pager
+sudo journalctl --namespace=proxypermit-traffic -u tinyproxy.service -b --no-pager
+sudo df -h /etc/tinyproxy
+sudo df -i /etc/tinyproxy
+```
+
+If recovery reports a problem, preserve the files in
+`/etc/tinyproxy/.proxypermit-config-backups`. Check writable disk space,
+inodes and permissions. On a protected cluster, use the
+[recovery guide](recovery.md) before attempting a service restart. Once
+service is back, test an allowed and a denied destination before retrying
+publication.
+
 ## I cannot edit rules on B
 
 That is expected for a paired backup. Edit shared policy on A, even when B holds
@@ -65,6 +89,14 @@ through that address. A stale or unavailable status is not proof of health.
 The host administrator should inspect Keepalived and network/firewall state using
 the [administrator guide](administration.md#troubleshoot-a-deployment).
 
+On a protected cluster, open a direct management session to each available
+node and check the cluster with `sudo corosync-quorumtool -s` and
+`sudo crm_mon --one-shot --failcounts`. If Corosync shows `WaitForAll` with
+`Activity blocked` even though the witness is connected, follow the
+[protected recovery procedure](recovery.md) to restore confirmed membership.
+If Tinyproxy is active but the VIP is stopped, retain the timestamp and the
+resource monitor's exit reason for diagnosis.
+
 ## Older logs are missing
 
 Narrow the date range and check the selected source. Defaults are 30 days for
@@ -74,6 +106,12 @@ Read any incomplete-result notice before assuming there were no matching events.
 See [Logging](logging.md).
 
 ## What to include in a support request
+
+If you are a system administrator, open **Settings → Diagnostics** and
+download the JSON report. It contains a snapshot of the local proxy service
+and the latest validated cluster status. It excludes logs, proxy rules, account
+data and credentials. Capture a report from each node's direct management
+address if you are investigating failover.
 
 Include the installed version, node, approximate time and time zone, page/action,
 exact error and whether real proxy traffic still works. Say what you expected

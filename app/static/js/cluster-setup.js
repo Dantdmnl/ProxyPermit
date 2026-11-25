@@ -4,6 +4,9 @@
     const migration = document.getElementById('cluster-migration');
     if (migration) {
         const message = document.getElementById('cluster-migration-phase');
+        const reference = document.getElementById('cluster-migration-reference');
+        const operation = document.getElementById('cluster-migration-operation');
+        const fingerprint = document.getElementById('cluster-migration-fingerprint');
         const labels = {
             reserving: 'Reservation interrupted or in progress. Review both hosts before resuming.',
             reserved: 'Local VIP reserved. Confirm the peer reservation before preparing transport.',
@@ -15,14 +18,22 @@
         };
         let refreshSequence = 0;
         let expiry;
+        function showReference(state = {}) {
+            const valid = typeof state.operation === 'string' && /^[0-9a-f]{32}$/.test(state.operation)
+                && typeof state.planHash === 'string' && /^[0-9a-f]{64}$/.test(state.planHash);
+            operation.textContent = valid ? state.operation : '';
+            fingerprint.textContent = valid ? state.planHash : '';
+            reference.hidden = !valid;
+        }
         function unknownPhase() {
             clearTimeout(expiry);
+            showReference();
             message.textContent = I18n.t('The local migration phase could not be confirmed.');
         }
         async function refreshMigration() {
             const current = ++refreshSequence;
             try {
-                const response = await fetch('/api/settings/cluster-readiness', { signal: AbortSignal.timeout(5000) });
+                const response = await fetch('/api/settings/cluster-readiness', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
                 if (!response.ok) throw new Error();
                 const state = await response.json();
                 if (current !== refreshSequence) return;
@@ -32,6 +43,7 @@
                 }
                 clearTimeout(expiry);
                 message.textContent = I18n.t(labels[state.phase]);
+                showReference(state);
                 expiry = setTimeout(unknownPhase, Math.min(state.validFor, 20) * 1000);
             } catch {
                 if (current === refreshSequence) unknownPhase();
@@ -47,6 +59,11 @@
     }
     if (!panel) return;
     const message = document.getElementById('cluster-readiness-message');
+    const platform = document.getElementById('cluster-platform');
+    const proxmoxSetup = document.getElementById('cluster-proxmox-setup');
+    const externalSetup = document.getElementById('cluster-platform-external');
+    const platformHelp = document.getElementById('cluster-platform-help');
+    const manualPlan = document.getElementById('cluster-plan-manual');
     const form = document.getElementById('cluster-plan-form');
     const feedback = document.getElementById('cluster-plan-feedback');
     const result = document.getElementById('cluster-plan-result');
@@ -62,9 +79,43 @@
     const savedPlan = document.getElementById('cluster-local-saved');
     let reviewed, readiness, waitingFor = '', waitingUntil = 0, submitting = false;
     let planSequence = 0;
-    let expiry, sequence = 0;
+    let expiry, sequence = 0, platformPicked = false;
+
+    function showPlatform() {
+        proxmoxSetup.hidden = platform.value !== 'proxmox';
+        externalSetup.hidden = !platform.value || !proxmoxSetup.hidden;
+        if (!externalSetup.hidden) {
+            platformHelp.textContent = I18n.t(platform.value === 'workstation'
+                ? 'VMware Workstation has no supported fencing adapter in ProxyPermit. You can keep using the existing Keepalived pair.'
+                : 'For this platform, ask the system administrator to configure quorum and fencing on the hosts. ProxyPermit reports protection once it can verify the cluster.');
+        }
+    }
+
+    platform.addEventListener('change', () => {
+        platformPicked = true;
+        showPlatform();
+    });
+    showPlatform();
+
+    function updateNextStep() {
+        const checks = readiness?.checks || {};
+        let next;
+        if (!readiness) next = 'OS prerequisite checks are unavailable or expired. Protection is not confirmed.';
+        else if (!readiness.webAvailable) next = 'Review and download the plan, then give it to the system administrator to apply on the hosts.';
+        else if (readiness.job?.phase === 'running' || Date.now() < waitingUntil) next = 'Wait for the current task on this node to finish.';
+        else if (!readiness.planRevision) next = reviewed?.canStage ? 'Save the reviewed plan on this node.' : (panel.dataset.node === 'b'
+            ? 'Import the plan downloaded on A and save it on this node.' : 'Enter the Proxmox and witness details, then check the plan.');
+        else if (readiness.packagesPrepared !== true && checks.time !== 'pass') next = 'Check time synchronization on this host before preparing packages.';
+        else if (readiness.packagesPrepared !== true) next = 'Choose Prepare cluster packages on this node.';
+        else if (checks.enrollment !== 'pass') next = 'Use the SSH guide below to set up the witness and enroll both nodes.';
+        else if (checks.powerTest !== 'pass' || checks.authentication !== 'pass' || checks.agent !== 'pass') next = 'Use the SSH guide below to verify fencing and test recovery for each node.';
+        else next = 'Local checks passed. Compare both nodes before starting the protected migration over SSH.';
+        const text = I18n.t(next);
+        if (message.textContent !== text) message.textContent = text;
+    }
 
     function updateControls() {
+        updateNextStep();
         if (!stage) return;
         const revision = readiness?.planRevision;
         const busy = submitting || Date.now() < waitingUntil || readiness?.job?.phase === 'running';
@@ -124,6 +175,7 @@
         if (!readiness?.stagedPlan) return;
         clearPlan();
         fillPlan(readiness.stagedPlan);
+        manualPlan.open = true;
         form.elements.namedItem('nodeAName').focus();
     });
 
@@ -260,7 +312,6 @@
     function unknown() {
         readiness = undefined;
         updateControls();
-        message.textContent = I18n.t('OS prerequisite checks are unavailable or expired. Protection is not confirmed.');
         panel.querySelectorAll('[data-cluster-check]').forEach(item => {
             item.textContent = I18n.t('Not confirmed'); item.dataset.state = 'unknown';
         });
@@ -275,9 +326,12 @@
             clearTimeout(expiry);
             if (state.state !== 'preparation' || !(state.validFor > 0)) { unknown(); return; }
             readiness = state;
+            if (state.stagedPlan && !platformPicked && !platform.value) {
+                platform.value = 'proxmox';
+                showPlatform();
+            }
             updateJob(state);
             updateControls();
-            message.textContent = I18n.t('Preparation only. Complete the pending checks before protected cluster activation.');
             const labels = { pass: 'Confirmed locally', blocked: 'Action required', pending: 'Still to verify', unknown: 'Not confirmed' };
             panel.querySelectorAll('[data-cluster-check]').forEach(item => {
                 const status = state.checks?.[item.dataset.clusterCheck];

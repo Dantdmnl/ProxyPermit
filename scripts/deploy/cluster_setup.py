@@ -95,6 +95,33 @@ def stage_plan(plan, role, *, expected=None):
         return host
 
 
+def inspect_preflight(plan, stamp, checks):
+    from scripts.deploy import cluster_native
+    try:
+        pointer = setup.protected(cluster_bootstrap.FOLDER / 'preflight-current.json', private=True)
+        operation = pointer['operation']
+        if (not isinstance(operation, str) or not re.fullmatch(r'[0-9a-f]{32}', operation)
+                or pointer['planHash'] != stamp):
+            return
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        return
+    folder = cluster_bootstrap.FOLDER / operation
+    try:
+        if cluster_native.transport_receipt(plan, stamp, folder) is not None:
+            key = cluster_native.private_bytes(folder / 'authkey', 1024)
+            checks['enrollment'] = 'pass' if len(key) == 1024 else 'blocked'
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        checks['enrollment'] = 'blocked'
+    if checks['authentication'] == 'pass':
+        try:
+            cluster_native.verify_power_receipt(folder, stamp)
+            checks['powerTest'] = 'pass'
+        except (OSError, ValueError, KeyError, TypeError, RecursionError):
+            pass
+
+
 def inspect(values, *, include_plan=False):
     checks = dict.fromkeys(setup.CHECKS, 'pending')
     extra = {}
@@ -148,20 +175,11 @@ def inspect(values, *, include_plan=False):
                         checks['authentication'] = 'pending'
                     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
                         checks['authentication'] = 'blocked'
-                if checks['authentication'] == 'pass':
-                    from scripts.deploy.cluster_native import verify_power_receipt
-                    try:
-                        pointer = setup.protected(cluster_bootstrap.FOLDER / 'preflight-current.json', private=True)
-                        operation = pointer['operation']
-                        if (isinstance(operation, str) and re.fullmatch(r'[0-9a-f]{32}', operation)
-                                and pointer['planHash'] == extra['planRevision']):
-                            verify_power_receipt(cluster_bootstrap.FOLDER / operation, extra['planRevision'])
-                            checks['powerTest'] = 'pass'
-                    except (OSError, ValueError, KeyError, TypeError, RecursionError):
-                        pass
         except (OSError, ValueError, subprocess.SubprocessError):
             checks['agent'] = 'blocked'
             checks['authentication'] = 'unknown'
+        if plan['platform'] == 'proxmox':
+            inspect_preflight(plan, extra['planRevision'], checks)
     except FileNotFoundError:
         checks['plan'] = 'pending'
         extra['planRevision'] = ''
