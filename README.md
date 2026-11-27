@@ -75,12 +75,12 @@ choosing a production setup.
 
 ## Development preview
 
-**[v1.4.0-dev.3](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3)**
+**[v1.4.0-dev.4](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.4)**
 is a prerelease for disposable or recoverable test deployments. It adds
 policy recovery before Tinyproxy starts, a local HTTPS default in the interactive
 installer and a diagnostic report for system administrators. Protected
 Corosync/Pacemaker HA remains experimental. See the
-[release notes](CHANGELOG.md#140-dev3---2026-11-25) and
+[release notes](CHANGELOG.md#140-dev4---2026-11-27) and
 [verification report](docs/en/verification.md).
 **v1.3.0 remains the stable release.**
 

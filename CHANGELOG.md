@@ -4,6 +4,17 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.4.0-dev.4] - 2026-11-27
+
+This preview includes the changes recorded under the dev.3 tag, which
+did not publish a GitHub Release. It is intended for disposable or
+recoverable deployments. v1.3.0 remains the stable release, and protected
+Corosync/Pacemaker HA remains experimental.
+
+- Include the verified recovery of unconfirmed Tinyproxy policy after a service restart or hard VM power cut, the HTTPS installer defaults, and the system administrator diagnostics from dev.3.
+- Correct the documentation browser check to match the interactive installer command. The wizard asks for elevated permissions when the reviewed plan is applied.
+- Document the remaining protected HA work, including member replacement, return after extended absence, and intermittent VIP monitor failures.
+
 ## [1.4.0-dev.3] - 2026-11-25
 
 ### Pre-release status

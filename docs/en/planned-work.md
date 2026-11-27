@@ -37,7 +37,7 @@ The normal HA wizard does not yet configure that cluster for you.
     [HA setup and its limits](high-availability.md#understand-failover-protection)
     before choosing a production deployment.
 
-## Available for testing in v1.4.0-dev.3
+## Available for testing in v1.4.0-dev.4
 
 - **Safer HA administration:** revoking pairing requires the administrator password again and a fresh authenticator code when 2FA is enabled. Protection status checks more strictly whether the cluster evidence is trustworthy.
 - **Protected HA preparation:** system administrators can save and review a Proxmox plan and prepare the packages on each node in Settings. The OS administrator handles witness enrollment, fencing and activation.
@@ -45,7 +45,7 @@ The normal HA wizard does not yet configure that cluster for you.
 - **Management HTTPS:** the fresh-install wizard suggests a local CA. System administrators can enable HTTPS and renew certificates from Settings. See [Management HTTPS](management-https.md).
 - **Policy recovery and diagnostics:** managed Tinyproxy restores unconfirmed changes before it starts. System administrators can download a proxy and cluster status report from Settings.
 
-These capabilities are included in the [v1.4.0-dev.3 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3),
+These capabilities are included in the [v1.4.0-dev.4 prerelease](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.4),
 not in stable v1.3.0. Use a disposable or recoverable test deployment for the
 prerelease and the guide that corresponds to your installed version.
 

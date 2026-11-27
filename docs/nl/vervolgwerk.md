@@ -38,7 +38,7 @@ HA-wizard richt dit cluster nog niet voor je in.
     in. Lees [HA instellen en de beperkingen](hoge-beschikbaarheid.md#begrijp-de-bescherming-bij-overname)
     voordat je een productieopstelling kiest.
 
-## Beschikbaar om te testen in v1.4.0-dev.3
+## Beschikbaar om te testen in v1.4.0-dev.4
 
 - **Veiliger HA-beheer:** de koppeling intrekken vraagt opnieuw om het beheerderswachtwoord en, als 2FA aanstaat, een verse authenticatorcode. De beschermingsstatus controleert strenger of de clustergegevens betrouwbaar zijn.
 - **Voorbereiding van beschermde HA:** systeembeheerders kunnen in Instellingen een Proxmox-plan controleren en opslaan en op elke node de pakketten voorbereiden. De OS-beheerder regelt de witness, fencing en activering.
@@ -46,7 +46,7 @@ HA-wizard richt dit cluster nog niet voor je in.
 - **HTTPS voor beheer:** de wizard stelt bij een nieuwe installatie HTTPS met een lokale CA voor. Systeembeheerders kunnen HTTPS inschakelen en certificaten vernieuwen via Instellingen. Zie [HTTPS voor beheer](beheer-https.md).
 - **Beleidsherstel en diagnose:** bij beheerde installaties zet ProxyPermit onbevestigde wijzigingen terug voordat Tinyproxy start. Systeembeheerders kunnen in Instellingen een statusrapport downloaden.
 
-Deze functies zitten in de [prerelease v1.4.0-dev.3](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.3),
+Deze functies zitten in de [prerelease v1.4.0-dev.4](https://github.com/Dantdmnl/ProxyPermit/releases/tag/v1.4.0-dev.4),
 naast de stabiele v1.3.0. Gebruik voor de prerelease een tijdelijke of herstelbare
 testomgeving en de handleiding die bij de geïnstalleerde versie hoort.
 

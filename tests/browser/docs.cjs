@@ -104,7 +104,7 @@ async function main() {
                     await page.evaluate(value => { document.body.dataset.mdColorScheme = value; }, theme);
                     const command = page.locator('pre.pp-code-shiki').first();
                     assert.equal(await command.getAttribute('data-language'), 'Bash');
-                    assert.equal(await command.locator('code').textContent(), 'sudo bash install.sh\n');
+                    assert.equal(await command.locator('code').textContent(), 'bash install.sh\n');
                     const colors = await command.locator('code span[style]').evaluateAll(elements => [...new Set(elements.map(element => getComputedStyle(element).color))]);
                     assert.ok(colors.length >= 2, 'Simple commands must distinguish command names and arguments');
                     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
