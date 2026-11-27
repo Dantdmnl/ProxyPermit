@@ -4,11 +4,13 @@ import os
 import subprocess
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
-from app.web import manager as main
-from app.core.tinyproxy import atomic_write
+from app.core.files import file_lock
+from app.web import ha_replication as replication, manager as main
+from app.core.tinyproxy import PolicyCheckpointError, TinyproxyConfigStore, atomic_write
 
 
 class ProxyApiTests(unittest.TestCase):
@@ -364,7 +366,6 @@ class ProxyApiTests(unittest.TestCase):
             self.assertEqual(self.client.post('/internal/ha/enroll', headers=token).status_code, 403)
             token = {'Authorization': 'Bearer ' + invitation['key']}
             self.assertEqual(self.client.get('/internal/ha/policy', headers=token).status_code, 403)
-            from concurrent.futures import ThreadPoolExecutor
             from threading import Barrier
             barrier = Barrier(2)
             def redeem(_):
@@ -440,6 +441,62 @@ class ProxyApiTests(unittest.TestCase):
             self.assertEqual(result.status_code, 400)
             self.assertEqual(self.filter.read_text(), '*.example.com\n')
             self.assertEqual(self.config.read_text(), 'Port 3128\nAllow 127.0.0.1\n')
+
+    def test_pending_publication_disables_policy_writes(self):
+        with patch.object(main.whitelist_manager, 'whitelist_path', self.filter):
+            headers, revision = self.token_and_revision()
+            store = TinyproxyConfigStore(self.config)
+            before = store.path.read_text()
+            store._publish(before + 'Timeout 45\n', before)
+            config = self.client.get('/api/proxy/config').get_json()
+            self.assertTrue(config['recoveryRequired'])
+            self.assertFalse(config['canEdit'] or config['canActivate'])
+            payload = {'content': before, 'revision': revision}
+            result = self.client.put('/api/proxy/config', headers=headers, json=payload)
+            self.assertEqual(result.status_code, 409)
+            result = self.client.delete('/api/proxy/config/draft', headers=headers, json=payload)
+            self.assertEqual(result.status_code, 409)
+            result = self.client.put('/api/proxy/filter', headers=headers, json=payload)
+            self.assertEqual(result.status_code, 409)
+            self.assertTrue(store.pending_path.exists())
+            self.assertEqual(store.path.read_text(), before + 'Timeout 45\n')
+
+    def test_ha_reconciliation_preserves_interrupted_local_policy(self):
+        real_is_file = Path.is_file
+        firewall = Path('/etc/proxypermit/ha-firewall.json')
+        with patch.dict(os.environ, DEPLOYMENT_MODE='ha', PROXYPERMIT_MANAGED_HA='true', PROXYPERMIT_HA_NODE='b',
+                        NODE0_ADDRESS='192.0.2.11', NODE1_ADDRESS='192.0.2.12', VIP_ADDRESS='192.0.2.10',
+                        SESSION_STATE_FILE=str(self.config.with_name('session.json'))), \
+                patch('app.web.proxy.activation_supported', return_value=True), \
+                patch.object(Path, 'is_file', lambda path: path == firewall or real_is_file(path)), \
+                patch.object(main.whitelist_manager, 'whitelist_path', self.filter), \
+                patch.object(main.whitelist_manager, 'restart_tinyproxy') as restart:
+            before = self.config.read_text()
+            prior = {'revision': 'a' * 64, 'baseline': 'previous'}
+            replication.write_state('applied-policy', prior)
+            replication.write_state('peer', {'key': 'b' * 64, 'pin': 'c' * 64})
+            replication.snapshot(before, '# newer rules on A\n')
+            published = replication.read_state('published-policy')
+            store = TinyproxyConfigStore(self.config)
+            store._publish(before + 'Timeout 45\n', before)
+            checkpoint = store.pending_path.read_bytes()
+            with self.client.session_transaction() as session:
+                session['user'] = 'test-admin'
+            endpoint = '/api/proxy/ha-replication/status'
+            headers, _ = self.token_and_revision()
+            with ThreadPoolExecutor(max_workers=1) as worker, file_lock(str(self.filter) + '.lock'):
+                in_progress = worker.submit(self.client.post, endpoint, headers=headers).result(timeout=5)
+                self.assertEqual(in_progress.status_code, 200)
+                self.assertIsNone(in_progress.json['status'])
+            self.assertEqual(self.client.post(endpoint, headers=headers).json['status']['reason'], 'local-recovery')
+            with patch.object(replication, 'fetch_primary', return_value=published), main.app.app_context():
+                with self.assertRaises(PolicyCheckpointError):
+                    main.app.extensions['ha_policy_reconcile']()
+            self.assertEqual(replication.read_state('applied-policy'), prior)
+            self.assertEqual(store.pending_path.read_bytes(), checkpoint)
+            self.assertEqual(self.config.read_text(), before + 'Timeout 45\n')
+            self.assertEqual(self.filter.read_text(), '*.example.com\n')
+            restart.assert_not_called()
 
     def test_full_disk_during_filter_publish_restores_both_files_without_restart(self):
         headers, _ = self.token_and_revision()

@@ -37,7 +37,11 @@
         const reasons = [];
         const credentialExpired = evidence?.localFencingCredential === 'expired';
         if (state === 'degraded' || state === 'stopped') {
-            if (evidence.quorate === false) reasons.push('No cluster quorum');
+            if (evidence.quorate === false) {
+                reasons.push(evidence.waitingForAll === true
+                    ? 'Waiting for both proxy nodes to see each other before quorum can form'
+                    : 'No cluster quorum');
+            }
             if (evidence.witnessConnected === false) reasons.push('Witness connection not confirmed');
             if (evidence.fencingConfigured === false) reasons.push('Fencing configuration incomplete');
             else if (evidence.fencingReady === false && !credentialExpired) reasons.push('Fencing readiness not confirmed');
@@ -85,6 +89,7 @@
             showProtection(result.protection);
             const synchronized = current?.state === 'synchronized';
             status.textContent = I18n.t(!result.paired ? 'Nodes zijn nog niet gekoppeld.'
+                : current?.reason === 'local-recovery' ? 'Policy synchronization paused for recovery on this node.'
                 : current?.reason === 'stale-primary' ? 'Policy history does not match. Review recovery on A before synchronizing.'
                 : synchronized ? 'Beleid gesynchroniseerd.' : 'Synchronisatie wacht op de andere node.');
             status.dataset.state = !result.paired ? '' : synchronized ? 'synchronized' : 'pending';

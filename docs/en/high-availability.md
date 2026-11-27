@@ -438,9 +438,12 @@ sudo journalctl --namespace=proxypermit -u pacemaker.service -u keepalived.servi
 
 After a full cluster restart, the native Proxmox profile uses
 `wait_for_all: 1`. Both proxy nodes must see each other before quorum can form
-for the first time, even if one node can reach the witness. Restore the
-missing node or follow the OS cluster recovery procedure. Keep the VIP under
-cluster control throughout recovery. See [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
+for the first time, even if one node can reach the witness. **Failover
+protection** shows this specific wait when Corosync confirms it. Check that
+Corosync is running on both proxy nodes and that they can reach each other on
+the cluster network. If a node is unavailable, restore it or follow your OS
+cluster recovery procedure. Keep the VIP under cluster control throughout
+recovery. See [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
 
 The VIP agent reports whether the Keepalived unit state was unexpected, the
 address was missing, or the local Tinyproxy probe failed. If Pacemaker reports

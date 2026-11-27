@@ -61,6 +61,21 @@ mag Tinyproxy herstarten zodra beide beleidsbestanden zijn geschreven.
 Raakt de publicatie onderbroken, dan gebruikt het herstel de opgeslagen
 kopieën van de configuratie en de filterregels.
 
+Staat er **Beleidsherstel nodig** bij **Proxyconfiguratie**? Concepten blijven
+bewaard. Je kunt weer wijzigingen aanbrengen nadat een systeembeheerder de
+node heeft hersteld.
+Op gekoppelde nodes meldt **Beleidssynchronisatie** ook wanneer de synchronisatie
+op lokaal herstel wacht. Open voor diagnose het beheeradres van die node.
+De uninstaller wacht ook op herstel, zodat de controle bij het opstarten
+beschikbaar blijft.
+Een beheerde upgrade of het terugzetten van een release op een beschermd
+cluster stopt vóór de back-up van de actieve bestanden. Rond het herstel op
+de getroffen node af en probeer de handeling opnieuw.
+Ook het terugzetten van een installatieback-up wacht op beleidsherstel.
+Komt tijdens het pauzeren van de console of synchronisatietimer een
+onderbroken publicatie aan het licht, dan starten de eerder actieve diensten
+weer en wordt de installatieback-up niet teruggezet.
+
 Voer deze opdrachten uit via directe SSH naar de getroffen node.
 
 ```bash
@@ -71,8 +86,12 @@ sudo df -i /etc/tinyproxy
 ```
 
 Meldt het herstel een fout? Bewaar dan de bestanden in
-`/etc/tinyproxy/.proxypermit-config-backups`. Controleer de vrije
-schijfruimte, inodes en bestandsrechten. Volg op een beschermd cluster eerst
+`/etc/tinyproxy/.proxypermit-config-backups` en lees de melding in het
+logboek. Controleer bij een vol bestandssysteem de vrije ruimte en inodes.
+Controleer bij een rechtenfout of de ProxyPermit-servicegebruiker toegang heeft
+tot de beleidsmap en de back-upmap. Bekijk de bewaarde bestanden vóór een
+herstart als een herstelbestand ongeldig is of een herstelkopie ontbreekt.
+Volg op een beschermd cluster eerst
 de [noodprocedures](noodprocedures.md) voordat je een dienst herstart. Test
 na herstel een toegestane en een geblokkeerde bestemming voordat je opnieuw
 publiceert.

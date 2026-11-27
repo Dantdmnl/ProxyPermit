@@ -88,6 +88,12 @@ class ClusterBoundaryTests(unittest.TestCase):
         for changed in ({'owners': 2}, {'quorate': False}, {'checked': True}, {'policySafe': 'yes'}):
             self.status.write_text(json.dumps({**good, **changed}))
             self.assertEqual(cluster.read_status(now=1001)['state'], 'unknown')
+        waiting = {**good, 'state': 'stopped', 'owners': 0, 'quorate': False}
+        self.status.write_text(json.dumps({**waiting, 'waitingForAll': True}))
+        self.assertTrue(cluster.read_status(now=1001)['waitingForAll'])
+        for invalid in ({**waiting, 'waitingForAll': 1}, {**good, 'waitingForAll': True}):
+            self.status.write_text(json.dumps(invalid))
+            self.assertNotIn('waitingForAll', cluster.read_status(now=1001))
         self.status.write_text(json.dumps(good))
         self.status.chmod(0o666)
         self.assertEqual(cluster.read_status(now=1001)['state'], 'unknown')

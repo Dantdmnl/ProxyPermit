@@ -1,10 +1,10 @@
 """Recover an interrupted managed Tinyproxy publication before service start."""
-import json
+import errno
 from pathlib import Path
 import sys
 
-from app.core.files import file_lock
-from app.core.tinyproxy import TinyproxyConfigStore
+from app.core.files import file_lock, LockTimeout
+from app.core.tinyproxy import PolicyCheckpointError, TinyproxyConfigStore
 
 
 DROP_IN = Path('/etc/systemd/system/tinyproxy.service.d/30-proxypermit-policy-recovery.conf')
@@ -27,21 +27,21 @@ def recover(config_path, filter_path):
     try:
         with file_lock(config.activation_lock, timeout=0):
             pass
-    except TimeoutError:
+    except LockTimeout:
         # The publication worker holds this lock only after writing the entire
         # policy and while waiting for its authorized service operation.
         return False
     with file_lock(str(filters.path) + '.lock', timeout=2), file_lock(str(config.path) + '.lock', timeout=2):
         if config.pending_path.exists():
+            config.check_restore()
             filters.restore_pending()
             config.restore_pending()
             return True
         # The durable removal of the configuration checkpoint commits the pair.
         # A remaining filter checkpoint only needs its cleanup.
         if filters.pending_path.exists():
-            baseline = json.loads(filters.pending_path.read_text(encoding='utf-8'))
-            if not isinstance(baseline, dict) or baseline.get('checkpointVersion') != 2:
-                raise ValueError('An older filter checkpoint requires operator review.')
+            if filters.read_checkpoint().get('checkpointVersion') != 2:
+                raise PolicyCheckpointError('An older filter checkpoint requires operator review.')
         filters.finish_activation()
         return False
 
@@ -58,8 +58,16 @@ def main():
     try:
         if recover(config, filters):
             print('Restored the previous Tinyproxy policy after an interrupted publication.')
-    except (OSError, ValueError, KeyError):
-        print('Proxy policy recovery failed. Preserve the checkpoints and check permissions and disk space.', file=sys.stderr)
+    except PolicyCheckpointError as error:
+        print(f'Proxy policy recovery failed. {error} Preserve the checkpoints for review.', file=sys.stderr)
+        return 1
+    except OSError as error:
+        reason = {
+            errno.ENOSPC: 'Check free disk space and inodes.',
+            errno.EACCES: 'Check permissions for the ProxyPermit service account.',
+            errno.EPERM: 'Check permissions for the ProxyPermit service account.',
+        }.get(error.errno, 'Check filesystem access and policy locks.')
+        print(f'Proxy policy recovery failed. Preserve the checkpoints. {reason}', file=sys.stderr)
         return 1
     return 0
 

@@ -118,16 +118,21 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
     dc = monitor.find('summary/current_dc')
     quorate = bool(dc is not None and enabled(dc.get('present')) and enabled(dc.get('with_quorum'))
         and re.search(r'^Quorate:[ \t]+Yes[ \t]*$', quorum_text, re.M))
+    quorum_status = {}
+    if (re.search(r'^Quorate:[ \t]+No[ \t]*$', quorum_text, re.M)
+            and re.search(r'^runtime\.votequorum\.wait_for_all_status \(u8\) = 1$', crypto_text, re.M)):
+        quorum_status['waitingForAll'] = True
     # qdevice can retain an earlier expected-vote snapshot after rejoining.
     expected_witness = (re.search(r'^Expected votes:[ \t]+3[ \t]*$', quorum_text, re.M)
-        and re.search(r'^Quorum:[ \t]+2[ \t]*$', quorum_text, re.M)
+        and re.search(r'^Quorum:[ \t]+2(?:[ \t]+Activity blocked)?[ \t]*$', quorum_text, re.M)
         and re.search(r'^Flags:[ \t]+[^\n]*\bQdevice\b', quorum_text, re.M))
     witness = bool(expected_witness and re.search(r'^State:\s+Connected\s*$', device_text, re.M)
         and re.search(r'^TLS active:\s+Yes \(client certificate sent\)\s*$', device_text, re.M))
     reported = monitor.find(f"resources/resource[@id='{RESOURCE}']")
     if reported is None:
         return dict(state='unknown', owners=0, quorate=quorate, witnessConnected=witness,
-                    fencingConfigured=fencing_configured, fencingReady=fencer_ready, policySafe=False, **credential_status)
+                    fencingConfigured=fencing_configured, fencingReady=fencer_ready, policySafe=False,
+                    **quorum_status, **credential_status)
     nodes = reported.findall('node')
     owners = max(int(reported.get('nodes_running_on', '0')), len(nodes))
     if not 0 <= owners <= 2:
@@ -148,4 +153,4 @@ def summarize(cib_text, monitor_text, device_text, crypto_text, local_vip, local
         state = 'protected'
     return dict(state=state, owners=max(owners, 1 if local_vip else 0), quorate=quorate,
                 witnessConnected=witness, fencingConfigured=fencing_configured, fencingReady=fencer_ready,
-                policySafe=policy_safe, **credential_status)
+                policySafe=policy_safe, **quorum_status, **credential_status)

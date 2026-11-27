@@ -2,6 +2,50 @@
 
 [English](../en/verification.md) · [Documentatie](README.md)
 
+## 27 november 2026
+
+### Installatieback-up terugzetten terwijl beleidsherstel openstaat
+
+Op de zelfstandige Ubuntu QEMU-VM weigerde de kandidaatinstaller een
+installatieback-up terug te zetten zolang er een tijdelijk herstelbestand
+stond. De link naar de actieve release en beide beleidsbestanden bleven
+gelijk en beide diensten bleven actief. Na het opruimen van het testbestand
+zette de installer de vorige release terug. Beide diensten waren actief en
+beide controlesommen klopten. Een aparte regressietest dekt een
+herstelbestand dat ontstaat tijdens het stoppen van de console en de
+synchronisatiejob op de standby-node.
+
+### Beheerde upgrade terwijl beleidsherstel openstaat
+
+Op de zelfstandige Ubuntu QEMU-VM is tijdelijk een herstelbestand geplaatst.
+De installer uit het kandidaatarchief weigerde de upgrade vóór de back-up.
+De link naar de actieve release en de controlesommen van beide beleidsbestanden
+bleven gelijk. De beheerdienst en Tinyproxy bleven actief. Na het opruimen van
+het tijdelijke bestand slaagde de upgrade uit hetzelfde archief met het
+bestaande vergrendelingsbestand. Beide controlesommen bleven gelijk en de
+installer voerde alle 407 geïsoleerde tests met succes uit.
+
+### Beschermd Proxmox-cluster met één onbereikbare proxynode
+
+Node A meldde twee stemmen en geen quorum. Corosync bevestigde dat het nog
+op beide proxynodes wachtte. De witness meldde een actieve TLS-verbinding.
+Geen enkele node voerde het VIP. De uit bedrijf genomen node B stond uit.
+De vervangende VM kwam na een nette herstart tot de seriële Ubuntu-login.
+SSH en de guest agent bleven onbereikbaar. Het toevoegen van de vervanger
+en de overname zijn nog niet geverifieerd.
+
+De regressietest gebruikt de waargenomen uitvoer van Corosync. De browsertest
+controleert de specifieke quorummelding in beide talen en in de download met
+diagnostische gegevens voor de systeembeheerder.
+
+### Beschadigde herstelkopie bij het opstarten
+
+Op het Ubuntu QEMU-lab draaide de controle in een tijdelijke systemd-unit
+met aparte beleidsbestanden. Bij een opzettelijk gewijzigde herstelkopie
+weigerde de controle de start en bleven beide beleidsbestanden en
+herstelbestanden behouden. Met de oorspronkelijke kopie startte de unit
+nadat beide beleidsbestanden waren hersteld.
+
 ## Acceptatieproeven voor beschermde HA in v1.4.0
 
 Gebruik een testopstelling die je kunt herstellen, met directe toegang tot

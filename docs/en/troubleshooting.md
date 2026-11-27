@@ -56,6 +56,17 @@ Tinyproxy starts. A normal publication may restart Tinyproxy after both
 policy files have been written. If the publication process was interrupted,
 recovery uses the saved configuration and filter copies.
 
+If **Proxy configuration** shows **Policy recovery required**, the editor
+keeps any drafts and pauses changes until a system administrator checks the node.
+On paired nodes, **Policy synchronization** also identifies when it is waiting
+for recovery on the node you are managing. Open that node directly to diagnose it.
+The uninstaller also pauses while recovery is pending so the startup hook stays available.
+Managed upgrades and protected release rollbacks pause before backing up the
+active files. Complete recovery on the affected node and retry the operation.
+Restoring an installation backup also waits for policy recovery. If pausing
+the console or standby timer reveals an interrupted publication, the rollback
+resumes the previously running services and leaves the backup unapplied.
+
 Run these commands through direct SSH to the affected node.
 
 ```bash
@@ -66,8 +77,11 @@ sudo df -i /etc/tinyproxy
 ```
 
 If recovery reports a problem, preserve the files in
-`/etc/tinyproxy/.proxypermit-config-backups`. Check writable disk space,
-inodes and permissions. On a protected cluster, use the
+`/etc/tinyproxy/.proxypermit-config-backups` and check the journal message.
+For a full filesystem, check both free space and free inodes. For a
+permissions error, check whether the ProxyPermit service account can access
+the policy and backup directories. An invalid checkpoint or missing rollback
+copy needs a review of the saved files before restarting. On a protected cluster, use the
 [recovery guide](recovery.md) before attempting a service restart. Once
 service is back, test an allowed and a denied destination before retrying
 publication.

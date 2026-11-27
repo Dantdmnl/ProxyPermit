@@ -1,10 +1,12 @@
+import errno
+import os
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from app.core.tinyproxy import ConfigError, RevisionConflict, TinyproxyConfigStore, parse, summary, validate
+from app.core.tinyproxy import ConfigError, PolicyCheckpointError, RevisionConflict, TinyproxyConfigStore, parse, summary, validate
 from app.core.files import file_lock
 from app.runtime.policy_recovery import recover
 
@@ -127,6 +129,50 @@ ErrorFile 403 "/usr/share/tinyproxy/403.html"
             self.assertTrue(config.pending_path.exists())
             self.assertTrue(recover(config.path, filters))
             self.assertEqual(config.path.read_text(), BASE)
+
+    def test_prestart_preserves_files_when_checkpoint_is_malformed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = TinyproxyConfigStore(Path(directory) / 'tinyproxy.conf')
+            filters = TinyproxyConfigStore(Path(directory) / 'filters')
+            config.path.write_text(BASE, encoding='utf-8')
+            filters.path.write_text('original\n', encoding='utf-8')
+            changed = BASE + 'Timeout 40\n'
+            config._publish(changed, BASE)
+            filters._publish('changed\n', 'original\n')
+            config.pending_path.write_text('[]', encoding='utf-8')
+            with self.assertRaisesRegex(PolicyCheckpointError, 'checkpoint is invalid'):
+                recover(config.path, filters.path)
+            self.assertEqual(config.path.read_text(), changed)
+            self.assertEqual(filters.path.read_text(), 'changed\n')
+            self.assertTrue(config.rollback_path.is_file() and filters.rollback_path.is_file())
+
+    def test_prestart_preserves_both_files_if_the_rollback_copy_does_not_match(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = TinyproxyConfigStore(Path(directory) / 'tinyproxy.conf')
+            filters = TinyproxyConfigStore(Path(directory) / 'filters')
+            config.path.write_text(BASE, encoding='utf-8')
+            filters.path.write_text('original\n', encoding='utf-8')
+            changed = BASE + 'Timeout 40\n'
+            config._publish(changed, BASE)
+            filters._publish('changed\n', 'original\n')
+            config.rollback_path.write_text(BASE + 'Timeout 20\n', encoding='utf-8')
+            with self.assertRaisesRegex(PolicyCheckpointError, 'does not match'):
+                recover(config.path, filters.path)
+            self.assertEqual(config.path.read_text(), changed)
+            self.assertEqual(filters.path.read_text(), 'changed\n')
+            self.assertTrue(config.pending_path.is_file() and filters.pending_path.is_file())
+
+    @unittest.skipIf(os.name == 'nt', 'Linux flock error check.')
+    def test_prestart_does_not_mistake_flock_failure_for_an_active_publisher(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = TinyproxyConfigStore(Path(directory) / 'tinyproxy.conf')
+            config.path.write_text(BASE, encoding='utf-8')
+            config._publish(BASE + 'Timeout 40\n', BASE)
+            with patch('fcntl.flock', side_effect=OSError(errno.ENOLCK, 'test locking failure')):
+                with self.assertRaises(OSError) as error:
+                    recover(config.path, Path(directory) / 'filters')
+            self.assertEqual(error.exception.errno, errno.ENOLCK)
+            self.assertTrue(config.pending_path.exists())
 
 
 if __name__ == '__main__':

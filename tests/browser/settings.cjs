@@ -169,6 +169,20 @@ async function checkModeAndCapture(page, base, filterPath) {
         const persisted = await (await page.request.get(base + '/api/proxy/config')).json();
         assert.equal(persisted.activeContent, original);
         assert.equal(persisted.staged, true);
+        const endpoint = '**/api/proxy/config';
+        await page.route(endpoint, async route => {
+            const response = await route.fetch();
+            const json = await response.json();
+            await route.fulfill({ response, json: {...json, recoveryRequired: true, canEdit: false, canActivate: false} });
+        });
+        await page.reload();
+        await page.locator('#draft-state').filter({hasText: locale === 'nl' ? 'Beleidsherstel nodig' : 'Policy recovery required'}).waitFor();
+        assert.equal(await page.locator('#draft-publish').isDisabled(), true);
+        assert.equal(await page.locator('#draft-discard').isDisabled(), true);
+        assert.equal(await page.locator('#draft-diff-details').isVisible(), false);
+        await page.unroute(endpoint);
+        await page.reload();
+        await page.locator('#draft-discard:not([disabled])').waitFor();
         page.once('dialog', dialog => dialog.accept());
         await page.locator('#draft-discard').click();
         await page.locator('#draft-panel[data-state=idle]').waitFor();

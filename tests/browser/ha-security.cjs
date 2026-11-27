@@ -2,7 +2,7 @@
 'use strict';
 const assert = require('node:assert/strict');
 const { spawn, execFileSync } = require('node:child_process');
-const { mkdtempSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
@@ -253,6 +253,28 @@ async function main() {
         assert.equal(await page.locator('[data-cluster-check="time"]').textContent(), 'Not confirmed');
         readinessLifetime = 90;
         seed();
+        const published = JSON.parse(readFileSync(file('ha-published-policy.json')));
+        const syncStatus = file('ha-replication-status.json');
+        const checkpoint = execFileSync(python, ['-c', 'import sys; from app.core.tinyproxy import TinyproxyConfigStore; print(TinyproxyConfigStore(sys.argv[1]).pending_path)',
+            file('filter.txt')], { cwd: root, encoding: 'utf8' }).trim();
+        mkdirSync(path.dirname(checkpoint), { recursive: true });
+        writeFileSync(syncStatus, JSON.stringify({ state: 'reported', revision: published.revision, checked: Math.floor(Date.now() / 1000) }));
+        writeFileSync(checkpoint, '{}');
+        for (const [language, reason, synchronized] of [
+            ['en', 'Policy synchronization paused for recovery on this node.', 'Policy synchronized.'],
+            ['nl', 'Beleidssynchronisatie wacht op herstel op deze node.', 'Beleid gesynchroniseerd.']
+        ]) {
+            await page.goto(base + '/settings?lang=' + language);
+            const status = page.locator('#ha-policy-status');
+            await status.filter({ hasText: reason }).waitFor();
+            assert.equal(await status.getAttribute('data-state'), 'pending');
+            rmSync(checkpoint);
+            await page.reload();
+            await status.filter({ hasText: synchronized }).waitFor();
+            writeFileSync(checkpoint, '{}');
+        }
+        rmSync(checkpoint);
+        rmSync(syncStatus);
         await page.goto(base + '/settings?lang=nl');
         await page.locator('#https-renew').click();
         const httpsForm = page.locator('#https-form');
@@ -326,6 +348,19 @@ async function main() {
             assert.ok(!(await protection.textContent()).includes(language === 'en' ? 'No cluster quorum' : 'Geen quorum in het cluster'));
         }
         await page.unroute('**/api/status');
+        writeFileSync(file('cluster-status.json'), JSON.stringify({
+            state: 'stopped', checked, validFor: 20, owners: 0, quorate: false, witnessConnected: true,
+            fencingConfigured: true, fencingReady: true, policySafe: true, waitingForAll: true
+        }));
+        for (const [language, reason] of [
+            ['en', 'Waiting for both proxy nodes to see each other before quorum can form'],
+            ['nl', 'Quorum kan pas ontstaan zodra beide proxynodes elkaar hebben bereikt']
+        ]) {
+            await page.goto(base + '/settings?lang=' + language);
+            await page.locator('#ha-protection-status').filter({ hasText: reason }).waitFor();
+        }
+        const diagnostics = await (await page.request.get(base + '/api/settings/diagnostics')).json();
+        assert.equal(diagnostics.protection.waitingForAll, true);
         writeFileSync(file('cluster-status.json'), JSON.stringify({
             state: 'degraded', validFor: 20, quorate: true, witnessConnected: true,
             fencingConfigured: true, fencingReady: false, policySafe: true, localFencingCredential: 'expired'

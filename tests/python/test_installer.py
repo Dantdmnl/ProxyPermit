@@ -5,8 +5,9 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).resolve().parents[2] / 'scripts/deploy/install.py')
@@ -34,6 +35,102 @@ class InstallerTests(unittest.TestCase):
             self.assertTrue(installer.wait_manager(Mock(side_effect=(False, True))))
         with patch.object(installer.time, 'sleep'), patch.object(installer.time, 'monotonic', side_effect=(0, 60)):
             self.assertFalse(installer.wait_manager(Mock(return_value=False)))
+
+    def test_uninstall_preserves_recovery_hook_if_publication_is_interrupted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            hook = base / 'policy-recovery.conf'
+            hook.write_text('isolated recovery hook', encoding='utf-8')
+            plan = {'mode': 'standalone', 'service': 'proxypermit.service', 'paths': [str(hook)]}
+            config = installer.TinyproxyConfigStore(base / 'tinyproxy.conf')
+            config.backup_dir.mkdir()
+
+            def run(*args):
+                if args == ('systemctl', 'disable', '--now', plan['service']):
+                    config.pending_path.touch()
+
+            with patch.object(installer.policy_recovery, 'DROP_IN', hook), patch.multiple(
+                    installer, require_linux_root=lambda _: None, maintenance_lock=nullcontext,
+                    build_uninstall_plan=lambda *_: plan, verify_live_manager=lambda _: None,
+                    service_state=lambda _: {'active': True}, restore_auxiliary_services=Mock(),
+                    env_values=lambda _: {'TINYPROXY_CONFIG_PATH': str(config.path)}, run=Mock(side_effect=run)):
+                with self.assertRaisesRegex(ValueError, 'Recover the interrupted Tinyproxy policy'):
+                    installer.uninstall(str(base))
+                self.assertEqual(hook.read_text(), 'isolated recovery hook')
+                self.assertTrue(config.pending_path.exists())
+                installer.restore_auxiliary_services.assert_called_once()
+                installer.run.reset_mock()
+                with self.assertRaisesRegex(ValueError, 'Recover the interrupted Tinyproxy policy'):
+                    installer.uninstall(str(base))
+                installer.run.assert_not_called()
+
+    def test_upgrade_rechecks_policy_recovery_before_snapshotting_active_files(self):
+        from scripts.deploy import ha_setup
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            config = installer.TinyproxyConfigStore(base / 'tinyproxy.conf')
+            filters = installer.TinyproxyConfigStore(base / 'filter.txt')
+            lock = Path(str(filters.path) + '.lock')
+            lock.touch()
+            config.backup_dir.mkdir()
+            plan = dict(mode='standalone', action='upgrade', configPath=str(config.path),
+                        whitelistPath=str(filters.path), installDir=str(base))
+            exists = Path.exists
+
+            @contextmanager
+            def freeze(_directory, _lock):
+                filters.pending_path.touch()
+                yield
+
+            with patch.multiple(installer, require_linux_root=Mock(), maintenance_lock=nullcontext,
+                    installed_deployment=Mock(), verify_live_manager=Mock(), _apply_locked=Mock()), \
+                    patch.object(Path, 'read_text', return_value='ID=ubuntu\n'), \
+                    patch.object(Path, 'exists', lambda path: path == Path('/run/systemd/system') or exists(path)), \
+                    patch.object(subprocess, 'run', return_value=subprocess.CompletedProcess([], 3)), \
+                    patch.object(ha_setup, 'frozen_proxy_directory', freeze):
+                with self.assertRaisesRegex(ValueError, 'Recover the interrupted Tinyproxy policy'):
+                    installer.apply(plan, SimpleNamespace(upgrade=True))
+                installer._apply_locked.assert_not_called()
+
+    def test_backup_rollback_preserves_policy_and_resumes_current_writers_if_shutdown_is_interrupted(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder)
+            stamp = '20261127T120000000001Z'
+            backup = base / 'backups' / stamp
+            backup.mkdir(parents=True)
+            (backup / 'manifest.json').write_text('[]')
+            (backup / 'service-state.json').write_text('{"active":false,"enabled":false}')
+            config = installer.TinyproxyConfigStore(base / 'tinyproxy.conf')
+            config.backup_dir.mkdir()
+            manager = 'proxypermit.service'
+            timer = 'proxypermit-ha-policy.timer'
+            job = 'proxypermit-ha-policy.service'
+
+            def systemctl(command, **_):
+                state = 'activating' if command[-1] == job else 'active'
+                return subprocess.CompletedProcess(command, 0, stdout=state)
+
+            def run(*command):
+                if command == ('systemctl', 'stop', manager):
+                    config.pending_path.touch()
+
+            with patch.multiple(installer, require_linux_root=Mock(), maintenance_lock=nullcontext,
+                    installed_policy_paths=lambda: (config.path, base / 'filter.txt'), run=Mock(side_effect=run)), \
+                    patch.object(subprocess, 'run', side_effect=systemctl) as inspect, \
+                    patch.object(installer.Transaction, 'restore') as restore:
+                with self.assertRaisesRegex(ValueError, 'Recover the interrupted Tinyproxy policy'):
+                    installer.rollback_install(str(base), stamp, execute=True)
+                self.assertEqual([entry.args for entry in installer.run.call_args_list], [
+                    ('systemctl', 'stop', timer), ('systemctl', 'stop', job), ('systemctl', 'stop', manager),
+                ])
+                inspect.assert_called_with(['systemctl', 'start', '--no-block', manager, job, timer], check=False)
+                self.assertTrue(config.pending_path.exists())
+                restore.assert_not_called()
+                inspect.reset_mock()
+                with self.assertRaisesRegex(ValueError, 'Recover the interrupted Tinyproxy policy'):
+                    installer.rollback_install(str(base), stamp, execute=True)
+                inspect.assert_not_called()
 
     @unittest.skipIf(os.name == 'nt', 'Directory descriptors require POSIX')
     def test_native_draft_tree_is_validated_without_privileged_recursive_migration(self):
@@ -88,7 +185,6 @@ class InstallerTests(unittest.TestCase):
                 chown.assert_not_called()
 
     def test_cluster_maintenance_is_restricted_to_protected_managed_upgrades(self):
-        from types import SimpleNamespace
         good = dict(action='upgrade', mode='ha', managedHa=True)
         with patch.object(installer.cluster, 'reserved', return_value=True):
             installer.validate_cluster_upgrade(good, SimpleNamespace(upgrade=True))

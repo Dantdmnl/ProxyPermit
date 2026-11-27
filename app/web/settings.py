@@ -104,7 +104,7 @@ def register_settings(app, requires_auth, authenticated, paths, reauthenticate, 
         evidence = cluster.read_status()
         # Export only normalized status fields. Do not serialize raw runtime files or logs.
         fields = ('state', 'checked', 'validFor', 'owners', 'quorate', 'witnessConnected',
-                  'fencingConfigured', 'fencingReady', 'policySafe', 'localFencingCredential')
+                  'fencingConfigured', 'fencingReady', 'policySafe', 'localFencingCredential', 'waitingForAll')
         service = service_status()
         running = service.get('running') if not service.get('error') else None
         response = jsonify(schema=1, capturedAt=int(time.time()),

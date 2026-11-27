@@ -2,6 +2,48 @@
 
 [Nederlands](../nl/verification.md) · [Documentation](README.md)
 
+## 27 November 2026
+
+### Installation backup restore with pending policy recovery
+
+On the standalone Ubuntu QEMU guest, the candidate installer refused to
+restore an installation backup while a temporary policy checkpoint existed.
+The current release link, active policy and both services stayed in place.
+After removing the test checkpoint, the installer restored the previous
+release. Both services were active and both policy checksums still matched.
+A separate regression test covers a checkpoint appearing during shutdown
+of the console and standby policy writer.
+
+### Managed upgrade with pending policy recovery
+
+On the standalone Ubuntu QEMU guest, added a temporary recovery marker and
+ran the upgrade from the candidate archive. The installer refused before
+creating a backup. The release link and checksums of both active policy
+files were unchanged, and the management service and Tinyproxy stayed active.
+After removing the temporary marker, the same archive upgraded successfully
+with the existing policy lock. Both files still matched their original
+checksums, and the installer ran all 407 isolated tests successfully.
+
+### Protected Proxmox restart with one proxy node unavailable
+
+Node A reported two votes and no quorum. Corosync confirmed that it was
+still waiting for both proxy nodes, while the witness reported a live TLS
+connection. No node held the VIP. The retired node B was powered off. The
+replacement VM reached the Ubuntu serial login after an orderly restart,
+but SSH and the guest agent remained unavailable. Replacement enrollment
+and failover remain unverified.
+
+Used the observed Corosync status format in a regression test. The browser
+test verifies that both languages show the specific quorum wait and that
+the administrator's diagnostic download includes it.
+
+### Damaged rollback copy during service startup
+
+On the Ubuntu QEMU lab, used a temporary systemd unit and separate policy
+files. The unit's pre-start check rejected a deliberately altered rollback
+copy and preserved both policy files and their checkpoints. Restoring the
+original copy let the unit start after both policy files had recovered.
+
 ## Protected HA acceptance checks for v1.4.0
 
 Run these scenarios on a recoverable test deployment with direct management

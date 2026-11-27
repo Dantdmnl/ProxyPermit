@@ -13,6 +13,10 @@ class DurabilityError(OSError):
     """A replacement is visible, but its directory entry was not confirmed durable."""
 
 
+class LockTimeout(TimeoutError):
+    """Another worker held the lock until the deadline."""
+
+
 def sync_directory(path):
     """Persist Linux rename/unlink metadata before acknowledging a state change."""
     if os.name == 'nt':
@@ -81,9 +85,12 @@ def file_lock(path, timeout=15):
                     import fcntl  # pylint: disable=import-error
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except OSError:
+            except OSError as error:
+                busy = (errno.EACCES, errno.EAGAIN, errno.EDEADLK) if os.name == 'nt' else (errno.EAGAIN, errno.EWOULDBLOCK)
+                if error.errno not in busy:
+                    raise
                 if time.monotonic() >= deadline:
-                    raise TimeoutError('File is in use; try again.')
+                    raise LockTimeout('File is in use; try again.') from error
                 time.sleep(0.05)
         token = _held.set(_held.get() + (key,))
         try:

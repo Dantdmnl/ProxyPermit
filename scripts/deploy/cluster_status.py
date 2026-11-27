@@ -46,7 +46,8 @@ def evidence():
         ha_resource.validate_service()
         return summarize(command('cibadmin', '--query'), command('crm_mon', '--one-shot', '--as-xml'),
             command('corosync-qdevice-tool', '-s', '-v'),
-            command('corosync-cmapctl', 'totem.crypto_cipher', 'totem.crypto_hash'),
+            command('corosync-cmapctl', 'totem.crypto_cipher', 'totem.crypto_hash',
+                    'runtime.votequorum.wait_for_all_status'),
             ha_resource.owns_vip(profile), command('crm_node', '--name').strip(),
             quorum_text=command('corosync-quorumtool', '-s', accepted=(0, 2)),
             native_credential=native_credential_status())

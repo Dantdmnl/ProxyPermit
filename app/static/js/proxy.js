@@ -17,7 +17,8 @@
     let activeContent = '';
     let schema = [], revision = '', original = '', csrf = document.querySelector('meta[name="csrf-token"]').content;
     let busy = false, filterRevision = '', filterOriginal = '';
-    let canActivate = false, canEdit = false, staged = false, filterStaged = false;
+    let canActivate = false, canEdit = false, staged = false, filterStaged = false, recoveryRequired = false;
+    const recoveryMessage = 'A policy publication was interrupted. Ask a system administrator to recover the previous policy before continuing.';
     const dirty = () => $('config').value !== original;
     const filterDirty = () => $('filter').value !== filterOriginal;
     function message(text, error = false) { $('message').textContent = I18n.t(text); $('message').className = 'notice' + (error ? ' error' : ''); }
@@ -31,12 +32,19 @@
         if (!$('draft-diff')) return;
         const changed = dirty() || filterDirty();
         const pending = staged || filterStaged;
-        $('draft-state').textContent = I18n.t(changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
+        $('draft-state').textContent = I18n.t(recoveryRequired ? 'Policy recovery required'
+            : changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
         $('draft-panel').dataset.state = changed ? 'dirty' : pending ? 'staged' : 'idle';
-        $('draft-description').textContent = I18n.t(changed ? 'Je bewerkt een concept. Dit is nog niet opgeslagen of actief.' : pending
+        $('draft-description').textContent = I18n.t(recoveryRequired ? recoveryMessage
+            : changed ? 'Je bewerkt een concept. Dit is nog niet opgeslagen of actief.' : pending
             ? 'Dit concept is opgeslagen. De proxy gebruikt nog de actieve versie totdat je publiceert.'
             : 'Er is geen conceptwijziging. De editor toont de actieve configuratie.');
-        $('draft-filter-note').hidden = !(filterStaged || filterDirty());
+        $('draft-filter-note').hidden = recoveryRequired || !(filterStaged || filterDirty());
+        $('draft-diff-details').hidden = recoveryRequired;
+        if (recoveryRequired) {
+            $('draft-diff').replaceChildren();
+            return;
+        }
         const left = activeContent.split('\n'), right = $('config').value.split('\n');
         const output = $('draft-diff'); output.replaceChildren();
         const line = (value, added) => {
@@ -68,7 +76,8 @@
         renderDraft();
         const pending = staged || filterStaged;
         $('dirty').dataset.state = changed ? 'dirty' : pending ? 'staged' : 'idle';
-        $('dirty').textContent = I18n.t(!revision ? 'Geen configuratie geladen' : changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
+        $('dirty').textContent = I18n.t(recoveryRequired ? 'Policy recovery required'
+            : !revision ? 'Geen configuratie geladen' : changed ? 'Niet opgeslagen' : pending ? 'Concept opgeslagen' : 'Geen openstaande wijzigingen');
         $('config').readOnly = busy || !canEdit;
         $('filter').readOnly = busy || !canEdit || !filterRevision;
         $('insert').disabled = busy || !canEdit;
@@ -85,6 +94,8 @@
         $('draft-discard').hidden = !staged;
         $('draft-filter-discard').hidden = !filterStaged;
         $('draft-filter-discard').disabled = busy || !canEdit;
+        $('discard').disabled = busy || !canEdit;
+        $('filter-discard').disabled = busy || !canEdit;
     }
     function statusList(title, items, style) {
         if (!items.length) return;
@@ -156,9 +167,10 @@
         $('access-safety-notice').textContent = I18n.t(result.accessSafety ? (result.accessSafetyValid ? 'Anti-lockout actief: vaste beheerregels en netwerkbindingen blijven beschermd.' : 'Het actieve bestand wijkt af van het beheerprofiel. Controleer de fouten en herstel de vaste beheerregels.') : 'Anti-lockout is nog niet ingesteld. Laat het beheerprofiel via de installer vastzetten.');
         csrf = result.csrfToken; schema = result.schema; revision = result.revision; original = result.content;
         canActivate = result.canActivate; canEdit = result.canEdit;
+        recoveryRequired = result.recoveryRequired === true;
         staged = result.staged; filterStaged = result.filterStaged;
         $('discard').hidden = !result.draft;
-        $('activation-hint').hidden = canActivate;
+        $('activation-hint').hidden = canActivate || recoveryRequired;
         $('config').value = original; markDirty(); showValidation(result);
         $('section').replaceChildren(...[...new Set(schema.map(item => item.section))].map(section => new Option(I18n.t(section), section)));
         chooseSection();
@@ -167,7 +179,8 @@
         const filtering = result.summary.filterMode !== 'disabled';
         $('filter-policy-mode').value = filtering ? result.summary.filterMode : 'allowlist';
         markDirty();
-        $('filter-policy-hint').textContent = I18n.t(!canEdit ? 'Publish shared proxy policy on the primary HA node.' : filtering
+        $('filter-policy-hint').textContent = I18n.t(recoveryRequired ? 'Policy recovery required'
+            : !canEdit ? 'Publish shared proxy policy on the primary HA node.' : filtering
             ? 'Wijzigingen zijn pas actief na publiceren. De bestaande regels worden niet gewist.'
             : 'Kies eerst een filterbestand om een allowlist of blocklist te gebruiken.');
         [['Filtering', modes[result.summary.filterMode]],
@@ -176,7 +189,8 @@
             const card = document.createElement('div'), small = document.createElement('small'), strong = document.createElement('strong');
             small.textContent = I18n.t(label); strong.textContent = I18n.t(value); card.append(small, strong); $('summary').append(card);
         });
-        message(staged || filterStaged ? 'Er staat een opgeslagen concept klaar om te publiceren.' : 'Bestand geladen. Wijzigingen zijn pas actief na een geslaagde activatie.');
+        message(recoveryRequired ? recoveryMessage : staged || filterStaged
+            ? 'Er staat een opgeslagen concept klaar om te publiceren.' : 'Bestand geladen. Wijzigingen zijn pas actief na een geslaagde activatie.', recoveryRequired);
     }
     $('filter-policy-mode').addEventListener('change', markDirty);
     $('filter-policy-review').addEventListener('click', () => {
@@ -271,7 +285,8 @@
         $('filter-discard').hidden = !result.draft;
         const modes = { allowlist: 'Allowlist', blocklist: 'Blocklist' };
         $('filter-mode').textContent = I18n.t(modes[result.filterMode]) + ' · ' + result.filterType.toUpperCase();
-        showValidation(result); message('Filterbestand geladen.');
+        showValidation(result);
+        message(recoveryRequired ? recoveryMessage : 'Filterbestand geladen.', recoveryRequired);
     }
     $('filter-load').addEventListener('click', () => {
         if (filterDirty() && !window.confirm(I18n.t('Je filterconcept verwerpen en opnieuw laden?'))) return;

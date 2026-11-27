@@ -65,6 +65,18 @@ class ClusterEvidenceTests(unittest.TestCase):
             self.assertEqual(self.evidence(device=rejoined, quorum=unsafe)['state'], 'degraded')
         self.assertEqual(self.evidence(device=rejoined.replace('client certificate sent', 'no client certificate'))['state'], 'degraded')
 
+    def test_reports_active_wait_for_all_without_confusing_it_with_the_configured_flag(self):
+        waiting = CRYPTO + 'runtime.votequorum.wait_for_all_status (u8) = 1\n'
+        blocked = QUORUM.replace('Quorate:          Yes', 'Quorate:          No').replace(
+            'Quorum:           2  ', 'Quorum:           2 Activity blocked')
+        evidence = self.evidence(crypto=waiting, quorum=blocked)
+        self.assertTrue(evidence['waitingForAll'])
+        self.assertFalse(evidence['quorate'])
+        self.assertTrue(evidence['witnessConnected'])
+        for sample in (CRYPTO, waiting.replace('= 1', '= 0')):
+            self.assertNotIn('waitingForAll', self.evidence(crypto=sample, quorum=blocked))
+        self.assertNotIn('waitingForAll', self.evidence(crypto=waiting))
+
     def test_shared_fencer_cannot_hide_expired_local_peer_credential(self):
         cib = CIB.replace('fence_xvm', 'fence_proxypermit_pve').replace('node-a:vm-a;node-b:vm-b', 'node-a:101;node-b:102')
         cib = cib.replace('<instance_attributes>', '<instance_attributes><nvpair name="ipaddr" value="pve.example"/>'

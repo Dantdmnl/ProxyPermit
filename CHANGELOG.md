@@ -4,6 +4,27 @@ Historical deployments are not assigned retrospective release tags.
 
 ## [Unreleased]
 
+## [1.4.0-dev.5] - 2026-11-27
+
+Use this preview on a disposable or recoverable deployment. v1.3.0 remains
+the stable release. Protected Corosync/Pacemaker HA remains experimental.
+The live Proxmox replacement and failover trial is still open.
+
+### Changed
+
+- Block managed upgrades and protected release rollbacks while local policy recovery is pending, before taking a backup of the active files.
+- Keep an installation backup from overwriting pending policy recovery. If pausing the policy writers exposes an interrupted publication, resume the current services and preserve the recovery files.
+- Show when local policy recovery interrupts HA synchronization, including when the last synchronization succeeded.
+- Explain in HA status and administrator diagnostics when Corosync is waiting for the two proxy nodes to see each other before forming quorum.
+- Verify rollback copies before restoring an interrupted policy. Show that recovery is required in Proxy configuration and preserve saved drafts until recovery completes.
+- Keep the Tinyproxy startup recovery hook installed when uninstall encounters an unfinished policy publication.
+- Report invalid policy checkpoints and storage or permission failures during Tinyproxy startup recovery. Authorize a managed restart only when file-lock contention confirms an active publisher.
+
+### Verified
+
+- Exercised service startup, upgrade refusal and installation backup restore on a disposable Ubuntu QEMU guest. Verified both policy checksums, management HTTPS and Tinyproxy allow and deny behavior after upgrading again.
+- Ran all 408 isolated tests under Linux root, plus the HA and settings browser checks and the strict documentation build.
+
 ## [1.4.0-dev.4] - 2026-11-27
 
 This preview includes the changes recorded under the dev.3 tag, which

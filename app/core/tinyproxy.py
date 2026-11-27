@@ -56,6 +56,10 @@ class ConfigError(ValueError):
     pass
 
 
+class PolicyCheckpointError(ConfigError):
+    """Policy recovery requires operator review before continuing."""
+
+
 class RevisionConflict(ConfigError):
     pass
 
@@ -239,19 +243,48 @@ class TinyproxyConfigStore:
     def restore_pending(self, *, keep_checkpoint=False):
         """Restore the last activated baseline, including saves before activation."""
         if self.pending_path.exists():
-            baseline = json.loads(self.pending_path.read_text(encoding='utf-8'))
+            baseline = self.check_restore()
             if baseline.get('existed', True):
                 if baseline.get('rollbackReserved') and self.rollback_path.is_file():
                     os.replace(self.rollback_path, self.path)
                     sync_directory(self.path.parent)
                 elif self._live_content() != baseline['content']:
-                    if baseline.get('rollbackReserved'):
-                        raise OSError('The reserved proxy rollback file is missing.')
                     atomic_write(self.path, baseline['content'], self.mode)
             else:
                 self.path.unlink(missing_ok=True)
             if not keep_checkpoint:
                 self.finish_activation()
+
+    def read_checkpoint(self):
+        try:
+            baseline = json.loads(self.pending_path.read_text(encoding='utf-8'))
+        except (UnicodeError, json.JSONDecodeError, RecursionError) as error:
+            raise PolicyCheckpointError('The proxy policy checkpoint is invalid.') from error
+        if (not isinstance(baseline, dict) or not isinstance(baseline.get('content'), str)
+                or type(baseline.get('existed', True)) is not bool
+                or type(baseline.get('rollbackReserved', False)) is not bool):
+            raise PolicyCheckpointError('The proxy policy checkpoint is invalid.')
+        return baseline
+
+    def check_restore(self):
+        baseline = self.read_checkpoint()
+        if not baseline.get('rollbackReserved'):
+            return baseline
+        digest = baseline.get('rollbackDigest')
+        if self.rollback_path.is_symlink() or self.rollback_path.exists() and not self.rollback_path.is_file():
+            raise PolicyCheckpointError('The reserved proxy rollback file is invalid.')
+        if self.rollback_path.is_file():
+            try:
+                matches = (hashlib.sha256(self.rollback_path.read_bytes()).hexdigest() == digest if digest is not None
+                           else self.rollback_path.read_text(encoding='utf-8-sig') == baseline['content'])
+            except UnicodeError as error:
+                raise PolicyCheckpointError('The reserved proxy rollback file is invalid.') from error
+            if not matches:
+                raise PolicyCheckpointError('The reserved proxy rollback file does not match its checkpoint.')
+        elif self._live_content() != baseline['content'] or (digest is not None and
+                (not self.path.is_file() or hashlib.sha256(self.path.read_bytes()).hexdigest() != digest)):
+            raise PolicyCheckpointError('The reserved proxy rollback file is missing.')
+        return baseline
 
     def _live_content(self):
         return self.path.read_text(encoding='utf-8-sig') if self.path.exists() else ''
@@ -277,14 +310,16 @@ class TinyproxyConfigStore:
         try:
             if not self.pending_path.exists():
                 existed = self.path.exists()
+                checkpoint = dict(content=live, existed=existed, rollbackReserved=existed, checkpointVersion=2)
                 # Reserve recovery space before replacing active policy.
                 if existed:
                     with self.path.open(encoding='utf-8', newline='') as original:
-                        atomic_write(self.rollback_path, original.read(), self.mode, metadata_from=self.path)
+                        saved = original.read()
+                    atomic_write(self.rollback_path, saved, self.mode, metadata_from=self.path)
+                    checkpoint['rollbackDigest'] = hashlib.sha256(saved.encode('utf-8')).hexdigest()
                 else:
                     self.rollback_path.unlink(missing_ok=True)
-                atomic_write(self.pending_path, json.dumps(dict(content=live, existed=existed, rollbackReserved=existed,
-                                                               checkpointVersion=2)))
+                atomic_write(self.pending_path, json.dumps(checkpoint))
             atomic_write(self.path, content, self.mode)
         except OSError:
             if self.pending_path.exists():

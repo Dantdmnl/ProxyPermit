@@ -84,6 +84,8 @@ def read_status(now=None, *, include_migration=False):
             return unknown
         valid_for = min(MAX_STATUS_AGE, max(0, int(checked + MAX_STATUS_AGE - now)))
         result = dict(state=state, checked=checked, validFor=valid_for, owners=owners, **{key: value[key] for key in fields})
+        if not value['quorate'] and value.get('waitingForAll') is True:
+            result['waitingForAll'] = True
         if credential is not None:
             result['localFencingCredential'] = credential
         if include_migration and valid_for and value.get('migrationPhase') in MIGRATION_PHASES:

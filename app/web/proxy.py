@@ -14,15 +14,17 @@ from ..core.ha_policy_order import PolicyOrderError
 from ..core import ha_certificates as certificates
 from ..core import cluster
 from ..core.native_filter import validate_filter
-from ..core.files import file_lock
+from ..core.files import LockTimeout, file_lock
 from ..core.access_safety import ensure_access, read_profile
 from ..core.ha_policy import MAX_TRANSFER, baseline, issue_invite, merge_policy, parse_invite, sign_policy, verify_policy
 
-from ..core.tinyproxy import ConfigError, DIRECTIVES, RevisionConflict, TinyproxyConfigStore, atomic_write, summary, validate, revision as config_revision
+from ..core.tinyproxy import (ConfigError, DIRECTIVES, PolicyCheckpointError, RevisionConflict,
+                             TinyproxyConfigStore, atomic_write, summary, validate, revision as config_revision)
 from . import ha_replication as replication
 from .permissions import POLICY_DIRECTIVES, PolicyPermissionError, ensure_policy_only
 
 PENDING_CHANGES = 'Configuration changes are pending. Activate them through Proxy configuration first.'
+RECOVERY_REQUIRED = 'A policy publication was interrupted. Ask a system administrator to recover the previous policy before continuing.'
 
 
 def config_store():
@@ -33,13 +35,20 @@ def is_staged(store):
     return store.pending_path.exists() or store.draft_path.exists()
 
 
+def policy_recovery_required(config, filters):
+    return config.pending_path.exists() or filters.pending_path.exists()
+
+
 def has_pending_changes(filter_path):
     return is_staged(config_store()) or is_staged(TinyproxyConfigStore(filter_path))
 
 
 def domain_editor_error(filter_path):
     """Return why the domain editor cannot safely modify the current native file."""
-    path = config_store().path
+    store = config_store()
+    path = store.path
+    if policy_recovery_required(store, TinyproxyConfigStore(filter_path)):
+        return RECOVERY_REQUIRED
     if not path.exists():
         return None  # Older installations may supply only a filter path.
     try:
@@ -127,8 +136,12 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
     def read_config():
         try:
             with file_lock(str(manager.whitelist_path) + '.lock'):
-                result = config_store().read()
-                active_content = config_store().path.read_text(encoding='utf-8-sig') if config_store().path.exists() else ''
+                store = config_store()
+                filters = TinyproxyConfigStore(manager.whitelist_path)
+                recovery_required = policy_recovery_required(store, filters)
+                editable = not recovery_required and (not ha_enabled() or managed_ha()) and not paired_standby()
+                result = store.read()
+                active_content = store.path.read_text(encoding='utf-8-sig') if store.path.exists() else ''
                 access_safety = read_profile()
                 access_valid = True
                 try:
@@ -140,9 +153,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                                if app.extensions['has_permission']('admin') or key in POLICY_DIRECTIVES],
                                accessSafety=access_safety, accessSafetyValid=access_valid, activeContent=active_content,
                                deploymentMode='ha' if ha_enabled() else 'standalone',
-                               canEdit=(not ha_enabled() or managed_ha()) and not paired_standby(),
-                               canActivate=activation_supported() and (not ha_enabled() or managed_ha()) and not paired_standby(),
-                               filterStaged=is_staged(TinyproxyConfigStore(manager.whitelist_path)),
+                               canEdit=editable, canActivate=activation_supported() and editable,
+                               recoveryRequired=recovery_required, filterStaged=is_staged(filters),
                                summary=summary(result['content']))
         except (OSError, ConfigError):
             return jsonify(error='Cannot read configuration. Check the path and file permissions.'), 500
@@ -184,9 +196,12 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             ensure_access(data['content'])
             # Keep the managed filter stable through restart and recovery too.
             with file_lock(str(manager.whitelist_path) + '.lock'):
-                if not app.extensions['has_permission']('admin'):
-                    ensure_policy_only(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
+                store = config_store()
                 filters = TinyproxyConfigStore(manager.whitelist_path, mode=0o644)
+                if policy_recovery_required(store, filters):
+                    return jsonify(error=RECOVERY_REQUIRED), 409
+                if not app.extensions['has_permission']('admin'):
+                    ensure_policy_only(store.path.read_text(encoding='utf-8-sig'), data['content'])
                 if activating and filters.draft_path.exists():
                     filters, _ = filter_store(data['content'])
                 action = service_activation_action(config_store().path.read_text(encoding='utf-8-sig'), data['content'])
@@ -205,10 +220,10 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                     else:
                         filters.publish_draft()
                     service_attempted = True
-                    with file_lock(config_store().activation_lock):
+                    with file_lock(store.activation_lock):
                         return manager.reload_tinyproxy() if action == 'reload' else manager.restart_tinyproxy()
 
-                result = config_store().save(data['content'], data['revision'], activate if activating else None)
+                result = store.save(data['content'], data['revision'], activate if activating else None)
                 if activating:
                     filters.finish_activation()
                     filters.draft_path.unlink(missing_ok=True)
@@ -320,6 +335,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                 primary = dict(primaryRevision=policy['revision'], primaryChecked=int(time.time()))
                 with file_lock(str(manager.whitelist_path) + '.lock'):
                     store = config_store()
+                    if policy_recovery_required(store, TinyproxyConfigStore(manager.whitelist_path)):
+                        raise PolicyCheckpointError(RECOVERY_REQUIRED)
                     if has_pending_changes(manager.whitelist_path):
                         raise RevisionConflict('Publish or discard local drafts before transferring HA policy.')
                     config = store.path.read_text(encoding='utf-8-sig')
@@ -492,6 +509,16 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
                     if credential['state'] in ('expired', 'invalid'):
                         matching = False
                     status['state'] = 'synchronized' if fresh and matching else 'pending'
+                store = config_store()
+                filters = TinyproxyConfigStore(manager.whitelist_path)
+                if peer and policy_recovery_required(store, filters):
+                    try:
+                        # A normal publication holds the policy lock until its checkpoints are cleared.
+                        with file_lock(str(filters.path) + '.lock', timeout=0):
+                            if policy_recovery_required(store, filters):
+                                status = {**(status or {}), 'state': 'pending', 'reason': 'local-recovery'}
+                    except LockTimeout:
+                        pass
                 return jsonify(paired=bool(peer), credential=credential,
                                status=status, revision=policy.get('revision'), protection=cluster.read_status())
             return '', 403
@@ -576,7 +603,11 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             return jsonify(error='revision is required.'), 400
         try:
             with file_lock(str(manager.whitelist_path) + '.lock'):
-                store = config_store() if kind == 'config' else TinyproxyConfigStore(manager.whitelist_path)
+                config = config_store()
+                filters = TinyproxyConfigStore(manager.whitelist_path)
+                if policy_recovery_required(config, filters):
+                    return jsonify(error=RECOVERY_REQUIRED), 409
+                store = config if kind == 'config' else filters
                 if kind == 'config' and not app.extensions['has_permission']('admin'):
                     ensure_policy_only(store.path.read_text(encoding='utf-8-sig'), store.read()['content'])
                 store.discard_draft(data['revision'])
@@ -592,8 +623,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
     @requires_auth
     def native_filter():
         try:
-            filters, config = filter_store()
             if request.method == 'GET':
+                filters, config = filter_store()
                 return jsonify(**filters.read(), filterType=config['filterType'], filterMode=config['filterMode'])
             if ha_enabled() and not managed_ha():
                 return jsonify(error='Direct filter editing requires a standalone deployment. Use the existing ERE domain editor and sync on this HA cluster.'), 409
@@ -601,6 +632,8 @@ def register_proxy_api(app, requires_auth, authenticated, manager, audit):
             if not isinstance(data, dict) or not isinstance(data.get('content'), str) or not isinstance(data.get('revision'), str):
                 return jsonify(error='content and revision are required.'), 400
             with file_lock(str(manager.whitelist_path) + '.lock'):
+                if policy_recovery_required(config_store(), TinyproxyConfigStore(manager.whitelist_path)):
+                    return jsonify(error=RECOVERY_REQUIRED), 409
                 filters, _ = filter_store()
                 result = filters.save(data['content'], data['revision'])
             audit('tinyproxy_filter_saved', revision=result['revision'])

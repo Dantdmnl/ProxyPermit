@@ -26,7 +26,7 @@ from typing import Any, TypedDict
 
 SOURCE = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE))
-from app.core.tinyproxy import atomic_write, parse
+from app.core.tinyproxy import TinyproxyConfigStore, atomic_write, parse
 from app.core.files import file_lock, access_acl, restore_access_acl, sync_directory
 from app.core import cluster, cluster_setup
 from app.core.ha import ha_firewall_rules, ha_topology
@@ -692,6 +692,19 @@ def service_ownership() -> tuple[int, int, Callable[[Path | str, int, int], None
     raise ValueError('Installation requires Linux.')
 
 
+def require_policy_recovered(config_path, filter_path, operation):
+    for path in (config_path, filter_path):
+        checkpoint = TinyproxyConfigStore(path).pending_path
+        if checkpoint.exists() or checkpoint.is_symlink():
+            raise ValueError(f'Recover the interrupted Tinyproxy policy before {operation}.')
+
+
+def installed_policy_paths():
+    values = env_values(Path('/etc/proxypermit/.env'))
+    return (values.get('TINYPROXY_CONFIG_PATH') or '/etc/tinyproxy/tinyproxy.conf',
+            values.get('WHITELIST_PATH') or '/etc/tinyproxy/whitelist.txt')
+
+
 def apply(plan, args):
     require_linux_root('Installation')
     cluster_upgrade = bool(getattr(args, 'cluster_maintenance', False))
@@ -708,6 +721,10 @@ def apply(plan, args):
         for unit in ('keepalived.service', 'whitelist-sync-v2.timer'):
             if subprocess.run(['systemctl', 'is-active', '--quiet', unit], check=False).returncode == 0:
                 raise ValueError('An HA service is active in standalone mode. Check the topology first.')
+    managed = plan['mode'] == 'standalone' or plan.get('ha') or plan.get('managedHa')
+    upgrading = managed and plan['action'] == 'upgrade'
+    if upgrading:
+        require_policy_recovered(plan['configPath'], plan['whitelistPath'], 'changing the installed release')
     from scripts.deploy.cluster_maintenance import rolling
     with maintenance_lock(), (rolling(lambda: cluster_upgrade_health(plan['installDir']), plan['installDir']) if cluster_upgrade else nullcontext()):
         if (getattr(args, 'reviewed_action', None) or getattr(args, 'enable_ufw', False)
@@ -725,16 +742,21 @@ def apply(plan, args):
             if str(source) != plan['rollbackRelease']:
                 raise ValueError('The reviewed rollback release has changed.')
         directory = Path(plan['configPath']).parent
-        managed = plan['mode'] == 'standalone' or plan.get('ha') or plan.get('managedHa')
         if managed and directory.exists():
             from scripts.deploy.ha_setup import frozen_proxy_directory
+            lock_path = Path(plan['whitelistPath'] + '.lock')
             original = directory.stat()
             try:
-                with frozen_proxy_directory(directory, Path(plan['whitelistPath'] + '.lock')):
+                with frozen_proxy_directory(directory, lock_path):
                     for path in (Path(plan['configPath']), Path(plan['whitelistPath'])):
                         if path.is_symlink() or (path.exists() and (not path.is_file() or path.stat().st_nlink != 1)):
                             raise ValueError('Managed proxy configuration requires regular, unlinked files.')
-                    _apply_locked(plan, args, frozen=True, source=source)
+                    # If there is no lock yet, the frozen directory keeps the
+                    # application user from creating it during maintenance.
+                    with file_lock(lock_path) if upgrading and lock_path.exists() else nullcontext():
+                        if upgrading:
+                            require_policy_recovered(plan['configPath'], plan['whitelistPath'], 'changing the installed release')
+                        _apply_locked(plan, args, frozen=True, source=source)
             except BaseException:
                 if os.name != 'nt':
                     os.chown(directory, original.st_uid, original.st_gid)  # pylint: disable=no-member
@@ -1338,6 +1360,11 @@ def uninstall(install_dir, *, detached=False, purge=False):
         else:
             cluster.require_independent_control('uninstalling this node')
         plan = build_uninstall_plan('/', install_dir, purge=True) if purge else build_uninstall_plan('/', install_dir)
+        def verify_policy_recovered():
+            if str(policy_recovery.DROP_IN) in plan['paths']:
+                require_policy_recovered(*installed_policy_paths(), 'uninstalling ProxyPermit')
+
+        verify_policy_recovered()
         if purge and plan['mode'] == 'ha':
             require_ha_purge_ready()
         purge_paths = validate_purge_paths(plan['purgePaths']) if purge else []
@@ -1369,6 +1396,9 @@ def uninstall(install_dir, *, detached=False, purge=False):
             for auxiliary in previous.get('auxiliary', {}):
                 run('systemctl', 'disable', '--now', auxiliary)
             run('systemctl', 'disable', '--now', unit)
+            # Stopping the web service can interrupt a publication that began
+            # after the first check. Keep the recovery hook in that case.
+            verify_policy_recovered()
             for path in plan['paths']:
                 Path(path).unlink()
             run('systemctl', 'daemon-reload')
@@ -1590,6 +1620,9 @@ def rollback_install(base, stamp, execute=False):
     require_linux_root('Recovery')
     with maintenance_lock():
         cluster.require_independent_control('restoring an installation backup')
+        policy = installed_policy_paths()
+        operation = 'restoring an installation backup'
+        require_policy_recovered(*policy, operation)
         from scripts.deploy.management_tls import rollback_values, rewrite_environment, write as tls_write, ENVIRONMENT as tls_environment
         tls_values = rollback_values(entries)
         if state.get('ufw') and state.get('ufwRuleHashes') != ufw_rule_fingerprints():
@@ -1598,10 +1631,25 @@ def rollback_install(base, stamp, execute=False):
         if enabled_ufw and (not UFW_CONFIG.is_file() or UFW_CONFIG.is_symlink()
                             or enabled_ufw != hashlib.sha256(UFW_CONFIG.read_bytes()).hexdigest()):
             raise ValueError('UFW activation changed since installation. Review the firewall backup before restoring.')
-        subprocess.run(['systemctl', 'stop', 'proxypermit.service'], check=False)
+        writers = ('proxypermit-ha-policy.timer', 'proxypermit-ha-policy.service', 'proxypermit.service')
+        stopped = []
+        try:
+            for unit in writers:
+                if subprocess.run(['systemctl', 'cat', unit], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, check=False).returncode == 0:
+                    active = subprocess.run(['systemctl', 'is-active', unit], capture_output=True, text=True, check=False)
+                    if active.stdout.strip() in ('active', 'activating', 'reloading', 'refreshing'):
+                        stopped.append(unit)
+                    run('systemctl', 'stop', unit)
+            # A publisher interrupted during shutdown can leave a new checkpoint.
+            require_policy_recovered(*policy, operation)
+        except (Exception, KeyboardInterrupt):
+            if stopped and subprocess.run(['systemctl', 'start', '--no-block', *reversed(stopped)], check=False).returncode:
+                print('Could not requeue all previously running policy services. Check systemd status.', file=sys.stderr)
+            raise
         auxiliary = state.get('auxiliary', {})
         for unit in auxiliary:
-            if subprocess.run(['systemctl', 'cat', unit], stdout=subprocess.DEVNULL,
+            if unit not in writers and subprocess.run(['systemctl', 'cat', unit], stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL, check=False).returncode == 0:
                 run('systemctl', 'stop', unit)
         transaction = object.__new__(Transaction)

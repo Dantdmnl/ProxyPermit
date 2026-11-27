@@ -460,9 +460,11 @@ sudo journalctl --namespace=proxypermit -u pacemaker.service -u keepalived.servi
 
 Bij een volledige clusterherstart geldt in het ingebouwde Proxmox-profiel
 `wait_for_all: 1`. Voordat er voor het eerst quorum is, moeten beide proxynodes
-elkaar zien, ook als één node de witness al bereikt. Herstel de ontbrekende
-node of volg de herstelprocedure van het OS-cluster. Laat het VIP tijdens het
-herstel onder clusterbeheer. Zie [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
+elkaar bereiken, ook als één node de witness al bereikt. Onder **Bescherming bij overname**
+zie je deze wachtoorzaak zodra Corosync die bevestigt. Controleer of Corosync op
+beide proxynodes draait en of ze elkaar via het clusternetwerk bereiken. Herstel
+een ontbrekende node of volg de herstelprocedure van het OS-cluster. Laat het
+VIP tijdens het herstel onder clusterbeheer. Zie [Corosync votequorum](https://manpages.debian.org/bookworm/corosync/votequorum.5.en.html).
 
 De VIP-agent meldt of Keepalived een onverwachte status had, het adres ontbrak
 of de lokale Tinyproxy-controle mislukte. Bij een time-out kan Pacemaker de
